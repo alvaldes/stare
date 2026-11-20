@@ -29,7 +29,8 @@ S14. Dibujar no pide permisos de macOS. Cada feature que lee píxeles los pide p
 | T4a | Núcleo de captura: servicio ScreenCaptureKit, permiso y compositor de marcas | S12, S14, S30 | parent | _pending_ |
 | T4b | Integración de captura: selección de área, atajos S / ⇧S, composición y portapapeles | S12, S30 | parent | _pending_ |
 | T4 | Captura de display y de área con marcas compuestas + permiso de Screen Recording | S12, S14 | parent | _pending_ |
-| T5 | Cards de captura, clipboard y editor con crop y re-anotación | S13 | parent | _pending_ |
+| T5a | Card de captura: miniatura, hover que extiende, copiar, arrastrar afuera | S13 | parent | _pending_ |
+| T5b | Editor de captura con crop y re-anotación | S13 | parent | _pending_ |
 | T7 | Herramientas faltantes del dock: eraser, text, laser y marco del cursor | S21–S24 | parent | _pending_ |
 | T6 | Ventana de Settings que reúne las preferencias existentes (worker, worktree) | S31 | worker | _pending_ |
 
@@ -119,3 +120,5 @@ L33. El trabajo en paralelo con subagentes no fue posible: `session_worktree_reg
 
 S32. "el diálogo de Screen Recording debe de aparecer cuando se instala la app porque cuando de S no puede aparecer en ese momento porque interrumpe el flujo" — el permiso se pide al lanzar, una sola vez por identidad de la app. `S` nunca abre un diálogo del sistema: si falta el permiso, muestra la píldora de aviso y no captura.
 S33. El bundle se firma con una identidad estable cuando existe (`CODESIGN_IDENTITY`, o la primera Apple Development disponible). Con firma ad-hoc TCC olvida el permiso de Screen Recording en cada rebuild, porque el requisito de código cambia.
+
+L34. El permiso de Screen Recording sigue sin otorgarse (`capture=false` con la app instalada en /Applications y firmada con Apple Development). El código pide el permiso al lanzar y nunca en `S`; el otorgamiento es del humano en System Settings. Diagnóstico agregado: el log registra la ruta del bundle al lanzar.

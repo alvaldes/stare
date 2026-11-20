@@ -15,6 +15,7 @@ final class OverlayController {
     private var toolbar: ToolbarPanel?
     private var previousApplication: NSRunningApplication?
     private let captureService: ScreenCapturing
+    private let cards = CaptureCardController()
     private var cancellables: Set<AnyCancellable> = []
     private var keyMonitor: Any?
     private var pointerTimer: Timer?
@@ -246,11 +247,20 @@ final class OverlayController {
                 pasteboard.setData(tiff, forType: .tiff)
             }
             Diag.log("capture copied \(result.width)x\(result.height) marks=\(canvas.view.session.strokes.count)")
+            cards.show(result, on: screen(for: displayID))
         } catch CaptureError.permissionDenied {
             canvas.view.showHint("Screen Recording permission needed · System Settings → Privacy", seconds: 3.5)
             Diag.log("capture denied by the system")
         } catch {
             Diag.log("capture failed: \(error)")
+        }
+    }
+
+    private func screen(for displayID: CGDirectDisplayID) -> NSScreen? {
+        let key = NSDeviceDescriptionKey("NSScreenNumber")
+        return NSScreen.screens.first { screen in
+            guard let number = screen.deviceDescription[key] as? NSNumber else { return false }
+            return CGDirectDisplayID(number.uint32Value) == displayID
         }
     }
 

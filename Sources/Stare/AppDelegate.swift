@@ -9,7 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Diag.reset()
-        Diag.log("launched")
+        Diag.log("launched path=\(Bundle.main.bundlePath)")
 
         statusBar = StatusBarController(
             state: overlay.state,

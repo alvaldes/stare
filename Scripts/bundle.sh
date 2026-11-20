@@ -31,3 +31,12 @@ fi
 
 codesign --force --sign "$CODESIGN_IDENTITY" "$APP"
 echo "Built $APP signed by: $CODESIGN_IDENTITY"
+
+# TCC shows the user a path and remembers the grant per code requirement. Running
+# from build/ works, but installing to /Applications is what the user is asked to
+# authorize, so the entry they see is the one that stays.
+if [ "${2:-}" = "install" ]; then
+    rm -rf "/Applications/Stare.app"
+    cp -R "$APP" "/Applications/Stare.app"
+    echo "Installed /Applications/Stare.app"
+fi
