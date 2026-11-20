@@ -13,7 +13,10 @@ export const PORTFOLIO_URL = 'https://www.alvaldes.dev/'
 export const PORTFOLIO_HOST = 'alvaldes.dev'
 
 const WINDOW = { x: 100, y: 46, width: 1000, height: 650, radius: 12 }
-const TOOLBAR_HEIGHT = 52
+const TOOLBAR_HEIGHT = 46
+
+/** Horizontal position inside the window, in screen points. */
+const X = (offset: number) => WINDOW.x + offset
 
 /** Where the page shows inside the window, in screen points. */
 export const BROWSER_VIEWPORT = {
@@ -25,7 +28,7 @@ export const BROWSER_VIEWPORT = {
 }
 
 const ink = '#1c2030'
-const chrome = '#6e7380'
+const chrome = '#3c4049'
 
 export function DemoScreen() {
   const v = BROWSER_VIEWPORT
@@ -52,6 +55,9 @@ export function DemoScreen() {
           <stop offset="0" stop-color="#ffe7d6" stop-opacity="0.9" />
           <stop offset="1" stop-color="#ffe7d6" stop-opacity="0" />
         </radialGradient>
+        <filter id="capsule-shadow" x="-10%" y="-20%" width="120%" height="160%">
+          <feDropShadow dx="0" dy="0.6" stdDeviation="0.8" flood-color="#000" flood-opacity="0.12" />
+        </filter>
         <filter id="window-shadow" x="-10%" y="-10%" width="120%" height="130%">
           <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#1c2030" flood-opacity="0.28" />
         </filter>
@@ -103,36 +109,42 @@ export function DemoScreen() {
         filter="url(#window-shadow)"
       />
       <g clip-path="url(#window-clip)">
-        <rect x={WINDOW.x} y={WINDOW.y} width={WINDOW.width} height={TOOLBAR_HEIGHT} fill="#f6f6f8" />
-        <rect x={WINDOW.x} y={v.y - 1} width={WINDOW.width} height="1" fill="#dcdfe6" />
+        {/* Toolbar, after Safari 26: controls sit in glass capsules on a grey bar. */}
+        <rect x={WINDOW.x} y={WINDOW.y} width={WINDOW.width} height={TOOLBAR_HEIGHT} fill="#ececec" />
+        <rect x={WINDOW.x} y={v.y - 1} width={WINDOW.width} height="1" fill="#d4d4d6" />
 
-        <circle cx={WINDOW.x + 22} cy={toolbarY} r="6" fill="#ff5f57" />
-        <circle cx={WINDOW.x + 42} cy={toolbarY} r="6" fill="#febc2e" />
-        <circle cx={WINDOW.x + 62} cy={toolbarY} r="6" fill="#28c840" />
+        <circle cx={X(20)} cy={toolbarY} r="6" fill="#ff5f57" />
+        <circle cx={X(39)} cy={toolbarY} r="6" fill="#febc2e" />
+        <circle cx={X(58)} cy={toolbarY} r="6" fill="#28c840" />
 
-        <g fill="none" stroke={chrome} stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-          {/* Sidebar */}
-          <rect x={WINDOW.x + 90} y={toolbarY - 7} width="18" height="14" rx="3" />
-          <path d={`M${WINDOW.x + 96} ${toolbarY - 7}v14`} />
-          {/* Back and forward */}
-          <path d={`M${WINDOW.x + 134} ${toolbarY - 6}l-6 6 6 6`} />
-          <path d={`M${WINDOW.x + 152} ${toolbarY - 6}l6 6-6 6`} opacity="0.45" />
-          {/* Share, new tab, tabs */}
-          <path d={`M${WINDOW.x + 912} ${toolbarY - 9}v11M${WINDOW.x + 907} ${toolbarY - 4}l5-5 5 5M${WINDOW.x + 906} ${toolbarY - 2}h-2v10h16v-10h-2`} />
-          <path d={`M${WINDOW.x + 944} ${toolbarY - 7}v14M${WINDOW.x + 937} ${toolbarY}h14`} />
-          <rect x={WINDOW.x + 970} y={toolbarY - 5} width="13" height="12" rx="2.5" />
-          <path d={`M${WINDOW.x + 974} ${toolbarY - 8}h9.5a2.5 2.5 0 0 1 2.5 2.5v8.5`} />
+        {/* Sidebar capsule: sidebar icon plus a menu chevron */}
+        <rect x={X(76)} y={toolbarY - 14} width="50" height="28" rx="14" fill="#fbfbfb" stroke="#000" stroke-opacity="0.09" filter="url(#capsule-shadow)" />
+        {/* Back / forward capsule, split by a hairline */}
+        <rect x={X(134)} y={toolbarY - 14} width="58" height="28" rx="14" fill="#fbfbfb" stroke="#000" stroke-opacity="0.09" filter="url(#capsule-shadow)" />
+        <path d={`M${X(163)} ${toolbarY - 7}v14`} stroke="#000" stroke-opacity="0.13" />
+
+        <g fill="none" stroke={chrome} stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x={X(86)} y={toolbarY - 6.5} width="17" height="13" rx="3" />
+          <path d={`M${X(92)} ${toolbarY - 6.5}v13`} />
+          <path d={`M${X(88.5)} ${toolbarY - 3}h1.5M${X(88.5)} ${toolbarY - 0.5}h1.5`} stroke-width="1.2" />
+          <path d={`M${X(109)} ${toolbarY - 1.5}l3 3 3-3`} />
+          <path d={`M${X(152)} ${toolbarY - 6}l-5.5 6 5.5 6`} />
+          <path d={`M${X(174)} ${toolbarY - 6}l5.5 6-5.5 6`} opacity="0.4" />
+
+          {/* Share */}
+          <path d={`M${X(900)} ${toolbarY - 9.5}v11M${X(896)} ${toolbarY - 5.5}l4-4 4 4M${X(895)} ${toolbarY - 3}h-3v11h16v-11h-3`} />
+          {/* New tab */}
+          <path d={`M${X(934)} ${toolbarY - 7}v14M${X(927)} ${toolbarY}h14`} />
+          {/* Tab overview: two overlapping squares */}
+          <path d={`M${X(963)} ${toolbarY - 8.5}h8a2.5 2.5 0 0 1 2.5 2.5v8`} />
+          <rect x={X(958)} y={toolbarY - 5.5} width="12" height="12" rx="2.5" />
         </g>
 
-        {/* Address field */}
-        <rect x="420" y={toolbarY - 14} width="360" height="28" rx="8" fill="#e8e9ee" />
-        <g fill="none" stroke={chrome} stroke-width="1.4" stroke-linejoin="round">
-          <rect x="551" y={toolbarY - 2} width="10" height="8" rx="1.8" fill={chrome} stroke="none" />
-          <path d={`M553 ${toolbarY - 2}v-2.5a3 3 0 0 1 6 0V${toolbarY - 2}`} />
-        </g>
-        <text x="568" y={toolbarY + 4.5} font-size="13" fill={ink}>{PORTFOLIO_HOST}</text>
+        {/* Address field: a full capsule, domain centred, reload at the end */}
+        <rect x={X(290)} y={toolbarY - 15} width="420" height="30" rx="15" fill="#000" fill-opacity="0.06" />
+        <text x={X(500)} y={toolbarY + 4.5} font-size="13" fill={ink} text-anchor="middle">{PORTFOLIO_HOST}</text>
         <path
-          d={`M762 ${toolbarY - 4}a5 5 0 1 0 1.2 4.6M763 ${toolbarY - 8}v4.5h-4.5`}
+          d={`M${X(690)} ${toolbarY - 4}a5 5 0 1 0 1.2 4.6M${X(691)} ${toolbarY - 8}v4.5h-4.5`}
           fill="none"
           stroke={chrome}
           stroke-width="1.4"
