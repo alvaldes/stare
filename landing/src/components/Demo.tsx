@@ -1,5 +1,6 @@
 import { SCREEN_HEIGHT, SCREEN_WIDTH } from '../demo/model'
 import { BROWSER_VIEWPORT, DemoScreen, PORTFOLIO_HOST, PORTFOLIO_URL } from './DemoScreen'
+import { CreatorNote } from './CreatorNote'
 import { Kbd } from './ui'
 
 /** The portfolio lays out at a laptop width, then scales down to fit. */
@@ -56,7 +57,7 @@ function LivePage() {
  */
 export function Demo() {
   return (
-    <section id="try" aria-labelledby="try-title" class="mx-auto max-w-[1240px] scroll-mt-20 px-4 pt-6 pb-24 md:px-8">
+    <section id="try" aria-labelledby="try-title" class="relative mx-auto max-w-[1240px] scroll-mt-20 px-4 pt-6 pb-24 md:px-8">
       <div data-reveal class="mb-8 max-w-[38rem]">
         <h2 id="try-title" class="text-[clamp(1.75rem,3.2vw,2.5rem)] leading-[1.1] font-bold tracking-[-0.02em]">
           Try it on this pretend Mac
@@ -86,6 +87,8 @@ export function Demo() {
           <p class="mt-4 text-muted">The demo needs JavaScript. Everything else on this page works without it.</p>
         </noscript>
       </div>
+
+      <CreatorNote />
 
       <ul class="mt-6 flex flex-wrap [@media(hover:none)]:hidden gap-x-6 gap-y-3 text-[14px] text-muted" aria-label="Demo shortcuts">
         <li>

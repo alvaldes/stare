@@ -1,6 +1,7 @@
 // Client entry: hydrates the interactive parts of the prerendered page.
 import { runClock } from '../demo/clock'
 import { fitLivePage } from './browser'
+import { playCreatorNote } from './creatorNote'
 import { mountDemo } from './demo'
 import { mountKeyboardPanel } from './keyboard'
 import { enableDownloads } from './download'
@@ -15,6 +16,8 @@ if (clock) runClock(clock)
 const keyPreview = document.getElementById('key-preview')
 const shortcuts = document.getElementById('shortcuts')
 if (keyPreview && shortcuts) mountKeyboardPanel(keyPreview, shortcuts)
+
+playCreatorNote()
 
 const livePage = document.getElementById('demo-page')
 if (livePage instanceof HTMLIFrameElement) fitLivePage(livePage)

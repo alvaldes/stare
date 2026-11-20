@@ -646,6 +646,28 @@
     }
   }
 
+  /* The creator's note stays out of sight until client/creatorNote.ts plays
+     it, so it never flashes in and out. Without JavaScript it simply shows. */
+  .js #creator-note:not([data-played]) {
+    opacity: 0;
+  }
+
+  .creator-caret {
+    display: inline-block;
+    width: 2px;
+    height: 1.05em;
+    margin-left: 1px;
+    vertical-align: -0.15em;
+    background: var(--color-ink-blue);
+    animation: caret-blink 1s steps(1) infinite;
+  }
+
+  @keyframes caret-blink {
+    50% {
+      opacity: 0;
+    }
+  }
+
   /* Keys of the shortcuts keyboard sink when pressed or clicked. */
   /* Three attributes, so it wins over the generic [data-key][data-pressed] below. */
   [data-keycap][data-key][data-pressed] {
