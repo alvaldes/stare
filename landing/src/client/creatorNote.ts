@@ -77,7 +77,10 @@ export function playCreatorNote(): void {
       line.setAttribute('stroke-dashoffset', '0')
       return
     }
-    // Empty before the bubble shows, so it never appears full and then retypes.
+    // Keep the finished height while typing, so the bubble (and the stroke
+    // anchored to its corner) doesn't move as lines fill in. Then empty it
+    // before it shows, so it never appears full and retypes.
+    text.style.minHeight = `${text.getBoundingClientRect().height}px`
     text.textContent = ''
     note.animate([{ opacity: 0, transform: 'translateY(10px) scale(0.96)' }, { opacity: 1, transform: 'none' }], {
       duration: 420,

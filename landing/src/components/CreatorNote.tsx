@@ -5,7 +5,9 @@
 // bubble is a plain link, so it works without JavaScript.
 import { PORTFOLIO_HOST, PORTFOLIO_URL } from './DemoScreen'
 
-export const CREATOR_MESSAGE = "I built Stare, and that's my site up there. Come say hi!"
+// No "up there" / "down there": the note sits above the demo on desktop and
+// below it on phones, so a direction would be wrong on one of them.
+export const CREATOR_MESSAGE = "I built Stare, and that's my site in the Safari window. Come say hi!"
 
 export function CreatorNote() {
   return (
@@ -33,12 +35,18 @@ export function CreatorNote() {
         class="group/note relative z-30 mt-6 flex w-full max-w-[340px] flex-col gap-3 rounded-3xl rounded-bl-md border border-white/80 bg-paper/80 p-4 font-mac shadow-glass backdrop-blur-xl transition-transform hover:-translate-y-0.5 lg:absolute lg:top-4 lg:right-8 lg:mt-0"
       >
         <span class="flex items-center gap-3">
-          <span class="grid size-10 shrink-0 place-items-center rounded-full bg-gradient-to-br from-aurora-blue via-aurora-lilac to-aurora-peach text-[14px] font-semibold text-white ring-2 ring-white">
-            AV
-          </span>
+          {/* Cropped from the portfolio's own photo (portfolio/src/assets/images/angel.webp). */}
+          <img
+            src="/creator.jpg"
+            alt=""
+            width="40"
+            height="40"
+            loading="lazy"
+            class="size-10 shrink-0 rounded-full object-cover ring-2 ring-white"
+          />
           <span class="flex flex-col">
             <span class="text-[14px] font-semibold text-graphite">Angel Valdés</span>
-            <span class="text-[12px] text-muted">Made Stare</span>
+            <span class="text-[12px] text-muted">Software Engineer</span>
           </span>
           <span class="ml-auto text-[11px] text-muted">now</span>
         </span>
