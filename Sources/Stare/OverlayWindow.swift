@@ -1,9 +1,11 @@
 import AppKit
 
-/// Borderless, transparent, non-activating panel stretched over one display.
-/// It floats above full-screen apps and joins every Space, so drawing works
-/// over anything without the app ever becoming active.
-final class OverlayPanel: NSPanel {
+/// Borderless, transparent window stretched over one display. A plain `NSWindow`
+/// subclass rather than `NSPanel`: panels add key-window and floating behaviour
+/// that made the overlay a non-interactive layer. Only `canBecomeKey` is
+/// overridden, which is all a borderless overlay needs to receive clicks and
+/// keys.
+final class OverlayWindow: NSWindow {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
@@ -16,9 +18,9 @@ final class OverlayPanel: NSPanel {
         )
 
         level = .screenSaver
-        // Same collection behaviour as the palette, which is the configuration
-        // proven to receive clicks. `.canJoinAllSpaces` made the window a
-        // non-interactive ghost outside the Space it was ordered in.
+        // Matches the palette's behaviour, which is the configuration that
+        // provably receives clicks. Space changes re-order the window instead of
+        // joining every Space.
         collectionBehavior = [
             .fullScreenAuxiliary,
             .stationary,
@@ -32,6 +34,7 @@ final class OverlayPanel: NSPanel {
         isMovable = false
         animationBehavior = .none
         acceptsMouseMovedEvents = true
+        ignoresMouseEvents = false
 
         setFrame(screen.frame, display: false)
     }

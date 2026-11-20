@@ -6,6 +6,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkey: GlobalHotkey?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Diag.reset()
+        Diag.log("launched")
+
         statusBar = StatusBarController(
             onDraw: { [weak self] in self?.overlay.toggle() },
             onClear: { [weak self] in self?.overlay.clearAll() }

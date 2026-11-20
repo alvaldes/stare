@@ -43,7 +43,7 @@ final class OverlayController {
         // accessory app Stare shows no Dock icon and no window, so activating it
         // is invisible; the app underneath gets focus back on exit.
         rememberFrontmostApplication()
-        NSApp.activate()
+        NSApp.activate(ignoringOtherApps: true)
 
         buildCanvases()
         for canvas in canvases.values {
@@ -54,17 +54,13 @@ final class OverlayController {
         canvasUnderPointer()?.panel.makeKey()
         NSCursor.crosshair.set()
         showToolbar()
-        NSLog(
-            "Stare: drawing on %d display(s) active=%@",
-            canvases.count,
-            NSApp.isActive ? "yes" : "no"
-        )
+        Diag.log("activate displays=\(canvases.count) active=\(NSApp.isActive)")
 
         // Activation is asynchronous: re-assert once it settles so the panels
         // are ordered in front of the now-active app.
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isActive else { return }
-            NSLog("Stare: active after settle=%@", NSApp.isActive ? "yes" : "no")
+            Diag.log("activate settled active=\(NSApp.isActive) key=\(NSApp.keyWindow != nil)")
             for canvas in self.canvases.values { canvas.panel.orderFrontRegardless() }
             self.canvasUnderPointer()?.panel.makeKey()
             NSCursor.crosshair.set()
@@ -81,7 +77,7 @@ final class OverlayController {
         tearDownCanvases()
         restoreFrontmostApplication()
         NSCursor.arrow.set()
-        NSLog("Stare: left drawing mode")
+        Diag.log("deactivate")
     }
 
     private func rememberFrontmostApplication() {
@@ -172,7 +168,7 @@ final class OverlayController {
 /// One display's overlay panel and its marks.
 final class DisplayCanvas {
     let displayID: CGDirectDisplayID
-    let panel: OverlayPanel
+    let panel: OverlayWindow
     let view: OverlayView
 
     init?(screen: NSScreen, state: EditorState, onEscape: @escaping () -> Void) {
@@ -180,7 +176,7 @@ final class DisplayCanvas {
         guard let number = screen.deviceDescription[key] as? NSNumber else { return nil }
 
         displayID = CGDirectDisplayID(number.uint32Value)
-        panel = OverlayPanel(screen: screen)
+        panel = OverlayWindow(screen: screen)
         view = OverlayView(frame: CGRect(origin: .zero, size: screen.frame.size), state: state, onEscape: onEscape)
         panel.contentView = view
     }

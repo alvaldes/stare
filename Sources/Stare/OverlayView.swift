@@ -51,7 +51,7 @@ final class OverlayView: NSView {
     /// `.activeAlways` keeps the crosshair working even when the app is not the
     /// active one, which cursor rectangles alone do not allow.
     override func cursorUpdate(with event: NSEvent) {
-        NSLog("Stare: cursorUpdate")
+        Diag.log("cursorUpdate")
         NSCursor.crosshair.set()
     }
 
@@ -81,7 +81,7 @@ final class OverlayView: NSView {
         window?.makeKey()
         window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
-        NSLog("Stare: mouseDown at %.0f,%.0f tool=%@", point.x, point.y, state.tool.rawValue)
+        Diag.log("mouseDown \(Int(point.x)),\(Int(point.y)) tool=\(state.tool.rawValue)")
         session.begin(at: point, tool: state.tool, ink: state.ink)
         invalidateActive(previousBounds: nil)
     }
@@ -93,15 +93,11 @@ final class OverlayView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
-        let previousBounds = session.active?.bounds
         session.extend(to: convert(event.locationInWindow, from: nil))
         session.commit()
-        NSLog("Stare: commit strokes=%d", session.strokes.count)
-        if let previousBounds {
-            setNeedsDisplay(previousBounds)
-        } else {
-            needsDisplay = true
-        }
+        Diag.log("commit strokes=\(session.strokes.count)")
+        // Full redraw: the first mark also removes the armed frame at the edges.
+        needsDisplay = true
     }
 
     private func invalidateActive(previousBounds: CGRect?) {
@@ -134,6 +130,7 @@ final class OverlayView: NSView {
         if let character = characters.first {
             if let tool = ToolShortcut.tool(for: character) {
                 state.tool = tool
+                Diag.log("tool=\(tool.rawValue)")
                 return
             }
             if let digit = character.wholeNumberValue, let ink = Ink.ink(forNumber: digit) {
@@ -206,7 +203,26 @@ final class OverlayView: NSView {
             render(stroke, in: context)
         }
 
+        drawArmedFrame(in: context)
         drawHint()
+    }
+
+    /// While the layer is armed and empty, a thin frame in the current ink shows
+    /// which displays are live. It disappears with the first mark.
+    private func drawArmedFrame(in context: CGContext) {
+        guard session.isEmpty else { return }
+        let rect = bounds.insetBy(dx: 3, dy: 3)
+        context.setStrokeColor(state.ink.cgColor(alpha: 0.45))
+        context.setLineWidth(3)
+        context.addPath(
+            CGPath(
+                roundedRect: rect,
+                cornerWidth: 10,
+                cornerHeight: 10,
+                transform: nil
+            )
+        )
+        context.strokePath()
     }
 
     private func render(_ stroke: Stroke, in context: CGContext) {
