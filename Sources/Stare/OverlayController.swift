@@ -205,6 +205,14 @@ final class OverlayController {
     func capture(displayID: CGDirectDisplayID, area: CGRect?) {
         guard let canvas = canvases[displayID] else { return }
 
+        // Never interrupt a session with a system prompt: the permission is asked
+        // for when the app starts, and here we only say what is missing.
+        guard captureService.hasPermission else {
+            canvas.view.showHint("Screen Recording permission needed · System Settings → Privacy", seconds: 3.5)
+            Diag.log("capture skipped: no permission")
+            return
+        }
+
         do {
             let base = try captureService.captureDisplay(displayID)
             let scale = CGFloat(base.width) / max(canvas.panel.frame.width, 1)
@@ -239,8 +247,8 @@ final class OverlayController {
             }
             Diag.log("capture copied \(result.width)x\(result.height) marks=\(canvas.view.session.strokes.count)")
         } catch CaptureError.permissionDenied {
-            Diag.log("capture needs Screen Recording permission")
-            captureService.requestPermission()
+            canvas.view.showHint("Screen Recording permission needed · System Settings → Privacy", seconds: 3.5)
+            Diag.log("capture denied by the system")
         } catch {
             Diag.log("capture failed: \(error)")
         }

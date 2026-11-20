@@ -116,3 +116,6 @@ S31. La ventana de Settings reúne las preferencias que ya existen y funcionan: 
 L32. "dale avanza y si crees que se puede hacer trabajo en paralelo prepara todo con varios agentes trabajando y si es necesario en su worktree". T4 se parte en T4a (núcleo de captura, worker en worktree) y T4b (integración, parent), y T6 (Settings) corre en paralelo en su propio worktree con superficies de edición disjuntas.
 
 L33. El trabajo en paralelo con subagentes no fue posible: `session_worktree_register` rechaza worktrees porque el root de la sesión no es el repo, y `subagent_run` con `workspace_root` responde "Writer bootstrap requires the original safe project root". Se retiraron los worktrees creados y T4 se hizo inline en el parent. T6 queda pendiente.
+
+S32. "el diálogo de Screen Recording debe de aparecer cuando se instala la app porque cuando de S no puede aparecer en ese momento porque interrumpe el flujo" — el permiso se pide al lanzar, una sola vez por identidad de la app. `S` nunca abre un diálogo del sistema: si falta el permiso, muestra la píldora de aviso y no captura.
+S33. El bundle se firma con una identidad estable cuando existe (`CODESIGN_IDENTITY`, o la primera Apple Development disponible). Con firma ad-hoc TCC olvida el permiso de Screen Recording en cada rebuild, porque el requisito de código cambia.

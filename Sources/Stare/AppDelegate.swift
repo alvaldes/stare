@@ -1,7 +1,8 @@
 import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let overlay = OverlayController()
+    private let captureService = CaptureService()
+    private lazy var overlay = OverlayController(captureService: captureService)
     private var statusBar: StatusBarController?
     private var hotkey: GlobalHotkey?
     private var pointerHotkey: GlobalHotkey?
@@ -31,8 +32,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.overlay.togglePointer()
         }
 
+        // Ask for Screen Recording now, not when the user is mid-explanation.
+        // A missing permission must never surface as a system prompt on the S key.
+        if !captureService.hasPermission {
+            Diag.log("screen recording missing, asking at launch")
+            captureService.requestPermission()
+        }
+
         Diag.log(
-            "hotkeys draw=\(hotkey != nil) pointer=\(pointerHotkey != nil) policy=\(NSApp.activationPolicy().rawValue)"
+            "hotkeys draw=\(hotkey != nil) pointer=\(pointerHotkey != nil) policy=\(NSApp.activationPolicy().rawValue) capture=\(captureService.hasPermission)"
         )
     }
 

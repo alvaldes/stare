@@ -519,16 +519,25 @@ final class OverlayView: NSView {
     // MARK: - Drawing mode hint
 
     private var hintUntil: Date?
+    private var hintMessage = ""
 
     /// Drawing mode is an invisible layer by design, so the first moment of the
     /// session needs a visible signal: a pill that names the way out.
     func showIntroHint() {
-        hintUntil = Date().addingTimeInterval(2.2)
+        showHint("Drawing · esc to clear · \(HotkeyDefaults.displayName) to exit", seconds: 2.2)
+    }
+
+    /// Same pill, used for things the user must know without a dialog: a missing
+    /// permission, for instance, must never interrupt what they are doing.
+    func showHint(_ message: String, seconds: TimeInterval) {
+        hintMessage = message
+        hintUntil = Date().addingTimeInterval(seconds)
         needsDisplay = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
             self?.hintUntil = nil
             self?.needsDisplay = true
         }
+        Diag.log("hint: \(message)")
     }
 
     /// A thick translucent band with a bright edge on both sides and a soft
@@ -621,7 +630,7 @@ final class OverlayView: NSView {
         guard let until = hintUntil, Date() < until else { return }
         guard let context = NSGraphicsContext.current?.cgContext else { return }
 
-        let text = "Drawing · esc to clear · \(HotkeyDefaults.displayName) to exit" as NSString
+        let text = hintMessage as NSString
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 13, weight: .medium),
             .foregroundColor: NSColor.white,
