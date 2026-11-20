@@ -4,6 +4,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let captureService = CaptureService()
     private lazy var overlay = OverlayController(captureService: captureService)
     private var statusBar: StatusBarController?
+    private lazy var settings = SettingsWindowController(state: overlay.state)
     private var hotkey: GlobalHotkey?
     private var pointerHotkey: GlobalHotkey?
 
@@ -12,10 +13,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Diag.log("launched path=\(Bundle.main.bundlePath)")
 
         statusBar = StatusBarController(
-            state: overlay.state,
             onDraw: { [weak self] in self?.overlay.toggle() },
             onClear: { [weak self] in self?.overlay.clearAll() },
-            onPointerToggle: { [weak self] in self?.overlay.togglePointer() }
+            onPointerToggle: { [weak self] in self?.overlay.togglePointer() },
+            onOpenSettings: { [weak self] in self?.settings.show() }
         )
 
         hotkey = GlobalHotkey(

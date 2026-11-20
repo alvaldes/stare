@@ -93,6 +93,11 @@ enum SelfTest {
             report.append("editor chrome \(name) rendered=\(rendered)")
         }
 
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            let rendered = renderSettings(appearanceName: appearance, to: "/tmp/stare-settings-\(name).png")
+            report.append("settings \(name) rendered=\(rendered)")
+        }
+
         // Render path: same code the overlay uses.
         let marks = sampleSession()
         let rendered = renderToPNG(strokes: marks.visibleStrokes)
@@ -123,6 +128,24 @@ enum SelfTest {
             lines.append("  ws id=\(number) layer=\(layer) alpha=\(alpha) bounds=\(bounds)")
         }
         return lines
+    }
+
+    /// Renders the settings form with a fixed appearance.
+    private static func renderSettings(appearanceName: NSAppearance.Name, to path: String) -> Bool {
+        let hosting = NSHostingView(rootView: SettingsView(state: EditorState()))
+        hosting.sizingOptions = [.intrinsicContentSize, .preferredContentSize]
+        hosting.appearance = NSAppearance(named: appearanceName)
+        hosting.frame = CGRect(origin: .zero, size: hosting.fittingSize)
+        hosting.layoutSubtreeIfNeeded()
+
+        guard let representation = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else {
+            return false
+        }
+        hosting.cacheDisplay(in: hosting.bounds, to: representation)
+        guard let png = representation.representation(using: .png, properties: [:]) else {
+            return false
+        }
+        return (try? png.write(to: URL(fileURLWithPath: path))) != nil
     }
 
     /// Renders the editor toolbar with a fixed appearance.

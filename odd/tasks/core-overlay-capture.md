@@ -132,3 +132,6 @@ L38. Contraste solo en tema claro: los glifos eran blancos fijos sobre un materi
 L39. Verificación sin tocar la pantalla del usuario: `--selftest` renderiza la palette y el chrome del editor en `aqua` y `darkAqua` a `/tmp/stare-palette-{light,dark}.png` y `/tmp/stare-editor-{light,dark}.png`. Los cuatro salen legibles.
 
 L40. "el crop el copy y el save en la misma barra todo en esa barra nada de botones extras" — `ToolbarView` acepta acciones extra y el editor le pasa Crop, Copy y Save como iconos dentro de la misma píldora; se eliminó la segunda fila de botones.
+
+L41. T6: Settings reúne marco de dibujo, duración del láser (1/2/2,5/3/5 s) y tamaño, forma, glow y fade del puntero. El menú de la barra quedó en Draw Over Screen, Pointer Highlight, Clear Drawing, Settings… y Quit. `--selftest` renderiza también el form en ambas apariencias.
+L42. Defecto encontrado al mirar el render: el picker de duración salía vacío porque el valor guardado por defecto (2,5 s) no estaba entre las opciones.
