@@ -5,7 +5,6 @@ import StareCore
 struct ToolbarView: View {
     @ObservedObject var state: EditorState
     let onUndo: () -> Void
-    let onPointerToggle: () -> Void
     let onClear: () -> Void
     let onDone: () -> Void
 
@@ -19,16 +18,6 @@ struct ToolbarView: View {
 
             ForEach(Ink.allCases) { ink in
                 inkButton(ink)
-            }
-
-            divider
-
-            toggleButton(
-                "cursorarrow",
-                isOn: state.pointerActive,
-                help: Text(verbatim: "Pointer highlight (⌥⇧M)")
-            ) {
-                onPointerToggle()
             }
 
             divider
@@ -87,26 +76,6 @@ struct ToolbarView: View {
         }
         .buttonStyle(.plain)
         .help(Text(verbatim: "\(ink.displayName) (\(ink.number))"))
-    }
-
-    private func toggleButton(
-        _ symbol: String,
-        isOn: Bool,
-        help: Text,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 13, weight: .medium))
-                .frame(width: 28, height: 26)
-                .foregroundStyle(isOn ? Color.white : Color.white.opacity(0.55))
-                .background(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(isOn ? Color.accentColor.opacity(0.55) : Color.clear)
-                )
-        }
-        .buttonStyle(.plain)
-        .help(help)
     }
 
     private func iconButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {

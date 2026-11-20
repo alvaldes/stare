@@ -13,8 +13,6 @@ final class OverlayView: NSView {
     var onUndo: (() -> Void)?
     /// Marks removed by the eraser, so the undo history can drop them too.
     var onErase: (([UUID]) -> Void)?
-    /// M leaves drawing mode for the click-through pointer highlight.
-    var onPointerToggle: (() -> Void)?
 
     static let textFont = NSFont.systemFont(ofSize: 20, weight: .regular)
     /// The pointer highlight is a thick translucent band with bright edges and a
@@ -94,7 +92,6 @@ final class OverlayView: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         cursorForTool.set()
-        updatePointer(to: convert(event.locationInWindow, from: nil))
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -102,7 +99,6 @@ final class OverlayView: NSView {
         // when the pointer crosses a boundary, which is why the cursor used to
         // change only after jumping to another display.
         cursorForTool.set()
-        updatePointer(to: convert(event.locationInWindow, from: nil))
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -345,14 +341,13 @@ final class OverlayView: NSView {
     /// One tracking tick from the controller's timer, used in pointer mode where
     /// the window ignores mouse events and therefore receives none.
     func followPointerFromScreen() {
-        guard let window else { return }
+        guard showsOnlyPointer, let window else { return }
         let windowPoint = window.convertPoint(fromScreen: NSEvent.mouseLocation)
         updatePointer(to: convert(windowPoint, from: nil))
     }
 
     func syncPointerFromScreen() {
-        guard state.showCursorFrame, let window else {
-            Diag.log("pointer sync skipped frame=\(state.showCursorFrame) window=\(window != nil)")
+        guard showsOnlyPointer, let window else {
             if pointerLocation != nil {
                 pointerLocation = nil
                 needsDisplay = true
@@ -360,11 +355,7 @@ final class OverlayView: NSView {
             return
         }
         let windowPoint = window.convertPoint(fromScreen: NSEvent.mouseLocation)
-        let point = convert(windowPoint, from: nil)
-        Diag.log(
-            "pointer sync frame=\(state.showCursorFrame) only=\(showsOnlyPointer) at=\(Int(point.x)),\(Int(point.y)) size=\(Int(state.pointerSize)) shape=\(state.pointerShape)"
-        )
-        updatePointer(to: point)
+        updatePointer(to: convert(windowPoint, from: nil))
     }
 
     private func updatePointer(to point: CGPoint) {
@@ -433,10 +424,6 @@ final class OverlayView: NSView {
                 state.ink = ink
                 return
             }
-            if character.lowercased() == "m" {
-                onPointerToggle?()
-                return
-            }
         }
 
         super.keyDown(with: event)
@@ -461,7 +448,8 @@ final class OverlayView: NSView {
     /// glow, the way the reference app reads on video. The pointer stays visible
     /// in the middle: nothing is hidden, only framed.
     private func drawCursorFrame(in context: CGContext) {
-        guard state.showCursorFrame, let point = pointerLocation else { return }
+        // Pointer highlight is its own mode; it is never part of drawing.
+        guard showsOnlyPointer, let point = pointerLocation else { return }
 
         let radius = state.pointerSize / 2
         let band = radius * Self.pointerBandRatio
@@ -611,7 +599,6 @@ final class OverlayView: NSView {
         notePaintLatency()
 
         drawDrawingFrame(in: context)
-        drawCursorFrame(in: context)
         drawHint()
     }
 

@@ -80,7 +80,7 @@ L17. "solo un detalle y es saber porque el borde desaparece con la primera ponta
 S21. "faltan elementos en el dock como el ease erase" — borrador con tecla `E`: borra marcas completas por hit-test sobre el trazo, no píxeles. Los pasos numerados se renumeran sin huecos.
 S22. "falta el puntero lazer" — láser con tecla `F`: trazo efímero que se desvanece en 1,2 s, se descarta solo y nunca se incluye en una captura.
 S23. "el text" — texto con tecla `T`: click coloca un editor en línea, Enter o click afuera confirma, Escape cancela; fuente 20 pt con la tinta activa.
-S24. "la opcion de poner un marco al cursor" — marco/anel de 40 pt alrededor del puntero que lo sigue, en la tinta activa, apagado por defecto y conmutable desde la palette o con `M`. Es un modo de presentación, no una marca: no se captura.
+S24. "la opcion de poner un marco al cursor" — highlight del puntero como modo de presentación propio, no como herramienta de dibujo: se entra con `⌥⇧M` o desde el menú, y no existe en el modo dibujo ni en la palette (decisión del usuario: "quitemos el marco del modo dibujo, no quiero que esto se pueda hacer desde ahí"). Es un anillo con glow en la tinta activa, no es una marca y no se captura.
 
 L18. "no podemos pasar a T4 porque faltan elementos en el dock como el ease erase y el text. Ademas falta el puntero lazer y algo que no hemos visto antes es la opcion de poner un marco al cursor."
 L19. Implementado en el modelo y en la UI, con 49 tests unitarios en verde: borrado por trazo con renumeración, láser transitorio con desvanecido y poda, texto colocado por click y confirmado, marco del cursor como modo. Verificación manual pendiente (el usuario la corre).
@@ -105,3 +105,5 @@ L27. Estilo del puntero medido sobre el video de Presentify y reimplementado: ba
 L28. Bug encontrado con captura: `drawCursorFrame` sólo se llamaba en la rama de modo puntero, así que el halo nunca aparecía en modo dibujo. Se agregó al camino normal.
 L29. Estilo: el even-odd sobre un squircle no perforaba el centro y se veía como disco oscuro; ahora el anillo se construye rellenando el contorno y perforando el centro con `blendMode .clear`. Aro por defecto 72 pt con banda del 26%, glow desde el borde interno, y el modo puntero restaura la flecha del sistema en lugar de heredar la cruz.
 L30. Hueco real encontrado al combinar herramientas: un texto sin confirmar quedaba como editor pegado y su marca se perdía al cambiar de herramienta. Ahora cualquier cambio de herramienta o nuevo trazo confirma el texto pendiente.
+
+L31. "quitemos el marco del modo dibujo no quier que esto se pueda hacer desde ahi". Se quitó el halo del camino de dibujo, el botón de la palette y la tecla `M` dentro del modo dibujo; queda sólo `⌥⇧M` y el ítem del menú.

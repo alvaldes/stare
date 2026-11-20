@@ -6,7 +6,6 @@ import StareCore
 /// current tool, the current ink and whether the armed frame is drawn.
 final class EditorState: ObservableObject {
     private static let frameKey = "showArmedFrame"
-    private static let cursorFrameKey = "showCursorFrame.v2"
     private static let laserLifetimeKey = "laserLifetime"
     private static let pointerSizeKey = "pointerSize.v3"
     private static let pointerShapeKey = "pointerShape"
@@ -19,9 +18,6 @@ final class EditorState: ObservableObject {
     @Published var ink: Ink = .red
     @Published var showArmedFrame: Bool {
         didSet { UserDefaults.standard.set(showArmedFrame, forKey: Self.frameKey) }
-    }
-    @Published var showCursorFrame: Bool {
-        didSet { UserDefaults.standard.set(showCursorFrame, forKey: Self.cursorFrameKey) }
     }
     /// Presentation mode: the layer is visible but passes clicks through, so the
     /// pointer highlight works while the user keeps working in another app.
@@ -51,14 +47,10 @@ final class EditorState: ObservableObject {
         if defaults.object(forKey: Self.frameKey) == nil {
             defaults.set(true, forKey: Self.frameKey)
         }
-        if defaults.object(forKey: Self.cursorFrameKey) == nil {
-            defaults.set(true, forKey: Self.cursorFrameKey)
-        }
         showArmedFrame = defaults.bool(forKey: Self.frameKey)
         if defaults.object(forKey: Self.laserLifetimeKey) == nil {
             defaults.set(2.5, forKey: Self.laserLifetimeKey)
         }
-        showCursorFrame = defaults.bool(forKey: Self.cursorFrameKey)
         if defaults.object(forKey: Self.pointerSizeKey) == nil {
             defaults.set(72.0, forKey: Self.pointerSizeKey)
         }

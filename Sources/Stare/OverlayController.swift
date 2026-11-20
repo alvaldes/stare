@@ -38,7 +38,6 @@ final class OverlayController {
         for publisher in [state.$ink.map { _ in () }.eraseToAnyPublisher(),
                           state.$tool.map { _ in () }.eraseToAnyPublisher(),
                           state.$showArmedFrame.map { _ in () }.eraseToAnyPublisher(),
-                          state.$showCursorFrame.map { _ in () }.eraseToAnyPublisher(),
                           state.$laserLifetime.map { _ in () }.eraseToAnyPublisher(),
                           state.$pointerSize.map { _ in () }.eraseToAnyPublisher(),
                           state.$pointerShape.map { _ in () }.eraseToAnyPublisher(),
@@ -96,7 +95,6 @@ final class OverlayController {
         guard !isPointerActive, !isActive, !NSScreen.screens.isEmpty else { return }
         isPointerActive = true
         state.pointerActive = true
-        state.showCursorFrame = true
 
         buildCanvases()
         for canvas in canvases.values {
@@ -153,7 +151,6 @@ final class OverlayController {
             canvas.panel.orderFrontRegardless()
             canvas.panel.makeFirstResponder(canvas.view)
             canvas.view.showIntroHint()
-            canvas.view.syncPointerFromScreen()
         }
         canvasUnderPointer()?.panel.makeKey()
         NSCursor.crosshair.set()
@@ -254,7 +251,6 @@ final class OverlayController {
                 self?.commitOrder.append((displayID, stroke.id))
             }
             canvas.view.onUndo = { [weak self] in self?.undo() }
-            canvas.view.onPointerToggle = { [weak self] in self?.togglePointer() }
             canvas.view.onErase = { [weak self] ids in
                 guard let self else { return }
                 let erased = Set(ids)
@@ -283,7 +279,6 @@ final class OverlayController {
         let toolbar = toolbar ?? ToolbarPanel(
             state: state,
             onUndo: { [weak self] in self?.undo() },
-            onPointerToggle: { [weak self] in self?.togglePointer() },
             onClear: { [weak self] in self?.clearAll() },
             onDone: { [weak self] in self?.deactivate() }
         )
