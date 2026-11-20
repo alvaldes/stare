@@ -20,7 +20,7 @@ final class OverlayView: NSView {
     /// The pointer highlight is a thick translucent band with bright edges and a
     /// soft glow, sized from preferences.
     static let pointerGlowMultiplier: CGFloat = 1.9
-    static let pointerBandRatio: CGFloat = 0.42
+    static let pointerBandRatio: CGFloat = 0.26
     private static let eraserRadius: CGFloat = 8
 
     private var textField: NSTextField?
@@ -163,13 +163,16 @@ final class OverlayView: NSView {
 
         switch state.tool {
         case .eraser:
+            finishPendingTextEditing()
             erase(at: point)
             return
         case .text:
             beginTextEditing(at: point)
             return
         default:
-            break
+            // A mark of another tool must not leave a text editor behind: it
+            // would keep its field as a subview and swallow what is underneath.
+            finishPendingTextEditing()
         }
 
         session.begin(at: point, tool: state.tool, ink: state.ink)
@@ -273,6 +276,12 @@ final class OverlayView: NSView {
         Diag.log("text editing started")
     }
 
+    /// Confirms whatever is open in the text editor. Called when the tool
+    /// changes or another mark starts, so an unfinished text can never linger.
+    func finishPendingTextEditing() {
+        finishTextEditing(commit: true)
+    }
+
     /// Confirms or discards the text mark in progress. Empty text never becomes
     /// a mark: a stray click must not leave an invisible box behind.
     ///
@@ -343,6 +352,7 @@ final class OverlayView: NSView {
 
     func syncPointerFromScreen() {
         guard state.showCursorFrame, let window else {
+            Diag.log("pointer sync skipped frame=\(state.showCursorFrame) window=\(window != nil)")
             if pointerLocation != nil {
                 pointerLocation = nil
                 needsDisplay = true
@@ -350,7 +360,11 @@ final class OverlayView: NSView {
             return
         }
         let windowPoint = window.convertPoint(fromScreen: NSEvent.mouseLocation)
-        updatePointer(to: convert(windowPoint, from: nil))
+        let point = convert(windowPoint, from: nil)
+        Diag.log(
+            "pointer sync frame=\(state.showCursorFrame) only=\(showsOnlyPointer) at=\(Int(point.x)),\(Int(point.y)) size=\(Int(state.pointerSize)) shape=\(state.pointerShape)"
+        )
+        updatePointer(to: point)
     }
 
     private func updatePointer(to point: CGPoint) {
@@ -468,7 +482,7 @@ final class OverlayView: NSView {
                 context.drawRadialGradient(
                     gradient,
                     startCenter: point,
-                    startRadius: radius * 0.7,
+                    startRadius: radius - band,
                     endCenter: point,
                     endRadius: radius * Self.pointerGlowMultiplier,
                     options: []
@@ -476,13 +490,17 @@ final class OverlayView: NSView {
             }
         }
 
-        // The band: outer shape minus inner shape, filled between the two.
-        let bandPath = CGMutablePath()
-        bandPath.addPath(shapePath(centre: point, radius: radius, squircle: squircle))
-        bandPath.addPath(shapePath(centre: point, radius: radius - band, squircle: squircle))
-        context.setFillColor(state.ink.cgColor(alpha: 0.5 * alpha))
-        context.addPath(bandPath)
-        context.fillPath(using: .evenOdd)
+        // Ring by construction: fill the outer shape with the band colour, then
+        // punch the middle out. Even-odd on a rounded rect left the interior
+        // painted, which read as a dark disc instead of a ring.
+        context.saveGState()
+        context.setFillColor(state.ink.cgColor(alpha: 0.55 * alpha))
+        context.addPath(shapePath(centre: point, radius: radius, squircle: squircle))
+        context.fillPath()
+        context.setBlendMode(.clear)
+        context.addPath(shapePath(centre: point, radius: radius - band, squircle: squircle))
+        context.fillPath()
+        context.restoreGState()
 
         // Bright edges on both boundaries.
         context.setStrokeColor(state.ink.cgColor(alpha: 0.95 * alpha))
@@ -593,6 +611,7 @@ final class OverlayView: NSView {
         notePaintLatency()
 
         drawDrawingFrame(in: context)
+        drawCursorFrame(in: context)
         drawHint()
     }
 

@@ -50,6 +50,7 @@ final class OverlayController {
 
     private func repaintCanvases() {
         for canvas in canvases.values {
+            canvas.view.finishPendingTextEditing()
             canvas.view.syncPreferences()
             canvas.view.syncPointerFromScreen()
             canvas.view.needsDisplay = true
@@ -105,6 +106,9 @@ final class OverlayController {
             canvas.panel.level = .screenSaver
         }
         canvasUnderPointer()?.view.followPointerFromScreen()
+        // Pointer mode is for working in other apps: leave the system cursor
+        // alone instead of inheriting the drawing crosshair.
+        NSCursor.arrow.set()
         startPointerTimer()
         Diag.log("pointer mode on displays=\(canvases.count)")
     }
@@ -149,6 +153,7 @@ final class OverlayController {
             canvas.panel.orderFrontRegardless()
             canvas.panel.makeFirstResponder(canvas.view)
             canvas.view.showIntroHint()
+            canvas.view.syncPointerFromScreen()
         }
         canvasUnderPointer()?.panel.makeKey()
         NSCursor.crosshair.set()

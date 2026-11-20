@@ -101,3 +101,7 @@ L25. Texto: se agregó instrumentación (`text command`, `text finish` con canti
 
 L26. Causa real del texto: el `mouseUp` del click que abría el editor ejecutaba el camino de arrastre y confirmaba la marca de texto vacía; cuando llegaba el Enter, `active` ya era `nil`. Se arregló en dos capas: `mouseUp` no toca las herramientas de click, y el modelo no considera marca a un texto sin contenido (regla nueva con test de regresión).
 L27. Estilo del puntero medido sobre el video de Presentify y reimplementado: banda donut, bordes brillantes, glow radial, formas círculo/squircle, glow y fade configurables.
+
+L28. Bug encontrado con captura: `drawCursorFrame` sólo se llamaba en la rama de modo puntero, así que el halo nunca aparecía en modo dibujo. Se agregó al camino normal.
+L29. Estilo: el even-odd sobre un squircle no perforaba el centro y se veía como disco oscuro; ahora el anillo se construye rellenando el contorno y perforando el centro con `blendMode .clear`. Aro por defecto 72 pt con banda del 26%, glow desde el borde interno, y el modo puntero restaura la flecha del sistema en lugar de heredar la cruz.
+L30. Hueco real encontrado al combinar herramientas: un texto sin confirmar quedaba como editor pegado y su marca se perdía al cambiar de herramienta. Ahora cualquier cambio de herramienta o nuevo trazo confirma el texto pendiente.
