@@ -6,10 +6,16 @@ let package = Package(
     platforms: [.macOS("26.0")],
     products: [
         .library(name: "StareCore", targets: ["StareCore"]),
+        .executable(name: "Stare", targets: ["Stare"]),
     ],
     targets: [
         .target(
             name: "StareCore",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .executableTarget(
+            name: "Stare",
+            dependencies: ["StareCore"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(
