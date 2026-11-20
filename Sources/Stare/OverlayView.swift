@@ -17,7 +17,8 @@ final class OverlayView: NSView {
     var onPointerToggle: (() -> Void)?
 
     static let textFont = NSFont.systemFont(ofSize: 20, weight: .regular)
-    static let cursorFrameDiameter: CGFloat = 40
+    /// The pointer highlight is a glow with two rings, sized from preferences.
+    static let pointerGlowMultiplier: CGFloat = 1.9
     private static let eraserRadius: CGFloat = 8
 
     private var textField: NSTextField?
@@ -94,7 +95,10 @@ final class OverlayView: NSView {
     }
 
     override func mouseMoved(with event: NSEvent) {
-        guard state.showCursorFrame else { return }
+        // Re-assert the tool cursor on every move: cursor rectangles only fire
+        // when the pointer crosses a boundary, which is why the cursor used to
+        // change only after jumping to another display.
+        cursorForTool.set()
         updatePointer(to: convert(event.locationInWindow, from: nil))
     }
 
@@ -111,6 +115,7 @@ final class OverlayView: NSView {
     /// The session fades laser marks using the user's configured lifetime.
     func syncPreferences() {
         session.laserLifetime = state.laserLifetime
+        window?.invalidateCursorRects(for: self)
         cursorForTool.set()
     }
 
@@ -268,6 +273,9 @@ final class OverlayView: NSView {
     private func finishTextEditing(commit: Bool, text: String? = nil) {
         guard let field = textField else { return }
         let typed = text ?? field.currentEditor()?.string ?? field.stringValue
+        Diag.log(
+            "text finish commit=\(commit) explicit=\(text != nil) chars=\(typed.count) active=\(session.active?.tool.rawValue ?? "nil") strokes=\(session.strokes.count)"
+        )
         textField = nil
         field.removeFromSuperview()
 
@@ -347,7 +355,7 @@ final class OverlayView: NSView {
     }
 
     private func pointerRect(around point: CGPoint) -> CGRect {
-        let radius = Self.cursorFrameDiameter / 2 + 8
+        let radius = state.pointerSize / 2 * Self.pointerGlowMultiplier + 10
         return CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2)
     }
 
@@ -426,20 +434,54 @@ final class OverlayView: NSView {
         }
     }
 
+    /// A soft glow, an outer ring and an inner ring: the audience finds the
+    /// pointer even on compressed video, and nothing is fully hidden.
     private func drawCursorFrame(in context: CGContext) {
         guard state.showCursorFrame, let point = pointerLocation else { return }
-        let radius = Self.cursorFrameDiameter / 2
-        context.setStrokeColor(state.ink.cgColor(alpha: 0.9))
-        context.setLineWidth(3)
-        context.addEllipse(
-            in: CGRect(
-                x: point.x - radius,
-                y: point.y - radius,
-                width: radius * 2,
-                height: radius * 2
+        let radius = state.pointerSize / 2
+        let glowRadius = radius * Self.pointerGlowMultiplier
+
+        let glowColours = [
+            state.ink.cgColor(alpha: 0.26),
+            state.ink.cgColor(alpha: 0.10),
+            state.ink.cgColor(alpha: 0),
+        ] as CFArray
+        if let gradient = CGGradient(
+            colorsSpace: CGColorSpaceCreateDeviceRGB(),
+            colors: glowColours,
+            locations: [0, 0.55, 1]
+        ) {
+            context.drawRadialGradient(
+                gradient,
+                startCenter: point,
+                startRadius: radius * 0.5,
+                endCenter: point,
+                endRadius: glowRadius,
+                options: []
             )
-        )
+        }
+
+        context.setStrokeColor(state.ink.cgColor(alpha: 0.55))
+        context.setLineWidth(2)
+        context.addEllipse(in: circle(centre: point, radius: radius))
         context.strokePath()
+
+        context.setStrokeColor(state.ink.cgColor(alpha: 0.95))
+        context.setLineWidth(3)
+        context.addEllipse(in: circle(centre: point, radius: radius * 0.68))
+        context.strokePath()
+
+        context.setFillColor(state.ink.cgColor(alpha: 0.95))
+        context.fillEllipse(in: circle(centre: point, radius: 3.5))
+    }
+
+    private func circle(centre: CGPoint, radius: CGFloat) -> CGRect {
+        CGRect(
+            x: centre.x - radius,
+            y: centre.y - radius,
+            width: radius * 2,
+            height: radius * 2
+        )
     }
 
     private func drawHint() {
@@ -583,6 +625,7 @@ extension OverlayView: NSTextFieldDelegate {
     /// Return confirms the text mark, Escape cancels it without leaving drawing
     /// mode.
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        Diag.log("text command \(selector) chars=\(textView.string.count)")
         if selector == #selector(NSResponder.insertNewline(_:)) {
             finishTextEditing(commit: true, text: textView.string)
             return true

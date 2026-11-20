@@ -58,6 +58,22 @@ final class StatusBarController: NSObject {
         let laserItem = NSMenuItem(title: "Laser Duration", action: nil, keyEquivalent: "")
         laserItem.submenu = laserMenu
         menu.addItem(laserItem)
+
+        let sizeMenu = NSMenu()
+        for size in [32.0, 44.0, 60.0, 80.0] {
+            let item = NSMenuItem(
+                title: "\(Int(size)) pt",
+                action: #selector(setPointerSize(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = size
+            item.state = abs(state.pointerSize - CGFloat(size)) < 0.5 ? .on : .off
+            sizeMenu.addItem(item)
+        }
+        let sizeItem = NSMenuItem(title: "Pointer Size", action: nil, keyEquivalent: "")
+        sizeItem.submenu = sizeMenu
+        menu.addItem(sizeItem)
         menu.addItem(.separator())
         menu.addItem(menuItem(title: "Quit Stare", action: #selector(quit), keyEquivalent: "q"))
         statusItem.menu = menu
@@ -81,6 +97,14 @@ final class StatusBarController: NSObject {
         state.laserLifetime = seconds
         for item in sender.menu?.items ?? [] {
             item.state = (item.representedObject as? Double) == seconds ? .on : .off
+        }
+    }
+
+    @objc private func setPointerSize(_ sender: NSMenuItem) {
+        guard let size = sender.representedObject as? Double else { return }
+        state.pointerSize = CGFloat(size)
+        for item in sender.menu?.items ?? [] {
+            item.state = (item.representedObject as? Double) == size ? .on : .off
         }
     }
 

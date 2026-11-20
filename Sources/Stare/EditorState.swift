@@ -8,6 +8,7 @@ final class EditorState: ObservableObject {
     private static let frameKey = "showArmedFrame"
     private static let cursorFrameKey = "showCursorFrame"
     private static let laserLifetimeKey = "laserLifetime"
+    private static let pointerSizeKey = "pointerSize"
 
     @Published var tool: Tool = .pen {
         didSet { Diag.log("tool=\(tool.rawValue)") }
@@ -22,6 +23,10 @@ final class EditorState: ObservableObject {
     /// Presentation mode: the layer is visible but passes clicks through, so the
     /// pointer highlight works while the user keeps working in another app.
     @Published var pointerActive: Bool = false
+    /// Diameter of the pointer highlight ring, in points.
+    @Published var pointerSize: CGFloat {
+        didSet { UserDefaults.standard.set(Double(pointerSize), forKey: Self.pointerSizeKey) }
+    }
     /// Seconds a laser mark stays on screen before fading out.
     @Published var laserLifetime: TimeInterval {
         didSet { UserDefaults.standard.set(laserLifetime, forKey: Self.laserLifetimeKey) }
@@ -40,6 +45,10 @@ final class EditorState: ObservableObject {
             defaults.set(2.5, forKey: Self.laserLifetimeKey)
         }
         showCursorFrame = defaults.bool(forKey: Self.cursorFrameKey)
+        if defaults.object(forKey: Self.pointerSizeKey) == nil {
+            defaults.set(44.0, forKey: Self.pointerSizeKey)
+        }
         laserLifetime = defaults.double(forKey: Self.laserLifetimeKey)
+        pointerSize = CGFloat(defaults.double(forKey: Self.pointerSizeKey))
     }
 }

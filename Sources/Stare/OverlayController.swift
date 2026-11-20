@@ -39,7 +39,8 @@ final class OverlayController {
                           state.$tool.map { _ in () }.eraseToAnyPublisher(),
                           state.$showArmedFrame.map { _ in () }.eraseToAnyPublisher(),
                           state.$showCursorFrame.map { _ in () }.eraseToAnyPublisher(),
-                          state.$laserLifetime.map { _ in () }.eraseToAnyPublisher()] {
+                          state.$laserLifetime.map { _ in () }.eraseToAnyPublisher(),
+                          state.$pointerSize.map { _ in () }.eraseToAnyPublisher()] {
             publisher.sink { [weak self] in self?.repaintCanvases() }.store(in: &cancellables)
         }
     }
