@@ -184,7 +184,7 @@ function Demo({ elements }: { elements: DemoElements }) {
       <div
         role="toolbar"
         aria-label="Stare drawing tools"
-        class="pointer-events-auto mx-auto mt-4 flex max-w-full flex-wrap items-center justify-center gap-0.5 rounded-[14px] border border-white/12 bg-chrome/82 px-3 py-2 font-mac shadow-toolbar backdrop-blur-xl md:absolute md:top-[7%] md:left-1/2 md:mt-0 md:w-max md:-translate-x-1/2 md:flex-nowrap"
+        class="pointer-events-auto mx-auto mt-4 flex max-w-full flex-wrap items-center justify-center gap-0.5 rounded-[14px] border border-white/12 bg-chrome/82 px-3 py-2 font-mac shadow-toolbar backdrop-blur-xl md:absolute md:top-[16%] md:left-1/2 md:mt-0 md:w-max md:-translate-x-1/2 md:flex-nowrap"
       >
         {TOOLS.map((t) => (
           <ToolbarButton
