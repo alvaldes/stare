@@ -24,8 +24,8 @@ S14. Dibujar no pide permisos de macOS. Cada feature que lee píxeles los pide p
 | ID | Tarea | Specs | Ruta | Commit |
 | --- | --- | --- | --- | --- |
 | T1 | Modelo vectorial, geometría y sesión de dibujo (`StareCore`) con tests | S6–S8, S14 | parent | 8a2bead |
-| T2 | Shell de barra de menú, atajo global y overlay no-activante multi-display | S3–S5 | parent | 541388e |
-| T3 | Toolbar flotante con herramientas e tintas | S6–S7 | parent | 541388e |
+| T2 | Shell de barra de menú, atajo global y overlay multi-display | S3–S5 | parent | 541388e, cdb52a9 |
+| T3 | Toolbar flotante con herramientas e tintas | S6–S7 | parent | 541388e, cdb52a9 |
 | T4 | Captura de display y de área con marcas compuestas + permiso de Screen Recording | S12, S14 | parent | _pending_ |
 | T5 | Cards de captura, clipboard y editor con crop y re-anotación | S13 | parent | _pending_ |
 
@@ -39,3 +39,12 @@ L2. Decisiones de alcance: "1. Solo núcleo: dibujar + capturar + copiar  2. mac
 L3. "aun no podemos hacer eso porque no me gusta el nombre (trazo) necesito otro nombre y podemos comenzar".
 
 L4. Nombre elegido por el usuario: "Stare". Verificado: sin app de anotación de pantalla con ese nombre; existen "Stare Network" (otra categoría) y "StarePatrol" (salud visual).
+
+L5. Reporte de la primera prueba manual: "mira la prueba dio varias cosas:
+1. no pinta nada en ninguna pantalla sobre ninguna app
+2. no se puede mover la posicion del dock
+3. si el foco esta en un monitor ahi es donde debe estar el dock no en el principal siempre
+4. hoy si cambio de space no importa porque el dock se mantiene pero no deberia de moverse del space en el que se invoco si ya se empezo a pintar.
+5. una pregunta que hiciste es que si aparecia el overlay y creo que no lo veo"
+
+L6. Corrección (cdb52a9): los cinco síntomas comparten una causa — la app accesoria estaba inactiva y macOS consumía el click para activarla, así que nunca llegaba a `mouseDown`; sin Esc tampoco había salida, y el overlay invisible quedó tapando el Dock real. Se activa la app al entrar y se devuelve el foco a la app anterior al salir, el overlay toma key status y first responder, se agrega un hint visible de 2 s, la palette se arrastra con `performDrag` y se ancla al display del puntero, y deja de seguir Spaces. S5 se reescribe: entrar al modo dibujo sí activa Stare de forma invisible; al salir, el foco vuelve a la app que estaba adelante.
