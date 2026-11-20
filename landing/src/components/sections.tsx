@@ -1,11 +1,10 @@
-import { INKS, TOOLS } from '../demo/model'
 import { releasesUrl, repoUrl, site } from '../site'
 import { Aurora } from './Backdrop'
 import { HeroScene } from './HeroScene'
 import { DownloadButton, Kbd, Logo } from './ui'
 
-const container = 'mx-auto max-w-[1240px] px-4 md:px-8'
-const sectionTitle = 'text-[clamp(1.75rem,3.2vw,2.5rem)] leading-[1.1] font-bold tracking-[-0.02em]'
+export const container = 'mx-auto max-w-[1240px] px-4 md:px-8'
+export const sectionTitle = 'text-[clamp(1.75rem,3.2vw,2.5rem)] leading-[1.1] font-bold tracking-[-0.02em]'
 
 export function Nav() {
   return (
@@ -99,111 +98,6 @@ export function Hero() {
         <path d="M206 204l22 22 18-28" class="origin-[228px_224px] motion-safe:animate-pop-in" />
       </svg>
     </section>
-  )
-}
-
-const steps = [
-  {
-    title: 'Press ⌥⇧A',
-    body: 'A clear sheet covers every display, even full-screen apps. The app underneath keeps focus, so you can keep working.',
-  },
-  {
-    title: 'Mark it up',
-    body: 'Pen, highlighter, arrows, lines, boxes, ellipses and numbered steps, in eight inks. Each tool is a single key.',
-  },
-  {
-    title: 'Press S, then paste',
-    body: 'Stare captures the screen with your marks and drops it on a card in the corner. Copy it, save it or drag it out.',
-  },
-]
-
-export function Steps() {
-  return (
-    <section aria-labelledby="how-title" class={`${container} py-20 md:py-28`}>
-      <h2 id="how-title" data-reveal class={sectionTitle}>
-        How it works
-      </h2>
-      <ol class="mt-10 grid gap-10 md:grid-cols-3 md:gap-8">
-        {steps.map((step, i) => (
-          <li data-reveal style={{ '--delay': `${i * 140}ms` }} class="relative pt-6">
-            <span aria-hidden="true" class="rule-draw absolute inset-x-0 top-0 h-0.5 bg-graphite" />
-            <span
-              aria-hidden="true"
-              class="grid size-[26px] place-items-center rounded-full bg-ink-red font-mac text-[14px] font-semibold text-white shadow-[0_1px_4px_rgb(0_0_0/0.18)]"
-            >
-              {i + 1}
-            </span>
-            <h3 class="mt-5 text-[20px] font-bold tracking-tight">{step.title}</h3>
-            <p class="mt-2 max-w-[34ch] leading-relaxed text-muted">{step.body}</p>
-          </li>
-        ))}
-      </ol>
-    </section>
-  )
-}
-
-const actions = [
-  { keys: '⌥⇧A', what: 'Start drawing over any app' },
-  { keys: 'S', what: 'Capture the whole screen with your marks' },
-  { keys: '⇧S', what: 'Capture an area you select' },
-  { keys: '⌘Z', what: 'Undo the last mark' },
-  { keys: 'Esc', what: 'Clear every mark and stop drawing' },
-]
-
-export function Shortcuts() {
-  return (
-    <section id="shortcuts" aria-labelledby="shortcuts-title" class="relative scroll-mt-20 overflow-hidden bg-paper">
-      <div aria-hidden="true" class="bg-dots pointer-events-none absolute inset-0 opacity-70" />
-      <div class={`${container} relative py-20 md:py-28`}>
-        <div data-reveal>
-          <h2 id="shortcuts-title" class={sectionTitle}>
-            Every tool is one key away
-          </h2>
-          <p class="mt-3 max-w-[36rem] text-[17px] leading-relaxed text-muted">
-            While you draw, single keys switch tools and inks. Go ahead and press one: the list below answers.
-          </p>
-        </div>
-
-        <div class="mt-12 grid gap-12 md:grid-cols-[1.1fr_1fr_1.3fr] md:gap-10">
-          <ShortcutList title="Tools" delay={0} rows={TOOLS.map((t) => ({ keys: t.key, what: t.name }))} />
-          <div data-reveal style={{ '--delay': '120ms' }}>
-            <h3 class="border-b border-rule pb-3 text-[15px] font-semibold">Inks</h3>
-            <ul class="mt-1">
-              {INKS.map((ink) => (
-                <li data-key={ink.key} class="-mx-2 flex items-center gap-3 rounded-md border-b border-rule/60 px-2 py-2.5 text-[15px]">
-                  <Kbd>{ink.key}</Kbd>
-                  <span
-                    aria-hidden="true"
-                    class="size-3.5 rounded-full ring-1 ring-graphite/15"
-                    style={{ backgroundColor: ink.hex }}
-                  />
-                  {ink.name}
-                </li>
-              ))}
-            </ul>
-          </div>
-          <ShortcutList title="Actions" delay={240} rows={actions} />
-        </div>
-      </div>
-    </section>
-  )
-}
-
-function ShortcutList({ title, rows, delay }: { title: string; rows: { keys: string; what: string }[]; delay: number }) {
-  return (
-    <div data-reveal style={{ '--delay': `${delay}ms` }}>
-      <h3 class="border-b border-rule pb-3 text-[15px] font-semibold">{title}</h3>
-      <dl class="mt-1">
-        {rows.map((row) => (
-          <div data-key={row.keys} class="-mx-2 flex items-center gap-3 rounded-md border-b border-rule/60 px-2 py-2.5 text-[15px]">
-            <dt class="w-12 shrink-0">
-              <Kbd>{row.keys}</Kbd>
-            </dt>
-            <dd>{row.what}</dd>
-          </div>
-        ))}
-      </dl>
-    </div>
   )
 }
 

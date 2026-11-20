@@ -2,6 +2,7 @@
 import { runClock } from '../demo/clock'
 import { fitLivePage } from './browser'
 import { mountDemo } from './demo'
+import { mountKeyboardPanel } from './keyboard'
 import { enableDownloads } from './download'
 import { lightUpShortcuts, revealOnScroll, trackSpotlights } from './effects'
 
@@ -10,6 +11,10 @@ if (demo) mountDemo(demo)
 
 const clock = document.getElementById('demo-clock')
 if (clock) runClock(clock)
+
+const keyPreview = document.getElementById('key-preview')
+const shortcuts = document.getElementById('shortcuts')
+if (keyPreview && shortcuts) mountKeyboardPanel(keyPreview, shortcuts)
 
 const livePage = document.getElementById('demo-page')
 if (livePage instanceof HTMLIFrameElement) fitLivePage(livePage)

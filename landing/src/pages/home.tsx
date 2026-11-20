@@ -1,6 +1,8 @@
 import { HeroBackdrop } from '../components/Backdrop'
 import { Demo } from '../components/Demo'
-import { Download, Faq, Footer, Hero, Nav, Principles, Shortcuts, Steps } from '../components/sections'
+import { Shortcuts } from '../components/Keyboard'
+import { Download, Faq, Footer, Hero, Nav, Principles } from '../components/sections'
+import { Steps } from '../components/Steps'
 
 export function Home() {
   return (
