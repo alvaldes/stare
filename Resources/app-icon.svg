@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Stare app icon. Same artwork as landing/public/favicon.svg (aurora glass
+       plus the open nib) scaled onto the macOS icon grid: an 824 square with a
+       185 corner radius inside a 1024 canvas. Generated into AppIcon.icns by
+       Scripts/icons.sh; never redrawn by hand. -->
+  <defs>
+    <linearGradient id="aurora" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7fa3db"/>
+      <stop offset=".55" stop-color="#b3aee8"/>
+      <stop offset="1" stop-color="#f1c2b0"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".55"/>
+      <stop offset=".5" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="shadow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#1c2030" flood-opacity=".3"/>
+    </filter>
+    <filter id="lift" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#1c2030" flood-opacity=".22"/>
+    </filter>
+  </defs>
+
+  <g transform="translate(100 100) scale(12.875)">
+    <rect width="64" height="64" rx="14.37" fill="url(#aurora)" filter="url(#shadow)"/>
+    <rect width="64" height="64" rx="14.37" fill="url(#sheen)"/>
+    <rect x=".5" y=".5" width="63" height="63" rx="13.87" fill="none"
+          stroke="#fff" stroke-opacity=".55"/>
+
+    <!-- Fountain-pen nib: breather hole plus a slit that runs out through the
+         point, so the tip splits into two tines like a real nib. -->
+    <mask id="nib" maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64">
+      <path d="M32 4c7.5 6.5 12 15.5 10 28.5L32 58 22 32.5C20 19.5 24.5 10.5 32 4z" fill="#fff"/>
+      <circle cx="32" cy="27" r="3.2" fill="#000"/>
+      <path d="M30.2 28.5h3.6v31h-3.6z" fill="#000"/>
+    </mask>
+    <g transform="rotate(32 32 32)" filter="url(#lift)">
+      <rect width="64" height="64" fill="#fff" mask="url(#nib)"/>
+    </g>
+  </g>
+</svg>

@@ -19,6 +19,16 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Stare"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 
+# The menu bar glyph is drawn from a path in StatusBarController, so the only
+# asset the bundle needs is the app icon.
+for asset in AppIcon.icns; do
+    if [ ! -f "Resources/$asset" ]; then
+        echo "error: Resources/$asset missing; run Scripts/icons.sh" >&2
+        exit 1
+    fi
+    cp "Resources/$asset" "$APP/Contents/Resources/$asset"
+done
+
 if [ -z "${CODESIGN_IDENTITY:-}" ]; then
     CODESIGN_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
         | awk -F'"' '/Apple Development/ {print $2; exit}')"
