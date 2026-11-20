@@ -29,7 +29,8 @@ S9. CTA principal: descargar la app. Apunta al último GitHub Release; mientras 
 | T8 | Logo: plumilla abierta sobre vidrio aurora + glifo relleno para barra de menú | S6 | inline | hecho, sin commit | |
 | T8b | Nav alineado al contenedor y logo centrado; mini-escena animada en el hero (dibujar → S → Copied → chat) | S6 | inline | hecho, sin commit | |
 | T9 | Commitear T2–T8b en slices en `feat/landing` y mergear a main sin borrar la rama | S1 | inline | hecho | c92fbbe..3f4f820, merge ccf10d2 |
-| T19 | Barra de menú real (manzana SVG, hora real) y Safari con el portfolio en vivo (iframe liviano) | S5–S6 | inline | hecho | ver commit |
+| T19 | Barra de menú real (manzana SVG, hora real) y Safari con el portfolio en vivo (iframe liviano), siempre en oscuro | S5–S6 | inline | hecho | 9213e6c, 03cd65e |
+| T20 | Verificar en Safari y Firefox que el iframe muestre el portfolio en oscuro (color-scheme del iframe → prefers-color-scheme); probado solo en Chromium | S6 | — | pendiente | |
 | T10 | Licencia (decisión del usuario) y repo público `alvaldes/stare`; hoy los links dan 404 y "open source" no es cierto aún | S9 | — | pendiente, bloquea publicar | |
 | T11 | Primer deploy: `pnpm wrangler login` (usuario, interactivo) + `pnpm deploy` | S3–S4 | — | pendiente, bloquea publicar | |
 | T12 | Imagen og:image generada en el build para previews en redes | S6 | inline | pendiente | |
