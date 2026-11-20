@@ -122,6 +122,17 @@ enum SelfTest {
 
         panel.orderOut(nil)
 
+        // Pin is controller state the view cannot show: every layer has to stop
+        // taking clicks while the marks stay visible, and come back on unpin.
+        let controller = OverlayController(captureService: CaptureService())
+        controller.activate()
+        report.append("pin before=\(controller.interactiveCanvasCount) pinned=\(controller.isPinned)")
+        controller.togglePin()
+        report.append("pin on=\(controller.interactiveCanvasCount) pinned=\(controller.isPinned)")
+        controller.togglePin()
+        report.append("pin off=\(controller.interactiveCanvasCount) pinned=\(controller.isPinned)")
+        controller.deactivate(restoringFocus: false)
+
         // Palette in both system appearances: the same view must read on a light
         // and on a dark system, which a screenshot of one theme cannot prove.
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {

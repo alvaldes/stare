@@ -29,7 +29,7 @@ the settings form in both system appearances, and a mark-composition PNG.
 
 | Where | Keys |
 | --- | --- |
-| Anywhere | `⌥⇧A` draw over the screen · `⌥⇧M` pointer highlight |
+| Anywhere | `⌥⇧A` draw over the screen · `⌥⇧M` pointer highlight · `⌥⇧P` pin or unpin the drawing so clicks pass through |
 | Drawing | `P` pen · `H` highlighter · `A` arrow · `L` line · `R` rectangle · `O` ellipse · `T` text · `C` numbered step · `F` laser · `E` eraser |
 | Drawing | `1`–`8` inks (red, orange, yellow, green, blue, purple, white, black) · `⌘Z` undo · `⇧⌘Z` redo (across displays) · `Esc` clear and leave |
 | Drawing | hold `⇧` for a straight line with pen/highlighter, or a square/circle with rectangle/ellipse |

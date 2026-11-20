@@ -3,24 +3,32 @@ import AppKit
 /// Menu bar entry point. Stare has no Dock icon and no main window, so the menu
 /// carries only the actions that are not preferences; everything configurable
 /// lives in Settings.
-final class StatusBarController: NSObject {
+final class StatusBarController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
     private let onDraw: () -> Void
     private let onClear: () -> Void
     private let onPointerToggle: () -> Void
+    private let onPinToggle: () -> Void
     private let onOpenSettings: () -> Void
+    /// Asked when the menu opens, so a checkmark never shows a stale pin state.
+    private let isPinned: () -> Bool
     private let pointerItem = NSMenuItem(title: "Pointer Highlight  ⌥⇧M", action: nil, keyEquivalent: "")
+    private let pinItem = NSMenuItem(title: "Pin Drawing  ⌥⇧P", action: nil, keyEquivalent: "")
 
     init(
         onDraw: @escaping () -> Void,
         onClear: @escaping () -> Void,
         onPointerToggle: @escaping () -> Void,
-        onOpenSettings: @escaping () -> Void
+        onPinToggle: @escaping () -> Void,
+        onOpenSettings: @escaping () -> Void,
+        isPinned: @escaping () -> Bool
     ) {
         self.onDraw = onDraw
         self.onClear = onClear
         self.onPointerToggle = onPointerToggle
+        self.onPinToggle = onPinToggle
         self.onOpenSettings = onOpenSettings
+        self.isPinned = isPinned
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
@@ -36,12 +44,23 @@ final class StatusBarController: NSObject {
         pointerItem.target = self
         menu.addItem(pointerItem)
 
+        pinItem.action = #selector(togglePin)
+        pinItem.target = self
+        menu.addItem(pinItem)
+
         menu.addItem(menuItem(title: "Clear Drawing", action: #selector(clear)))
         menu.addItem(.separator())
         menu.addItem(menuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(.separator())
         menu.addItem(menuItem(title: "Quit Stare", action: #selector(quit), keyEquivalent: "q"))
+        menu.delegate = self
         statusItem.menu = menu
+    }
+
+    /// The pin is toggled by a global hotkey too, so the checkmark is read when
+    /// the menu opens instead of being kept in sync by hand.
+    func menuWillOpen(_ menu: NSMenu) {
+        pinItem.state = isPinned() ? .on : .off
     }
 
     private func menuItem(
@@ -131,6 +150,7 @@ final class StatusBarController: NSObject {
     @objc private func draw() { onDraw() }
     @objc private func clear() { onClear() }
     @objc private func togglePointer() { onPointerToggle() }
+    @objc private func togglePin() { onPinToggle() }
     @objc private func openSettings() { onOpenSettings() }
     @objc private func quit() { NSApp.terminate(nil) }
 }

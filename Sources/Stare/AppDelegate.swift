@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var settings = SettingsWindowController(state: overlay.state)
     private var hotkey: GlobalHotkey?
     private var pointerHotkey: GlobalHotkey?
+    private var pinHotkey: GlobalHotkey?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Diag.reset()
@@ -16,7 +17,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onDraw: { [weak self] in self?.overlay.toggle() },
             onClear: { [weak self] in self?.overlay.clearAll() },
             onPointerToggle: { [weak self] in self?.overlay.togglePointer() },
-            onOpenSettings: { [weak self] in self?.settings.show() }
+            onPinToggle: { [weak self] in self?.overlay.togglePin() },
+            onOpenSettings: { [weak self] in self?.settings.show() },
+            isPinned: { [weak self] in self?.overlay.isPinned ?? false }
         )
 
         hotkey = GlobalHotkey(
@@ -33,6 +36,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.overlay.togglePointer()
         }
 
+        // Pinning is only useful while another app has focus, so it has to be a
+        // global shortcut and not a local key monitor.
+        pinHotkey = GlobalHotkey(
+            keyCode: HotkeyDefaults.pinKeyCode,
+            carbonModifiers: HotkeyDefaults.carbonModifiers
+        ) { [weak self] in
+            self?.overlay.togglePin()
+        }
+
         // Ask for Screen Recording now, not when the user is mid-explanation.
         // A missing permission must never surface as a system prompt on the S key.
         if !captureService.hasPermission {
@@ -41,7 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         Diag.log(
-            "hotkeys draw=\(hotkey != nil) pointer=\(pointerHotkey != nil) policy=\(NSApp.activationPolicy().rawValue) capture=\(captureService.hasPermission)"
+            "hotkeys draw=\(hotkey != nil) pointer=\(pointerHotkey != nil) pin=\(pinHotkey != nil) policy=\(NSApp.activationPolicy().rawValue) capture=\(captureService.hasPermission)"
         )
     }
 

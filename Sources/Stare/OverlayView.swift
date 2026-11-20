@@ -545,7 +545,10 @@ final class OverlayView: NSView {
     /// Drawing mode is an invisible layer by design, so the first moment of the
     /// session needs a visible signal: a pill that names the way out.
     func showIntroHint() {
-        showHint("Drawing · esc to clear · \(HotkeyDefaults.displayName) to exit", seconds: 2.2)
+        showHint(
+            "Drawing · esc to clear · \(HotkeyDefaults.pinDisplayName) pin · \(HotkeyDefaults.displayName) exit",
+            seconds: 2.2
+        )
     }
 
     /// Same pill, used for things the user must know without a dialog: a missing

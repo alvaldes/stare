@@ -100,4 +100,7 @@ enum HotkeyDefaults {
 
     static let pointerKeyCode = UInt32(kVK_ANSI_M)
     static let pointerDisplayName = "⌥⇧M"
+
+    static let pinKeyCode = UInt32(kVK_ANSI_P)
+    static let pinDisplayName = "⌥⇧P"
 }

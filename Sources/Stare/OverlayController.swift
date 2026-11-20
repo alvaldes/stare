@@ -7,6 +7,13 @@ import StareCore
 final class OverlayController {
     let state = EditorState()
     private(set) var isActive = false
+    /// Pinned drawing: the marks stay on screen and every click goes to the app
+    /// underneath, so the user can keep working while the drawing stays visible.
+    private(set) var isPinned = false
+    /// Read by the self test: drawing layers that still take clicks.
+    var interactiveCanvasCount: Int {
+        canvases.values.filter { !$0.panel.ignoresMouseEvents }.count
+    }
 
     private var canvases: [CGDirectDisplayID: DisplayCanvas] = [:]
     /// Global undo order across displays: Command-Z undoes the last mark on
@@ -105,6 +112,42 @@ final class OverlayController {
         if isActive { deactivate() } else { activate() }
     }
 
+    /// Leaves the marks on screen and stops taking input, so the next click lands
+    /// in the app underneath. Nothing else about the session changes, so the
+    /// drawing is still there to continue when it is unpinned.
+    func togglePin() {
+        if isPinned { unpin() } else { pin() }
+    }
+
+    func pin() {
+        guard isActive, !isPinned else {
+            Diag.log("pin ignored active=\(isActive)")
+            return
+        }
+        isPinned = true
+        for canvas in canvases.values {
+            canvas.panel.ignoresMouseEvents = true
+        }
+        // A pinned toolbar would still swallow clicks in its corner, and its
+        // buttons cannot be used anyway while the overlay is click-through.
+        hideToolbar()
+        Diag.log("pin on displays=\(canvases.count)")
+    }
+
+    func unpin() {
+        guard isPinned else { return }
+        isPinned = false
+        for canvas in canvases.values {
+            canvas.panel.ignoresMouseEvents = false
+            canvas.view.syncPreferences()
+            canvas.panel.makeFirstResponder(canvas.view)
+            canvas.view.needsDisplay = true
+        }
+        showToolbar()
+        canvasUnderPointer()?.panel.makeKey()
+        Diag.log("pin off")
+    }
+
     /// Presentation mode: a click-through layer that follows the pointer so the
     /// audience sees where the user is while they keep working in another app.
     func togglePointer() {
@@ -195,6 +238,7 @@ final class OverlayController {
     func deactivate(restoringFocus: Bool = true) {
         guard isActive else { return }
         isActive = false
+        isPinned = false
 
         for canvas in canvases.values { canvas.panel.orderOut(nil) }
         hideToolbar()
