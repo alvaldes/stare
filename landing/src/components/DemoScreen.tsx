@@ -140,9 +140,9 @@ export function DemoScreen() {
           stroke-linejoin="round"
         />
 
-        {/* Under the live page: what captures show, since the iframe can't be read. */}
-        <rect x={v.x} y={v.y} width={v.width} height={v.height} fill="#ffffff" />
-        <text x={v.x + v.width / 2} y={v.y + v.height / 2} font-size="22" font-weight="600" fill="#c3c8d3" text-anchor="middle">
+        {/* Under the live page, in its dark theme: what captures show, since the iframe can't be read. */}
+        <rect x={v.x} y={v.y} width={v.width} height={v.height} fill="#16181f" />
+        <text x={v.x + v.width / 2} y={v.y + v.height / 2} font-size="22" font-weight="600" fill="#4a5060" text-anchor="middle">
           {PORTFOLIO_HOST}
         </text>
       </g>

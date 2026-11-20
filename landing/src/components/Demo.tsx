@@ -9,10 +9,15 @@ const PAGE_HEIGHT = Math.round((PAGE_WIDTH * BROWSER_VIEWPORT.height) / BROWSER_
 const pct = (value: number, of: number) => `${((value / of) * 100).toFixed(4)}%`
 
 /**
- * The creator's portfolio, live, as light as an iframe gets: sandboxed with no
- * permissions (no scripts, forms, cookies or storage; the site is static Astro
- * and reads fine without JS), lazy-loaded, no referrer, and inert so it never
- * takes the pointer or keyboard from the drawing layer above it.
+ * The creator's portfolio, live, always in its dark theme, kept as light as
+ * that allows:
+ * - sandbox="allow-scripts" and nothing else: the site's theme script may run,
+ *   but there are no cookies, storage, forms or popups.
+ * - color-scheme: dark on the iframe makes the page see
+ *   prefers-color-scheme: dark; with no saved preference (no storage in the
+ *   sandbox) its theme script picks dark. Verified in Chromium.
+ * - Lazy-loaded, no referrer, and inert so it never takes the pointer or
+ *   keyboard from the drawing layer above it.
  * client/browser.ts scales it to the window; until then it shows top-left.
  */
 function LivePage() {
@@ -33,13 +38,13 @@ function LivePage() {
         src={PORTFOLIO_URL}
         title={`${PORTFOLIO_HOST}, shown inside the pretend Safari window`}
         loading="lazy"
-        sandbox=""
+        sandbox="allow-scripts"
         referrerpolicy="no-referrer"
         tabindex={-1}
         inert
         width={PAGE_WIDTH}
         height={PAGE_HEIGHT}
-        class="block origin-top-left border-0 bg-white"
+        class="block origin-top-left border-0 bg-graphite scheme-dark"
       />
     </div>
   )
