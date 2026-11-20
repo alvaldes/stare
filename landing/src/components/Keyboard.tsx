@@ -171,21 +171,41 @@ export function Shortcuts() {
         </div>
 
         <div data-reveal style={{ '--delay': '120ms' }} class="mt-12 grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
-          {/* Key sizes are in container units, so the keyboard scales as one
-              piece. Below 720px it keeps that width and scrolls sideways. */}
-          {/* Vertical padding leaves room for the shadow, which overflow-x clips. */}
-          <div class="-mx-4 overflow-x-auto px-4 pt-1 pb-10 md:mx-0 md:overflow-visible md:px-0 md:pb-0">
-            <div class="@container min-w-[720px]">
-              <div class="flex flex-col gap-[0.6cqw] rounded-[1.8cqw] bg-gradient-to-b from-board to-key p-[1.3cqw] shadow-window ring-1 ring-black/40">
-                {rows.map((row) => (
-                  <div class="flex gap-[0.55cqw]">
-                    {row.map((spec) => (
-                      <Key spec={spec} />
-                    ))}
-                  </div>
-                ))}
+          {/* min-w-0: as a grid item this would otherwise grow to the keyboard's
+              720px minimum and drag the panel off-screen on phones. */}
+          <div class="min-w-0">
+            {/* Key sizes are in container units, so the keyboard scales as one
+                piece. Below 720px it keeps that width and scrolls sideways;
+                the vertical padding leaves room for the shadow overflow clips. */}
+            <div class="-mx-4 overflow-x-auto px-4 pt-1 pb-8 md:mx-0 md:overflow-visible md:px-0 md:pb-0">
+              <div class="@container min-w-[720px]">
+                <div class="flex flex-col gap-[0.6cqw] rounded-[1.8cqw] bg-gradient-to-b from-board to-key p-[1.3cqw] shadow-window ring-1 ring-black/40">
+                  {rows.map((row) => (
+                    <div class="flex gap-[0.55cqw]">
+                      {row.map((spec) => (
+                        <Key spec={spec} />
+                      ))}
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
+            {/* Two shortcuts are key combinations, which a keyboard of single
+                keys can't show on its own. */}
+            <ul class="flex flex-wrap gap-x-8 gap-y-3 text-[15px] text-muted md:mt-6" aria-label="Key combinations">
+              <li class="flex items-center gap-2">
+                <span class="flex items-center gap-1">
+                  <Kbd>⌥</Kbd>+<Kbd>⇧</Kbd>+<Kbd>A</Kbd>
+                </span>
+                start drawing over any app
+              </li>
+              <li class="flex items-center gap-2">
+                <span class="flex items-center gap-1">
+                  <Kbd>⌘</Kbd>+<Kbd>Z</Kbd>
+                </span>
+                undo the last mark
+              </li>
+            </ul>
           </div>
           {/* Filled in by client/keyboard.tsx; without JavaScript the keys still list every shortcut. */}
           <div id="key-preview" class="min-h-[320px]" />
