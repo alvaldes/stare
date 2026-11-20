@@ -26,10 +26,12 @@ S14. Dibujar no pide permisos de macOS. Cada feature que lee píxeles los pide p
 | T1 | Modelo vectorial, geometría y sesión de dibujo (`StareCore`) con tests | S6–S8, S14 | parent | 8a2bead |
 | T2 | Shell de barra de menú, atajo global y overlay multi-display | S3–S5 | parent | 541388e, cdb52a9 |
 | T3 | Toolbar flotante con herramientas e tintas | S6–S7 | parent | 541388e, cdb52a9 |
+| T4a | Núcleo de captura: servicio ScreenCaptureKit, permiso y compositor de marcas (worker, worktree) | S12, S14, S30 | worker | _pending_ |
+| T4b | Integración de captura en el overlay: selección de área, atajos S / ⇧S y portapapeles (parent) | S12, S30 | parent | _pending_ |
 | T4 | Captura de display y de área con marcas compuestas + permiso de Screen Recording | S12, S14 | parent | _pending_ |
 | T5 | Cards de captura, clipboard y editor con crop y re-anotación | S13 | parent | _pending_ |
 | T7 | Herramientas faltantes del dock: eraser, text, laser y marco del cursor | S21–S24 | parent | _pending_ |
-| T6 | Ventana de configuración: ubicación de la palette y alcance del overlay | S15, S16 | parent | _pending_ |
+| T6 | Ventana de Settings que reúne las preferencias existentes (worker, worktree) | S31 | worker | _pending_ |
 
 ## Log
 
@@ -107,3 +109,8 @@ L29. Estilo: el even-odd sobre un squircle no perforaba el centro y se veía com
 L30. Hueco real encontrado al combinar herramientas: un texto sin confirmar quedaba como editor pegado y su marca se perdía al cambiar de herramienta. Ahora cualquier cambio de herramienta o nuevo trazo confirma el texto pendiente.
 
 L31. "quitemos el marco del modo dibujo no quier que esto se pueda hacer desde ahi". Se quitó el halo del camino de dibujo, el botón de la palette y la tecla `M` dentro del modo dibujo; queda sólo `⌥⇧M` y el ítem del menú.
+
+S30. La captura incluye las marcas y excluye la palette, el marco de dibujo, el highlight del puntero y el láser. Las marcas se recomponen desde el modelo vectorial sobre el frame capturado, a la escala de píxeles del display, no se toma una foto de la capa.
+S31. La ventana de Settings reúne las preferencias que ya existen y funcionan: marco de dibujo, duración del láser, tamaño, forma, glow y fade del puntero. Ese contenido sale del menú de la barra, que queda con Settings, Pointer Highlight y Quit. Ubicación de la palette y alcance del overlay llegan cuando exista el comportamiento (T6 queda reabrible).
+
+L32. "dale avanza y si crees que se puede hacer trabajo en paralelo prepara todo con varios agentes trabajando y si es necesario en su worktree". T4 se parte en T4a (núcleo de captura, worker en worktree) y T4b (integración, parent), y T6 (Settings) corre en paralelo en su propio worktree con superficies de edición disjuntas.
