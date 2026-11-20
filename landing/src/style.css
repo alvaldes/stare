@@ -1,0 +1,47 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/schibsted-grotesk';
+
+/*
+ * Stare's palette borrows from the app itself: a cool aluminium desk, graphite
+ * text, and the eight inks of the drawing toolbar. Red is reserved for marks.
+ */
+@theme {
+  --font-sans: 'Schibsted Grotesk Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mac: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+
+  --color-desk: #e9edf3;
+  --color-paper: #ffffff;
+  --color-graphite: #1c2030;
+  --color-muted: #5b6275;
+  --color-rule: #d3d9e3;
+
+  --color-ink-red: #ff3b30;
+  --color-ink-orange: #ff9500;
+  --color-ink-yellow: #ffcc00;
+  --color-ink-green: #34c759;
+  --color-ink-blue: #007aff;
+  --color-ink-purple: #b052de;
+  --color-ink-white: #ffffff;
+  --color-ink-black: #000000;
+}
+
+@layer base {
+  html {
+    @apply bg-desk text-graphite antialiased;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply font-sans;
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-ink-blue;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+}
