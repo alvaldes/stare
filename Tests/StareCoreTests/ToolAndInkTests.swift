@@ -51,6 +51,25 @@ final class ToolAndInkTests: XCTestCase {
         XCTAssertFalse(Tool.pen.isEraser)
     }
 
+    func testRouterResolvesToolsAndInks() {
+        XCTAssertEqual(ShortcutRouter.resolve("p"), .tool(.pen))
+        XCTAssertEqual(ShortcutRouter.resolve("O"), .tool(.ellipse))
+        XCTAssertEqual(ShortcutRouter.resolve("3"), .ink(.yellow))
+        XCTAssertEqual(ShortcutRouter.resolve("8"), .ink(.black))
+        XCTAssertEqual(ShortcutRouter.resolve("z"), .none)
+        XCTAssertEqual(ShortcutRouter.resolve("0"), .none)
+    }
+
+    func testRouterNeverConfusesToolsAndInks() {
+        // Every tool key must resolve to a tool, every digit to an ink.
+        for tool in Tool.allCases {
+            XCTAssertEqual(ShortcutRouter.resolve(tool.shortcut), .tool(tool))
+        }
+        for ink in Ink.allCases {
+            XCTAssertEqual(ShortcutRouter.resolve(Character("\(ink.number)")), .ink(ink))
+        }
+    }
+
     func testNewToolShortcuts() {
         XCTAssertEqual(Tool.text.shortcut, "T")
         XCTAssertEqual(Tool.laser.shortcut, "F")

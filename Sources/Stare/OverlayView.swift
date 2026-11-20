@@ -495,13 +495,15 @@ final class OverlayView: NSView {
         }
 
         if let character = characters.first {
-            if let tool = ToolShortcut.tool(for: character) {
+            switch ShortcutRouter.resolve(character) {
+            case .tool(let tool):
                 state.tool = tool
                 return
-            }
-            if let digit = character.wholeNumberValue, let ink = Ink.ink(forNumber: digit) {
+            case .ink(let ink):
                 state.ink = ink
                 return
+            case .none:
+                break
             }
             if character.lowercased() == "s" {
                 if event.modifierFlags.contains(.shift) {

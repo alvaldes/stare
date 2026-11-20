@@ -139,3 +139,6 @@ L42. Defecto encontrado al mirar el render: el picker de duración salía vacío
 L43. La ventana de Settings no se veía: `NSHostingView.fittingSize` devuelve 0 antes del primer layout, así que la ventana se creaba con tamaño cero. Ahora usa un tamaño fijo y `--selftest` verifica `frame` y `visible` de la ventana real (420x592, visible=true).
 L44. Preferencias nuevas con su comportamiento: alcance del overlay (todos por defecto) y ubicación de la palette (cursor por defecto, ventana en foco, último display usado). El modo "ventana en foco" se resuelve con la lista de ventanas, sin Accessibility.
 L45. Limpieza: `Diag` no escribe nada salvo que `STARE_DIAG=1` esté en el entorno. Verificado: tras lanzar la app, /tmp/stare.log no se crea.
+
+S35. El editor respeta los mismos atajos que el overlay: teclas de herramienta, 1–8 para tintas, ⌘Z para deshacer y Escape para cancelar el crop o cerrar la ventana. El ruteo de teclas vive en `ShortcutRouter` (StareCore) para que overlay y editor no diverjan.
+L46. Hueco encontrado al revisar el editor: tenía la palette pero ningún atajo de teclado. Se extrajo el ruteo a StareCore con tests y lo usan ambos.

@@ -14,6 +14,7 @@ final class CaptureEditorController {
         }
         windows.append(window)
         window.center()
+        window.makeFirstResponder(window.contentView?.subviews.first { $0 is CaptureEditorCanvas })
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
         // The user may have come from an inactive accessory app: raise the editor
@@ -257,6 +258,48 @@ final class CaptureEditorCanvas: NSView {
         session.extend(to: convert(event.locationInWindow, from: nil))
         session.commit()
         needsDisplay = true
+    }
+
+    // MARK: - Keyboard
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { // Escape
+            if isCropping {
+                isCropping = false
+                cropOrigin = nil
+                cropRect = nil
+                needsDisplay = true
+            } else {
+                window?.close()
+            }
+            return
+        }
+
+        let characters = event.charactersIgnoringModifiers ?? ""
+
+        if event.modifierFlags.contains(.command) {
+            if characters.lowercased() == "z" {
+                undo()
+                return
+            }
+            super.keyDown(with: event)
+            return
+        }
+
+        if let character = characters.first {
+            switch ShortcutRouter.resolve(character) {
+            case .tool(let tool):
+                state?.tool = tool
+                return
+            case .ink(let ink):
+                state?.ink = ink
+                return
+            case .none:
+                break
+            }
+        }
+
+        super.keyDown(with: event)
     }
 
     // MARK: - Actions
