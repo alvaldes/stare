@@ -240,13 +240,31 @@ final class DrawingSessionTests: XCTestCase {
         XCTAssertEqual(session.strokes.first?.textSize, CGSize(width: 120, height: 24))
     }
 
-    func testTextWithoutContentStillProducesAMark() {
+    func testEmptyTextLeavesNoMark() {
         var session = DrawingSession()
         session.begin(at: CGPoint(x: 40, y: 60), tool: .text, ink: .blue)
         session.setActiveText("", size: .zero)
         session.commit()
 
-        XCTAssertEqual(session.strokes.count, 1, "an empty text mark is the user's own empty box")
+        XCTAssertTrue(session.strokes.isEmpty, "a stray click must not leave an invisible box")
+    }
+
+    /// Regression: the click that opens the editor used to commit the empty text
+    /// mark through the drag path, so the text typed afterwards was discarded.
+    func testTextMarkSurvivesAMouseUpBeforeTyping() {
+        var session = DrawingSession()
+        session.begin(at: CGPoint(x: 40, y: 60), tool: .text, ink: .blue)
+
+        // What a stray commit would do; the view no longer does this, and even if
+        // it did, the mark must not be lost silently.
+        session.setActiveText("", size: nil)
+        session.commit()
+        XCTAssertTrue(session.strokes.isEmpty)
+
+        session.begin(at: CGPoint(x: 40, y: 60), tool: .text, ink: .blue)
+        session.setActiveText("abc", size: CGSize(width: 30, height: 24))
+        session.commit()
+        XCTAssertEqual(session.strokes.first?.text, "abc")
     }
 
     func testRemovingAMarkByIdKeepsTheRest() {

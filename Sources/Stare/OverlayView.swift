@@ -17,13 +17,16 @@ final class OverlayView: NSView {
     var onPointerToggle: (() -> Void)?
 
     static let textFont = NSFont.systemFont(ofSize: 20, weight: .regular)
-    /// The pointer highlight is a glow with two rings, sized from preferences.
+    /// The pointer highlight is a thick translucent band with bright edges and a
+    /// soft glow, sized from preferences.
     static let pointerGlowMultiplier: CGFloat = 1.9
+    static let pointerBandRatio: CGFloat = 0.42
     private static let eraserRadius: CGFloat = 8
 
     private var textField: NSTextField?
     private var laserTimer: Timer?
     private var pointerLocation: CGPoint?
+    private var lastPointerChange = Date()
     /// Pointer mode paints only the highlight: no marks, no frame, no hint.
     var showsOnlyPointer = false {
         didSet { needsDisplay = true }
@@ -218,6 +221,11 @@ final class OverlayView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        // Click tools are committed by their own path: numbered steps when
+        // placed, text when the editor confirms. Committing here would close the
+        // text mark the click just opened.
+        guard !state.tool.isClickTool else { return }
+
         let shift = event.modifierFlags.contains(.shift)
         let point = adjusted(convert(event.locationInWindow, from: nil), shift: shift)
         session.extend(to: point, straight: straightConstraint(shift))
@@ -349,13 +357,14 @@ final class OverlayView: NSView {
         let previous = pointerLocation
         guard previous != point else { return }
         pointerLocation = point
+        lastPointerChange = Date()
         var rect = pointerRect(around: point)
         if let previous { rect = rect.union(pointerRect(around: previous)) }
         setNeedsDisplay(rect)
     }
 
     private func pointerRect(around point: CGPoint) -> CGRect {
-        let radius = state.pointerSize / 2 * Self.pointerGlowMultiplier + 10
+        let radius = state.pointerSize / 2 * Self.pointerGlowMultiplier + 12
         return CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2)
     }
 
@@ -434,53 +443,84 @@ final class OverlayView: NSView {
         }
     }
 
-    /// A soft glow, an outer ring and an inner ring: the audience finds the
-    /// pointer even on compressed video, and nothing is fully hidden.
+    /// A thick translucent band with a bright edge on both sides and a soft
+    /// glow, the way the reference app reads on video. The pointer stays visible
+    /// in the middle: nothing is hidden, only framed.
     private func drawCursorFrame(in context: CGContext) {
         guard state.showCursorFrame, let point = pointerLocation else { return }
-        let radius = state.pointerSize / 2
-        let glowRadius = radius * Self.pointerGlowMultiplier
 
-        let glowColours = [
-            state.ink.cgColor(alpha: 0.26),
-            state.ink.cgColor(alpha: 0.10),
-            state.ink.cgColor(alpha: 0),
-        ] as CFArray
-        if let gradient = CGGradient(
-            colorsSpace: CGColorSpaceCreateDeviceRGB(),
-            colors: glowColours,
-            locations: [0, 0.55, 1]
-        ) {
-            context.drawRadialGradient(
-                gradient,
-                startCenter: point,
-                startRadius: radius * 0.5,
-                endCenter: point,
-                endRadius: glowRadius,
-                options: []
-            )
+        let radius = state.pointerSize / 2
+        let band = radius * Self.pointerBandRatio
+        let alpha = idleAlpha
+        let squircle = state.pointerShape == "squircle"
+
+        if state.pointerGlow {
+            let glowColours = [
+                state.ink.cgColor(alpha: 0.26 * alpha),
+                state.ink.cgColor(alpha: 0.10 * alpha),
+                state.ink.cgColor(alpha: 0),
+            ] as CFArray
+            if let gradient = CGGradient(
+                colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                colors: glowColours,
+                locations: [0, 0.55, 1]
+            ) {
+                context.drawRadialGradient(
+                    gradient,
+                    startCenter: point,
+                    startRadius: radius * 0.7,
+                    endCenter: point,
+                    endRadius: radius * Self.pointerGlowMultiplier,
+                    options: []
+                )
+            }
         }
 
-        context.setStrokeColor(state.ink.cgColor(alpha: 0.55))
+        // The band: outer shape minus inner shape, filled between the two.
+        let bandPath = CGMutablePath()
+        bandPath.addPath(shapePath(centre: point, radius: radius, squircle: squircle))
+        bandPath.addPath(shapePath(centre: point, radius: radius - band, squircle: squircle))
+        context.setFillColor(state.ink.cgColor(alpha: 0.5 * alpha))
+        context.addPath(bandPath)
+        context.fillPath(using: .evenOdd)
+
+        // Bright edges on both boundaries.
+        context.setStrokeColor(state.ink.cgColor(alpha: 0.95 * alpha))
         context.setLineWidth(2)
-        context.addEllipse(in: circle(centre: point, radius: radius))
+        context.addPath(shapePath(centre: point, radius: radius, squircle: squircle))
         context.strokePath()
-
-        context.setStrokeColor(state.ink.cgColor(alpha: 0.95))
-        context.setLineWidth(3)
-        context.addEllipse(in: circle(centre: point, radius: radius * 0.68))
+        context.addPath(shapePath(centre: point, radius: radius - band, squircle: squircle))
         context.strokePath()
-
-        context.setFillColor(state.ink.cgColor(alpha: 0.95))
-        context.fillEllipse(in: circle(centre: point, radius: 3.5))
     }
 
-    private func circle(centre: CGPoint, radius: CGFloat) -> CGRect {
-        CGRect(
+    /// Fades the highlight down when the pointer has been still, so a shared
+    /// screen is not permanently framed.
+    private var idleAlpha: CGFloat {
+        guard state.pointerFadeWhenIdle, showsOnlyPointer else { return 1 }
+        let idle = Date().timeIntervalSince(lastPointerChange)
+        guard idle > 1.2 else { return 1 }
+        let progress = min(1, (idle - 1.2) / 0.8)
+        return 1 - 0.75 * progress
+    }
+
+    private func shapePath(centre: CGPoint, radius: CGFloat, squircle: Bool) -> CGPath {
+        let rect = CGRect(
             x: centre.x - radius,
             y: centre.y - radius,
             width: radius * 2,
             height: radius * 2
+        )
+        guard squircle else {
+            let path = CGMutablePath()
+            path.addEllipse(in: rect)
+            return path
+        }
+        let corner = radius * 0.62
+        return CGPath(
+            roundedRect: rect,
+            cornerWidth: corner,
+            cornerHeight: corner,
+            transform: nil
         )
     }
 

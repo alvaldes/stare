@@ -9,6 +9,8 @@ final class StatusBarController: NSObject {
     private let onPointerToggle: () -> Void
     private let frameItem = NSMenuItem(title: "Show Drawing Frame", action: nil, keyEquivalent: "")
     private let pointerItem = NSMenuItem(title: "Pointer Highlight  ⌥⇧M", action: nil, keyEquivalent: "")
+    private var glowMenuItem: NSMenuItem?
+    private var fadeMenuItem: NSMenuItem?
 
     init(
         state: EditorState,
@@ -74,6 +76,30 @@ final class StatusBarController: NSObject {
         let sizeItem = NSMenuItem(title: "Pointer Size", action: nil, keyEquivalent: "")
         sizeItem.submenu = sizeMenu
         menu.addItem(sizeItem)
+
+        let shapeMenu = NSMenu()
+        for (title, value) in [("Circle", "circle"), ("Squircle", "squircle")] {
+            let item = NSMenuItem(title: title, action: #selector(setPointerShape(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = value
+            item.state = state.pointerShape == value ? .on : .off
+            shapeMenu.addItem(item)
+        }
+        let shapeItem = NSMenuItem(title: "Pointer Shape", action: nil, keyEquivalent: "")
+        shapeItem.submenu = shapeMenu
+        menu.addItem(shapeItem)
+
+        let glowItem = NSMenuItem(title: "Pointer Glow", action: #selector(toggleGlow), keyEquivalent: "")
+        glowItem.target = self
+        glowItem.state = state.pointerGlow ? .on : .off
+        glowMenuItem = glowItem
+        menu.addItem(glowItem)
+
+        let fadeItem = NSMenuItem(title: "Fade When Idle", action: #selector(toggleFade), keyEquivalent: "")
+        fadeItem.target = self
+        fadeItem.state = state.pointerFadeWhenIdle ? .on : .off
+        fadeMenuItem = fadeItem
+        menu.addItem(fadeItem)
         menu.addItem(.separator())
         menu.addItem(menuItem(title: "Quit Stare", action: #selector(quit), keyEquivalent: "q"))
         statusItem.menu = menu
@@ -106,6 +132,24 @@ final class StatusBarController: NSObject {
         for item in sender.menu?.items ?? [] {
             item.state = (item.representedObject as? Double) == size ? .on : .off
         }
+    }
+
+    @objc private func setPointerShape(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? String else { return }
+        state.pointerShape = value
+        for item in sender.menu?.items ?? [] {
+            item.state = (item.representedObject as? String) == value ? .on : .off
+        }
+    }
+
+    @objc private func toggleGlow() {
+        state.pointerGlow.toggle()
+        glowMenuItem?.state = state.pointerGlow ? .on : .off
+    }
+
+    @objc private func toggleFade() {
+        state.pointerFadeWhenIdle.toggle()
+        fadeMenuItem?.state = state.pointerFadeWhenIdle ? .on : .off
     }
 
     @objc private func toggleFrame() {

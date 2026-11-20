@@ -124,7 +124,14 @@ public struct DrawingSession: Equatable, Sendable {
             current.points = [first, last]
         }
 
-        let isRenderable = current.points.count >= 2 || current.tool.isClickTool
+        // Text only becomes a mark once it has content: a stray click must not
+        // leave an invisible box behind, and the editor owns that lifetime.
+        let isRenderable: Bool
+        if current.tool == .text {
+            isRenderable = !(current.text ?? "").isEmpty
+        } else {
+            isRenderable = current.points.count >= 2 || current.tool.isClickTool
+        }
         if isRenderable { strokes.append(current) }
         active = nil
     }
