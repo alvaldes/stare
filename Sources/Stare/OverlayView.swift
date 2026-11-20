@@ -27,6 +27,10 @@ final class OverlayView: NSView {
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    /// The panel must take key status on click so tool keys and Escape work
+    /// while the app itself never shows a window or a Dock icon.
+    override var needsPanelToBecomeKey: Bool { true }
+
     override func resetCursorRects() {
         addCursorRect(bounds, cursor: .crosshair)
     }
@@ -49,9 +53,11 @@ final class OverlayView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         // The panel under the pointer owns the keyboard so tool keys always
-        // apply to the display being drawn on. This does not activate the app.
+        // apply to the display being drawn on.
         window?.makeKey()
+        window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
+        NSLog("Stare: mouseDown at %.0f,%.0f tool=%@", point.x, point.y, state.tool.rawValue)
         session.begin(at: point, tool: state.tool, ink: state.ink)
         invalidateActive(previousBounds: nil)
     }
@@ -66,6 +72,7 @@ final class OverlayView: NSView {
         let previousBounds = session.active?.bounds
         session.extend(to: convert(event.locationInWindow, from: nil))
         session.commit()
+        NSLog("Stare: commit strokes=%d", session.strokes.count)
         if let previousBounds {
             setNeedsDisplay(previousBounds)
         } else {
@@ -114,6 +121,56 @@ final class OverlayView: NSView {
         super.keyDown(with: event)
     }
 
+    // MARK: - Drawing mode hint
+
+    private var hintUntil: Date?
+
+    /// Drawing mode is an invisible layer by design, so the first moment of the
+    /// session needs a visible signal: a pill that names the way out.
+    func showIntroHint() {
+        hintUntil = Date().addingTimeInterval(2.2)
+        needsDisplay = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in
+            self?.hintUntil = nil
+            self?.needsDisplay = true
+        }
+    }
+
+    private func drawHint() {
+        guard let until = hintUntil, Date() < until else { return }
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+
+        let text = "Drawing · esc to clear · \(HotkeyDefaults.displayName) to exit" as NSString
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+            .foregroundColor: NSColor.white,
+        ]
+        let textSize = text.size(withAttributes: attributes)
+        let padding = CGSize(width: 18, height: 10)
+        let pill = CGRect(
+            x: (bounds.midX - (textSize.width + padding.width * 2) / 2).rounded(),
+            y: 28,
+            width: textSize.width + padding.width * 2,
+            height: textSize.height + padding.height * 2
+        )
+
+        context.setFillColor(CGColor(gray: 0, alpha: 0.74))
+        context.addPath(
+            CGPath(
+                roundedRect: pill,
+                cornerWidth: pill.height / 2,
+                cornerHeight: pill.height / 2,
+                transform: nil
+            )
+        )
+        context.fillPath()
+
+        text.draw(
+            at: CGPoint(x: pill.minX + padding.width, y: pill.minY + padding.height),
+            withAttributes: attributes
+        )
+    }
+
     // MARK: - Drawing
 
     override func draw(_ dirtyRect: NSRect) {
@@ -124,6 +181,8 @@ final class OverlayView: NSView {
         for stroke in session.visibleStrokes where stroke.bounds.intersects(dirtyRect) {
             render(stroke, in: context)
         }
+
+        drawHint()
     }
 
     private func render(_ stroke: Stroke, in context: CGContext) {

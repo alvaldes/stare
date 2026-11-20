@@ -9,6 +9,7 @@ final class OverlayController {
 
     private var canvases: [CGDirectDisplayID: DisplayCanvas] = [:]
     private var toolbar: ToolbarPanel?
+    private var previousApplication: NSRunningApplication?
 
     init() {
         NotificationCenter.default.addObserver(
@@ -31,14 +32,21 @@ final class OverlayController {
         guard !isActive, !NSScreen.screens.isEmpty else { return }
         isActive = true
 
+        // The drawing layer has to be the thing receiving clicks and keys. As an
+        // accessory app Stare shows no Dock icon and no window, so activating it
+        // is invisible; the app underneath gets focus back on exit.
+        rememberFrontmostApplication()
+        NSApp.activate()
+
         buildCanvases()
         for canvas in canvases.values {
             canvas.panel.orderFrontRegardless()
+            canvas.panel.makeFirstResponder(canvas.view)
+            canvas.view.showIntroHint()
         }
-        // Only one window can be key; the pointer picks which display gets the
-        // tool shortcuts.
         canvasUnderPointer()?.panel.makeKey()
         showToolbar()
+        NSLog("Stare: drawing on %d display(s)", canvases.count)
     }
 
     func deactivate() {
@@ -49,6 +57,21 @@ final class OverlayController {
         hideToolbar()
         clearAll()
         tearDownCanvases()
+        restoreFrontmostApplication()
+        NSLog("Stare: left drawing mode")
+    }
+
+    private func rememberFrontmostApplication() {
+        guard let application = NSWorkspace.shared.frontmostApplication,
+              application.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
+            return
+        }
+        previousApplication = application
+    }
+
+    private func restoreFrontmostApplication() {
+        defer { previousApplication = nil }
+        previousApplication?.activate()
     }
 
     func clearAll() {
@@ -65,7 +88,10 @@ final class OverlayController {
         guard isActive else { return }
         tearDownCanvases()
         buildCanvases()
-        for canvas in canvases.values { canvas.panel.orderFrontRegardless() }
+        for canvas in canvases.values {
+            canvas.panel.orderFrontRegardless()
+            canvas.panel.makeFirstResponder(canvas.view)
+        }
         canvasUnderPointer()?.panel.makeKey()
     }
 

@@ -30,7 +30,6 @@ final class OverlayPanel: NSPanel {
         isMovable = false
         animationBehavior = .none
         acceptsMouseMovedEvents = true
-        becomesKeyOnlyIfNeeded = true
 
         setFrame(screen.frame, display: false)
     }
