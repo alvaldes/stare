@@ -108,6 +108,29 @@ final class PathBuilderTests: XCTestCase {
         XCTAssertEqual(fromOrigin.size, CGSize(width: 100, height: 120))
     }
 
+    // S20: Shift on rectangle and ellipse draws a square and a circle.
+    func testSquareConstraintKeepsTheDragDirection() {
+        let start = CGPoint(x: 100, y: 100)
+
+        let downRight = PathBuilder.squareConstraint(from: start, to: CGPoint(x: 150, y: 130))
+        XCTAssertEqual(downRight, CGPoint(x: 150, y: 150))
+
+        let upLeft = PathBuilder.squareConstraint(from: start, to: CGPoint(x: 40, y: 60))
+        XCTAssertEqual(upLeft, CGPoint(x: 40, y: 40))
+
+        let mixed = PathBuilder.squareConstraint(from: start, to: CGPoint(x: 30, y: 180))
+        XCTAssertEqual(mixed, CGPoint(x: 20, y: 180))
+    }
+
+    func testSquareConstraintProducesASquareRect() {
+        let start = CGPoint(x: 20, y: 40)
+        let corner = PathBuilder.squareConstraint(from: start, to: CGPoint(x: 90, y: 55))
+        let rect = PathBuilder.normalizedRect(from: start, to: corner)
+
+        XCTAssertEqual(rect.width, rect.height, accuracy: 0.001)
+        XCTAssertEqual(rect.width, 70, accuracy: 0.001)
+    }
+
     func testBadgeIsCenteredOnTheClick() {
         let click = CGPoint(x: 50, y: 50)
         let box = PathBuilder.badgePath(centeredAt: click).boundingBoxOfPath

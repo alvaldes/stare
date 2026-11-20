@@ -116,16 +116,22 @@ final class OverlayView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
-        let straight = event.modifierFlags.contains(.shift) && !state.tool.isClickTool
+        let shift = event.modifierFlags.contains(.shift)
+        let point = adjusted(convert(event.locationInWindow, from: nil), shift: shift)
+        let straight = straightConstraint(shift)
         let previousPoint = lastDragPoint
+        // A shape or a line is defined by its endpoints, so its whole preview
+        // changes on every move: invalidating only the last segment leaves the
+        // previous previews painted, which is what looked like a dashed trail.
+        let previousShapeBounds = state.tool.usesEndpointsOnly ? session.active?.bounds : nil
+
         lastDragPoint = point
         lastInputTimestamp = event.timestamp
-
         session.extend(to: point, straight: straight)
-        if straight != lastStraight || straight {
-            // The mark collapses to a straight line, so stale freehand pixels
-            // have to go too.
+
+        if let previousShapeBounds, let currentShapeBounds = session.active?.bounds {
+            setNeedsDisplay(previousShapeBounds.union(currentShapeBounds).insetBy(dx: -4, dy: -4))
+        } else if state.tool.usesEndpointsOnly || straight != lastStraight {
             lastStraight = straight
             needsDisplay = true
         } else {
@@ -133,9 +139,23 @@ final class OverlayView: NSView {
         }
     }
 
+    /// Shift means a straight line for freehand tools and a square or circle for
+    /// shapes.
+    private func adjusted(_ point: CGPoint, shift: Bool) -> CGPoint {
+        guard shift, state.tool == .rectangle || state.tool == .ellipse,
+              let start = session.active?.points.first else { return point }
+        return PathBuilder.squareConstraint(from: start, to: point)
+    }
+
+    private func straightConstraint(_ shift: Bool) -> Bool {
+        guard shift else { return false }
+        return state.tool == .pen || state.tool == .highlighter
+    }
+
     override func mouseUp(with event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
-        session.extend(to: point, straight: event.modifierFlags.contains(.shift))
+        let shift = event.modifierFlags.contains(.shift)
+        let point = adjusted(convert(event.locationInWindow, from: nil), shift: shift)
+        session.extend(to: point, straight: straightConstraint(shift))
         session.commit()
         if let committed = session.strokes.last {
             committedBounds[committed.id] = committed.bounds
@@ -285,7 +305,7 @@ final class OverlayView: NSView {
     /// While the layer is armed and empty, a thin frame in the current ink shows
     /// which displays are live. It disappears with the first mark.
     private func drawArmedFrame(in context: CGContext) {
-        guard session.isEmpty else { return }
+        guard state.showArmedFrame, session.isEmpty else { return }
         let rect = bounds.insetBy(dx: 3, dy: 3)
         context.setStrokeColor(state.ink.cgColor(alpha: 0.45))
         context.setLineWidth(3)

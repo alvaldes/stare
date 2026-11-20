@@ -110,6 +110,18 @@ public enum PathBuilder {
         return path
     }
 
+    /// Endpoint that turns a rectangle or ellipse into a square or circle while
+    /// Shift is held, keeping the drag direction.
+    public static func squareConstraint(from start: CGPoint, to point: CGPoint) -> CGPoint {
+        let dx = point.x - start.x
+        let dy = point.y - start.y
+        let side = max(abs(dx), abs(dy))
+        return CGPoint(
+            x: start.x + (dx < 0 ? -side : side),
+            y: start.y + (dy < 0 ? -side : side)
+        )
+    }
+
     public static func normalizedRect(from first: CGPoint, to second: CGPoint) -> CGRect {
         CGRect(
             x: min(first.x, second.x),

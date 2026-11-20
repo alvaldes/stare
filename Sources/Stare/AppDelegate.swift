@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Diag.log("launched")
 
         statusBar = StatusBarController(
+            state: overlay.state,
             onDraw: { [weak self] in self?.overlay.toggle() },
             onClear: { [weak self] in self?.overlay.clearAll() }
         )

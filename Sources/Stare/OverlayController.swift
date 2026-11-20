@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import StareCore
 
 /// Owns the drawing overlay: one panel per display, the editor state shared
@@ -13,6 +14,8 @@ final class OverlayController {
     private var commitOrder: [(displayID: CGDirectDisplayID, strokeID: UUID)] = []
     private var toolbar: ToolbarPanel?
     private var previousApplication: NSRunningApplication?
+    private var cancellables: Set<AnyCancellable> = []
+    private var keyMonitor: Any?
 
     init() {
         NotificationCenter.default.addObserver(
@@ -27,6 +30,38 @@ final class OverlayController {
             name: NSWorkspace.activeSpaceDidChangeNotification,
             object: nil
         )
+
+        // The armed frame and the numbered badges follow the current ink, so a
+        // change has to repaint even when nothing else moved.
+        for publisher in [state.$ink.map { _ in () }.eraseToAnyPublisher(),
+                          state.$tool.map { _ in () }.eraseToAnyPublisher(),
+                          state.$showArmedFrame.map { _ in () }.eraseToAnyPublisher()] {
+            publisher.sink { [weak self] in self?.repaintCanvases() }.store(in: &cancellables)
+        }
+    }
+
+    private func repaintCanvases() {
+        for canvas in canvases.values { canvas.view.needsDisplay = true }
+    }
+
+    /// Command-Z must work from any display, whichever window is key, so it is
+    /// intercepted before it is dispatched.
+    private func installKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            if event.modifierFlags.contains(.command),
+               event.charactersIgnoringModifiers?.lowercased() == "z" {
+                self.undo()
+                return nil
+            }
+            return event
+        }
+    }
+
+    private func removeKeyMonitor() {
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
     }
 
     deinit {
@@ -57,6 +92,7 @@ final class OverlayController {
         canvasUnderPointer()?.panel.makeKey()
         NSCursor.crosshair.set()
         showToolbar()
+        installKeyMonitor()
         Diag.log("activate displays=\(canvases.count) active=\(NSApp.isActive)")
 
         // Activation is asynchronous: re-assert once it settles so the panels
@@ -79,6 +115,7 @@ final class OverlayController {
         hideToolbar()
         clearAll()
         tearDownCanvases()
+        removeKeyMonitor()
         restoreFrontmostApplication()
         NSCursor.arrow.set()
         Diag.log("deactivate")
