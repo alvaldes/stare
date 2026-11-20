@@ -36,9 +36,6 @@ final class CaptureEditorWindow: NSWindow {
         )
 
         title = "Edit Capture"
-        // The editor chrome reuses the drawing palette, which is built for a dark
-        // surface: on a light window its white glyphs wash out.
-        appearance = NSAppearance(named: .darkAqua)
         isReleasedWhenClosed = false
         self.onClose = { onClose($0) }
         contentView = content
@@ -83,7 +80,6 @@ final class CaptureEditorContent: NSView {
         )
         super.init(frame: .zero)
         canvas.state = state
-        chrome.appearance = NSAppearance(named: .darkAqua)
         rebuildChrome()
         addSubview(canvas)
         addSubview(chrome)
@@ -191,7 +187,8 @@ final class CaptureEditorCanvas: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
-        context.setFillColor(CGColor(gray: 0.12, alpha: 1))
+        // Adaptive backdrop: the editor has to read in both system appearances.
+        context.setFillColor(NSColor.underPageBackgroundColor.cgColor)
         context.fill(bounds)
 
         let rect = displayRect

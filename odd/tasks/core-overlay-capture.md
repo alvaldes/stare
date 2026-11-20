@@ -126,3 +126,7 @@ L34. El permiso de Screen Recording sigue sin otorgarse (`capture=false` con la 
 L35. Calidad de captura: `CGDisplayPixelsWide` devuelve puntos (1920 en una pantalla de 3840), así que las capturas salían a la mitad de resolución. Ahora se usa `CGDisplayCopyDisplayMode(...).pixelWidth/Height`: 3840x2160 de display y 800x400 de un área de 400x200 pt.
 L36. Editor: apariencia oscura forzada (la palette reusa glifos blancos), y al abrirlo se sale del modo dibujo sin devolver el foco, porque esa devolución competía con la ventana del editor y la dejaba detrás.
 L37. Las sondas de eventos inyectados se suspenden: interrumpen al humano mientras escribe. La verificación visual de la card y del editor queda en manos del usuario.
+
+S34. "debemos tener color claro para el tema claro y color oscuro para el tema oscuro" — la palette, el chrome del editor y el fondo del lienzo usan colores semánticos y siguen la apariencia del sistema. La herramienta activa conserva el acento con glifo blanco, que funciona en ambas.
+L38. Contraste solo en tema claro: los glifos eran blancos fijos sobre un material que se aclara. Pasaron a `primary`/`secondary`; los aros de las tintas y el borde de la píldora también. El editor ya no fuerza `darkAqua` y su lienzo usa `underPageBackgroundColor`.
+L39. Verificación sin tocar la pantalla del usuario: `--selftest` renderiza la palette y el chrome del editor en `aqua` y `darkAqua` a `/tmp/stare-palette-{light,dark}.png` y `/tmp/stare-editor-{light,dark}.png`. Los cuatro salen legibles.

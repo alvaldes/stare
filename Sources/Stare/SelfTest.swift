@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import StareCore
 
 /// `--selftest` gathers the facts that a headless unit test cannot: real screen
@@ -80,6 +81,18 @@ enum SelfTest {
 
         panel.orderOut(nil)
 
+        // Palette in both system appearances: the same view must read on a light
+        // and on a dark system, which a screenshot of one theme cannot prove.
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            let rendered = renderPalette(appearanceName: appearance, to: "/tmp/stare-palette-\(name).png")
+            report.append("palette \(name) rendered=\(rendered)")
+        }
+
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            let rendered = renderEditorChrome(appearanceName: appearance, to: "/tmp/stare-editor-\(name).png")
+            report.append("editor chrome \(name) rendered=\(rendered)")
+        }
+
         // Render path: same code the overlay uses.
         let marks = sampleSession()
         let rendered = renderToPNG(strokes: marks.visibleStrokes)
@@ -110,6 +123,54 @@ enum SelfTest {
             lines.append("  ws id=\(number) layer=\(layer) alpha=\(alpha) bounds=\(bounds)")
         }
         return lines
+    }
+
+    /// Renders the editor toolbar with a fixed appearance.
+    private static func renderEditorChrome(appearanceName: NSAppearance.Name, to path: String) -> Bool {
+        let state = EditorState()
+        state.tool = .rectangle
+        state.ink = .blue
+        let chrome = EditorChrome(
+            state: state,
+            onUndo: {}, onClear: {}, onCrop: {}, onCopy: {}, onSave: {}, onClose: {}
+        )
+        let hosting = NSHostingView(rootView: chrome)
+        hosting.sizingOptions = [.intrinsicContentSize]
+        hosting.appearance = NSAppearance(named: appearanceName)
+        hosting.frame = CGRect(origin: .zero, size: hosting.fittingSize)
+        hosting.layoutSubtreeIfNeeded()
+
+        guard let representation = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else {
+            return false
+        }
+        hosting.cacheDisplay(in: hosting.bounds, to: representation)
+        guard let png = representation.representation(using: .png, properties: [:]) else {
+            return false
+        }
+        return (try? png.write(to: URL(fileURLWithPath: path))) != nil
+    }
+
+    /// Renders the drawing palette offscreen with a fixed appearance.
+    private static func renderPalette(appearanceName: NSAppearance.Name, to path: String) -> Bool {
+        let state = EditorState()
+        state.tool = .arrow
+        state.ink = .green
+        let hosting = NSHostingView(
+            rootView: ToolbarView(state: state, onUndo: {}, onClear: {}, onDone: {})
+        )
+        hosting.sizingOptions = [.intrinsicContentSize]
+        hosting.appearance = NSAppearance(named: appearanceName)
+        hosting.frame = CGRect(origin: .zero, size: hosting.fittingSize)
+        hosting.layoutSubtreeIfNeeded()
+
+        guard let representation = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else {
+            return false
+        }
+        hosting.cacheDisplay(in: hosting.bounds, to: representation)
+        guard let png = representation.representation(using: .png, properties: [:]) else {
+            return false
+        }
+        return (try? png.write(to: URL(fileURLWithPath: path))) != nil
     }
 
     private static func sampleSession() -> DrawingSession {

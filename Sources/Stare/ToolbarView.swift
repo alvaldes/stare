@@ -34,7 +34,7 @@ struct ToolbarView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
         )
     }
 
@@ -49,7 +49,7 @@ struct ToolbarView: View {
             Image(systemName: tool.symbolName)
                 .font(.system(size: 13, weight: .medium))
                 .frame(width: 28, height: 26)
-                .foregroundStyle(state.tool == tool ? Color.white : Color.white.opacity(0.55))
+                .foregroundStyle(state.tool == tool ? Color.white : Color.secondary)
                 .background(
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
                         .fill(state.tool == tool ? Color.accentColor.opacity(0.55) : Color.clear)
@@ -67,7 +67,7 @@ struct ToolbarView: View {
                 .overlay(
                     Circle()
                         .strokeBorder(
-                            state.ink == ink ? Color.white : Color.white.opacity(0.25),
+                            state.ink == ink ? Color.primary : Color.primary.opacity(0.25),
                             lineWidth: state.ink == ink ? 2 : 1
                         )
                 )
@@ -83,7 +83,7 @@ struct ToolbarView: View {
             Image(systemName: symbol)
                 .font(.system(size: 12, weight: .medium))
                 .frame(width: 26, height: 26)
-                .foregroundStyle(Color.white.opacity(0.7))
+                .foregroundStyle(Color.secondary)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
