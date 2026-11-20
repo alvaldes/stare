@@ -31,11 +31,11 @@ the settings form in both system appearances, and a mark-composition PNG.
 | --- | --- |
 | Anywhere | `⌥⇧A` draw over the screen · `⌥⇧M` pointer highlight |
 | Drawing | `P` pen · `H` highlighter · `A` arrow · `L` line · `R` rectangle · `O` ellipse · `T` text · `C` numbered step · `F` laser · `E` eraser |
-| Drawing | `1`–`8` inks (red, orange, yellow, green, blue, purple, white, black) · `⌘Z` undo (across displays) · `Esc` clear and leave |
+| Drawing | `1`–`8` inks (red, orange, yellow, green, blue, purple, white, black) · `⌘Z` undo · `⇧⌘Z` redo (across displays) · `Esc` clear and leave |
 | Drawing | hold `⇧` for a straight line with pen/highlighter, or a square/circle with rectangle/ellipse |
 | Drawing | `S` capture the display · `⇧S` drag an area (the rest dims) |
 | Capture card | hover keeps it alive · click opens the editor · drag it into another app |
-| Editor | same tools and inks · `⌘Z` undo · `Esc` cancels a crop, then closes |
+| Editor | same tools and inks · `⌘Z` undo · `⇧⌘Z` redo · `Esc` cancels a crop, then closes |
 
 ## Structure
 

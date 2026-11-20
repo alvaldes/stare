@@ -11,6 +11,8 @@ final class OverlayView: NSView {
     var onCommit: ((Stroke) -> Void)?
     /// Command-Z is global: the controller owns the undo history.
     var onUndo: (() -> Void)?
+    /// Shift-Command-Z is global for the same reason.
+    var onRedo: (() -> Void)?
     /// Marks removed by the eraser, so the undo history can drop them too.
     var onErase: (([UUID]) -> Void)?
     /// Asks for a capture: nil means the whole display, a rect means that area.
@@ -136,6 +138,16 @@ final class OverlayView: NSView {
     func discardActiveMark() -> Bool {
         guard session.active != nil else { return false }
         session.undo()
+        needsDisplay = true
+        return true
+    }
+
+    /// Puts a specific mark back, used by the global redo history. It only takes
+    /// the mark the session undid last, so a global order that drifted cannot
+    /// resurrect the wrong mark.
+    @discardableResult
+    func redoMark(id: UUID) -> Bool {
+        guard session.undoneStrokes.last?.id == id, session.redo() else { return false }
         needsDisplay = true
         return true
     }
@@ -482,7 +494,14 @@ final class OverlayView: NSView {
 
         if event.modifierFlags.contains(.command) {
             if characters.lowercased() == "z" {
-                if let onUndo {
+                if event.modifierFlags.contains(.shift) {
+                    if let onRedo {
+                        onRedo()
+                    } else {
+                        session.redo()
+                        needsDisplay = true
+                    }
+                } else if let onUndo {
                     onUndo()
                 } else {
                     session.undo()

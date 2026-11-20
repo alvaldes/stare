@@ -6,6 +6,8 @@ import Foundation
 public struct DrawingSession: Equatable, Sendable {
     /// Committed marks, in draw order.
     public private(set) var strokes: [Stroke] = []
+    /// Marks `undo` took away, newest last, waiting for `redo`.
+    public private(set) var undoneStrokes: [Stroke] = []
     /// The mark currently being dragged, not yet committed.
     public private(set) var active: Stroke?
     public private(set) var nextStepNumber: Int = 1
@@ -36,6 +38,8 @@ public struct DrawingSession: Equatable, Sendable {
     }
 
     public var isEmpty: Bool { strokes.isEmpty && active == nil }
+
+    public var canRedo: Bool { !undoneStrokes.isEmpty }
 
     public var stepCount: Int { nextStepNumber - 1 }
 
@@ -72,6 +76,7 @@ public struct DrawingSession: Equatable, Sendable {
 
         let ids = Set(doomed.map(\.id))
         strokes.removeAll { ids.contains($0.id) }
+        undoneStrokes.removeAll()
         for stroke in doomed where stroke.stepNumber != nil {
             renumberFromScratch()
             break
@@ -132,12 +137,16 @@ public struct DrawingSession: Equatable, Sendable {
         } else {
             isRenderable = current.points.count >= 2 || current.tool.isClickTool
         }
-        if isRenderable { strokes.append(current) }
+        if isRenderable {
+            strokes.append(current)
+            undoneStrokes.removeAll()
+        }
         active = nil
     }
 
     /// Discards the mark in progress, otherwise removes the last committed mark.
-    /// Numbered marks give their number back so the sequence stays gapless.
+    /// Numbered marks give their number back so the sequence stays gapless, and
+    /// the removed mark waits for `redo`.
     @discardableResult
     public mutating func undo() -> Bool {
         if active != nil {
@@ -148,21 +157,37 @@ public struct DrawingSession: Equatable, Sendable {
         if let number = removed.stepNumber {
             nextStepNumber = number
         }
+        undoneStrokes.append(removed)
+        return true
+    }
+
+    /// Puts back the mark `undo` took away last, and takes its step number again.
+    @discardableResult
+    public mutating func redo() -> Bool {
+        guard let restored = undoneStrokes.popLast() else { return false }
+        strokes.append(restored)
+        if let number = restored.stepNumber, number >= nextStepNumber {
+            nextStepNumber = number + 1
+        }
         return true
     }
 
     /// Removes every mark and restarts the numbered sequence.
     public mutating func clear() {
         strokes.removeAll()
+        undoneStrokes.removeAll()
         active = nil
         nextStepNumber = 1
     }
 
-    /// Drops a specific mark, used later by the capture editor.
+    /// Drops a specific mark, used by the overlay's history across displays.
     @discardableResult
     public mutating func remove(id: UUID) -> Bool {
         guard let index = strokes.firstIndex(where: { $0.id == id }) else { return false }
         let removed = strokes.remove(at: index)
+        // A mark removed by id is the global undo history at work, so it waits for
+        // redo exactly like `undo` leaves it.
+        undoneStrokes.append(removed)
         if let number = removed.stepNumber, number < nextStepNumber {
             nextStepNumber = number
         }

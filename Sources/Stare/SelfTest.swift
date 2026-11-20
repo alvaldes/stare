@@ -9,6 +9,29 @@ enum SelfTest {
     static let reportPath = "/tmp/stare-selftest.txt"
     static let imagePath = "/tmp/stare-selftest.png"
 
+    /// A mouse down, drag and up inside the panel, so the view commits a mark
+    /// without the window server being involved.
+    private static func sendDrag(to panel: NSWindow, from start: CGPoint, to end: CGPoint) {
+        func send(_ type: NSEvent.EventType, _ point: CGPoint) {
+            guard let event = NSEvent.mouseEvent(
+                with: type,
+                location: point,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: panel.windowNumber,
+                context: nil,
+                eventNumber: 1,
+                clickCount: 1,
+                pressure: 1
+            ) else { return }
+            panel.sendEvent(event)
+        }
+        send(.leftMouseDown, start)
+        send(.leftMouseDragged, CGPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2))
+        send(.leftMouseDragged, end)
+        send(.leftMouseUp, end)
+    }
+
     static func run() -> Int32 {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
@@ -78,6 +101,24 @@ enum SelfTest {
             panel.sendEvent(event)
         }
         report.append("syntheticClickStrokes=\(canvas.view.session.visibleStrokes.count)")
+
+        // A full drag, so there is a committed mark for the history to work on.
+        sendDrag(to: panel, from: CGPoint(x: 400, y: 300), to: CGPoint(x: 520, y: 380))
+        report.append("syntheticDragStrokes=\(canvas.view.session.strokes.count)")
+
+        // Redo through the view, which is the path the global history uses: the
+        // mark removed by id has to come back by id, and nothing else.
+        if let mark = canvas.view.session.strokes.last {
+            let removed = canvas.view.removeMark(id: mark.id)
+            let restored = canvas.view.redoMark(id: mark.id)
+            report.append(
+                "redo removed=\(removed) restored=\(restored) "
+                    + "marks=\(canvas.view.session.strokes.count) "
+                    + "sameMark=\(canvas.view.session.strokes.last?.id == mark.id)"
+            )
+        } else {
+            report.append("redo skipped: no committed mark to undo")
+        }
 
         panel.orderOut(nil)
 

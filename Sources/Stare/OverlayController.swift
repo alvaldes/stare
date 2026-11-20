@@ -12,6 +12,8 @@ final class OverlayController {
     /// Global undo order across displays: Command-Z undoes the last mark on
     /// whichever display it was drawn, not only on the one under the pointer.
     private var commitOrder: [(displayID: CGDirectDisplayID, strokeID: UUID)] = []
+    /// Undone marks waiting for Shift-Command-Z, newest last, across displays.
+    private var redoOrder: [(displayID: CGDirectDisplayID, strokeID: UUID)] = []
     private var toolbar: ToolbarPanel?
     private var previousApplication: NSRunningApplication?
     private let captureService: ScreenCapturing
@@ -69,7 +71,11 @@ final class OverlayController {
             guard let self else { return event }
             if event.modifierFlags.contains(.command),
                event.charactersIgnoringModifiers?.lowercased() == "z" {
-                self.undo()
+                if event.modifierFlags.contains(.shift) {
+                    self.redo()
+                } else {
+                    self.undo()
+                }
                 return nil
             }
             return event
@@ -280,6 +286,7 @@ final class OverlayController {
     func clearAll() {
         for canvas in canvases.values { canvas.clear() }
         commitOrder.removeAll()
+        redoOrder.removeAll()
     }
 
     /// Command-Z: first the mark being dragged, then the most recent committed
@@ -288,11 +295,24 @@ final class OverlayController {
         if let canvas = canvasUnderPointer(), canvas.discardActiveMark() { return }
         while let last = commitOrder.popLast() {
             if let canvas = canvases[last.displayID], canvas.removeMark(id: last.strokeID) {
+                redoOrder.append(last)
                 Diag.log("undo display=\(last.displayID) remaining=\(commitOrder.count)")
                 return
             }
         }
         Diag.log("undo empty")
+    }
+
+    /// Shift-Command-Z: puts back the mark undoed last, on the display it came from.
+    func redo() {
+        while let last = redoOrder.popLast() {
+            if let canvas = canvases[last.displayID], canvas.redoMark(id: last.strokeID) {
+                commitOrder.append(last)
+                Diag.log("redo display=\(last.displayID) remaining=\(redoOrder.count)")
+                return
+            }
+        }
+        Diag.log("redo empty")
     }
 
     // MARK: - Canvases
@@ -337,9 +357,12 @@ final class OverlayController {
 
             let displayID = canvas.displayID
             canvas.view.onCommit = { [weak self] stroke in
-                self?.commitOrder.append((displayID, stroke.id))
+                guard let self else { return }
+                commitOrder.append((displayID, stroke.id))
+                redoOrder.removeAll()
             }
             canvas.view.onUndo = { [weak self] in self?.undo() }
+            canvas.view.onRedo = { [weak self] in self?.redo() }
             canvas.view.onCaptureRequest = { [weak self] area in
                 self?.capture(displayID: displayID, area: area)
             }
@@ -347,6 +370,7 @@ final class OverlayController {
                 guard let self else { return }
                 let erased = Set(ids)
                 self.commitOrder.removeAll { erased.contains($0.strokeID) }
+                self.redoOrder.removeAll { erased.contains($0.strokeID) }
             }
             canvases[displayID] = canvas
         }
@@ -410,4 +434,5 @@ final class DisplayCanvas {
     func clear() { view.clear() }
     func discardActiveMark() -> Bool { view.discardActiveMark() }
     func removeMark(id: UUID) -> Bool { view.removeMark(id: id) }
+    func redoMark(id: UUID) -> Bool { view.redoMark(id: id) }
 }

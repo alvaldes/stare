@@ -106,6 +106,81 @@ final class DrawingSessionTests: XCTestCase {
         XCTAssertEqual(session.strokes.compactMap(\.stepNumber), [1, 2])
     }
 
+    // v0.2: Shift-Command-Z puts back the mark Command-Z removed.
+    func testRedoRestoresTheLastUndoneMark() {
+        var session = DrawingSession()
+        drawLine(in: &session)
+        drawLine(in: &session, points: [CGPoint(x: 20, y: 20), CGPoint(x: 40, y: 40)])
+        let second = session.strokes[1].id
+
+        session.undo()
+        XCTAssertEqual(session.strokes.count, 1)
+
+        XCTAssertTrue(session.redo())
+        XCTAssertEqual(session.strokes.count, 2)
+        XCTAssertEqual(session.strokes.last?.id, second, "the same mark comes back")
+    }
+
+    func testRedoIsLifoAcrossSeveralUndos() {
+        var session = DrawingSession()
+        for index in 0 ..< 3 {
+            drawLine(in: &session, points: [CGPoint(x: CGFloat(index), y: 0), CGPoint(x: CGFloat(index), y: 10)])
+        }
+        let ids = session.strokes.map(\.id)
+
+        session.undo()
+        session.undo()
+        XCTAssertEqual(session.strokes.map(\.id), [ids[0]])
+
+        XCTAssertTrue(session.redo())
+        XCTAssertEqual(session.strokes.map(\.id), [ids[0], ids[1]])
+        XCTAssertTrue(session.redo())
+        XCTAssertEqual(session.strokes.map(\.id), ids)
+    }
+
+    func testRedoIsEmptyAfterANewMark() {
+        var session = DrawingSession()
+        drawLine(in: &session)
+        session.undo()
+
+        drawLine(in: &session, points: [CGPoint(x: 30, y: 30), CGPoint(x: 60, y: 60)])
+
+        XCTAssertFalse(session.redo(), "a new mark forks the history")
+        XCTAssertEqual(session.strokes.count, 1)
+    }
+
+    func testRedoIsEmptyAfterAnErase() {
+        var session = DrawingSession()
+        drawLine(in: &session)
+        drawLine(in: &session, points: [CGPoint(x: 20, y: 20), CGPoint(x: 40, y: 40)])
+        session.undo()
+
+        session.erase(at: .zero, radius: 1)
+
+        XCTAssertFalse(session.redo(), "erasing is an edit, so the undone mark is gone for good")
+    }
+
+    func testUndoWhileDraggingDoesNotFeedRedo() {
+        var session = DrawingSession()
+        session.begin(at: .zero, tool: .pen, ink: .red)
+
+        XCTAssertTrue(session.undo())
+        XCTAssertFalse(session.redo(), "an uncommitted mark was never in the history")
+    }
+
+    func testRedoGivesTheStepNumberBackAgain() {
+        var session = DrawingSession()
+        session.begin(at: .zero, tool: .number, ink: .green)
+        session.begin(at: CGPoint(x: 10, y: 0), tool: .number, ink: .green)
+        session.undo()
+        XCTAssertEqual(session.nextStepNumber, 2)
+
+        XCTAssertTrue(session.redo())
+
+        XCTAssertEqual(session.strokes.compactMap(\.stepNumber), [1, 2])
+        XCTAssertEqual(session.nextStepNumber, 3)
+    }
+
     // S8: Escape clears every mark and restarts numbering.
     func testClearRemovesEverythingAndRestartsNumbering() {
         var session = DrawingSession()
