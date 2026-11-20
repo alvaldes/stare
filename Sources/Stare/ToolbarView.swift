@@ -2,11 +2,20 @@ import AppKit
 import SwiftUI
 import StareCore
 
+/// An action that lives in the palette itself, so the editor needs no second bar.
+struct ToolbarAction: Identifiable {
+    let id = UUID()
+    let symbolName: String
+    let help: String
+    let handler: () -> Void
+}
+
 struct ToolbarView: View {
     @ObservedObject var state: EditorState
     let onUndo: () -> Void
     let onClear: () -> Void
     let onDone: () -> Void
+    var extraActions: [ToolbarAction] = []
 
     var body: some View {
         HStack(spacing: 4) {
@@ -18,6 +27,13 @@ struct ToolbarView: View {
 
             ForEach(Ink.allCases) { ink in
                 inkButton(ink)
+            }
+
+            if !extraActions.isEmpty {
+                divider
+                ForEach(extraActions) { action in
+                    iconButton(action.symbolName, help: action.help, action: action.handler)
+                }
             }
 
             divider

@@ -62,7 +62,8 @@ final class CaptureEditorContent: NSView {
         let width = min(max(CGFloat(image.width) / 2, 480), 1100)
         let scale = width / CGFloat(image.width)
         let height = CGFloat(image.height) * scale
-        return CGSize(width: width, height: min(max(height, 260), 760) + 108)
+        // One bar, so the window height follows its real fitting size.
+        return CGSize(width: width, height: min(max(height, 260), 760) + chrome.fittingSize.height)
     }
 
     init(image: CGImage) {
@@ -79,6 +80,7 @@ final class CaptureEditorContent: NSView {
             )
         )
         super.init(frame: .zero)
+        chrome.sizingOptions = [.intrinsicContentSize]
         canvas.state = state
         rebuildChrome()
         addSubview(canvas)
@@ -110,6 +112,7 @@ final class CaptureEditorContent: NSView {
     }
 }
 
+/// One bar: the same palette as the overlay, with crop, copy and save added to it.
 struct EditorChrome: View {
     @ObservedObject var state: EditorState
     let onUndo: () -> Void
@@ -120,21 +123,18 @@ struct EditorChrome: View {
     let onClose: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            ToolbarView(state: state, onUndo: onUndo, onClear: onClear, onDone: onClose)
-                .padding(.vertical, 6)
-
-            HStack(spacing: 8) {
-                Button("Crop", action: onCrop)
-                Spacer()
-                Button("Copy", action: onCopy)
-                Button("Save…", action: onSave)
-            }
-            .buttonStyle(.bordered)
-            .padding(.horizontal, 14)
-            .padding(.bottom, 8)
-        }
-        .background(.regularMaterial)
+        ToolbarView(
+            state: state,
+            onUndo: onUndo,
+            onClear: onClear,
+            onDone: onClose,
+            extraActions: [
+                ToolbarAction(symbolName: "crop", help: "Crop", handler: onCrop),
+                ToolbarAction(symbolName: "doc.on.doc", help: "Copy", handler: onCopy),
+                ToolbarAction(symbolName: "square.and.arrow.down", help: "Save", handler: onSave),
+            ]
+        )
+        .padding(.vertical, 6)
     }
 }
 

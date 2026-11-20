@@ -130,3 +130,5 @@ L37. Las sondas de eventos inyectados se suspenden: interrumpen al humano mientr
 S34. "debemos tener color claro para el tema claro y color oscuro para el tema oscuro" — la palette, el chrome del editor y el fondo del lienzo usan colores semánticos y siguen la apariencia del sistema. La herramienta activa conserva el acento con glifo blanco, que funciona en ambas.
 L38. Contraste solo en tema claro: los glifos eran blancos fijos sobre un material que se aclara. Pasaron a `primary`/`secondary`; los aros de las tintas y el borde de la píldora también. El editor ya no fuerza `darkAqua` y su lienzo usa `underPageBackgroundColor`.
 L39. Verificación sin tocar la pantalla del usuario: `--selftest` renderiza la palette y el chrome del editor en `aqua` y `darkAqua` a `/tmp/stare-palette-{light,dark}.png` y `/tmp/stare-editor-{light,dark}.png`. Los cuatro salen legibles.
+
+L40. "el crop el copy y el save en la misma barra todo en esa barra nada de botones extras" — `ToolbarView` acepta acciones extra y el editor le pasa Crop, Copy y Save como iconos dentro de la misma píldora; se eliminó la segunda fila de botones.
