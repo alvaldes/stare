@@ -16,6 +16,7 @@ final class OverlayController {
     private var previousApplication: NSRunningApplication?
     private let captureService: ScreenCapturing
     private let cards = CaptureCardController()
+    private let editor = CaptureEditorController()
     private var cancellables: Set<AnyCancellable> = []
     private var keyMonitor: Any?
     private var pointerTimer: Timer?
@@ -23,6 +24,7 @@ final class OverlayController {
 
     init(captureService: ScreenCapturing = CaptureService()) {
         self.captureService = captureService
+        wireEditor()
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(screenParametersChanged),
@@ -82,6 +84,15 @@ final class OverlayController {
     deinit {
         NotificationCenter.default.removeObserver(self)
         NSWorkspace.shared.notificationCenter.removeObserver(self)
+    }
+
+    private func wireEditor() {
+        // The editor is a normal window: opening it while the overlay is still
+        // armed would leave the transparent layer above it, eating every click.
+        cards.onOpen = { [weak self] image in
+            self?.deactivate(restoringFocus: false)
+            self?.editor.open(image: image)
+        }
     }
 
     func toggle() {
@@ -173,7 +184,9 @@ final class OverlayController {
         }
     }
 
-    func deactivate() {
+    /// `restoringFocus` is false when something of ours takes over: handing focus
+    /// back to the previous app would race with our own window and bury it.
+    func deactivate(restoringFocus: Bool = true) {
         guard isActive else { return }
         isActive = false
 
@@ -182,7 +195,7 @@ final class OverlayController {
         clearAll()
         tearDownCanvases()
         removeKeyMonitor()
-        restoreFrontmostApplication()
+        if restoringFocus { restoreFrontmostApplication() }
         NSCursor.arrow.set()
         Diag.log("deactivate")
     }

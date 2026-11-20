@@ -6,7 +6,7 @@ final class CaptureCard: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
-    init(image: CGImage, onDismiss: @escaping () -> Void) {
+    init(image: CGImage, onOpen: @escaping (CGImage) -> Void, onDismiss: @escaping () -> Void) {
         let size = CaptureCardView.preferredSize(for: image)
         super.init(
             contentRect: CGRect(origin: .zero, size: size),
@@ -25,10 +25,14 @@ final class CaptureCard: NSPanel {
         animationBehavior = .none
         becomesKeyOnlyIfNeeded = true
 
-        let view = CaptureCardView(image: image, onClose: { [weak self] in
-            self?.close()
-            onDismiss()
-        })
+        let view = CaptureCardView(
+            image: image,
+            onOpen: { onOpen(image) },
+            onClose: { [weak self] in
+                self?.close()
+                onDismiss()
+            }
+        )
         contentView = view
         setContentSize(size)
     }
@@ -40,6 +44,7 @@ final class CaptureCardView: NSView, NSDraggingSource {
     static let hoverDismissDelay: TimeInterval = 3
 
     private let image: CGImage
+    private let onOpen: () -> Void
     private let onClose: () -> Void
     private var dismissTimer: Timer?
     private var isHovered = false
@@ -58,8 +63,9 @@ final class CaptureCardView: NSView, NSDraggingSource {
         return CGSize(width: max(thumbnail.width, 160) + 16, height: thumbnail.height + 16)
     }
 
-    init(image: CGImage, onClose: @escaping () -> Void) {
+    init(image: CGImage, onOpen: @escaping () -> Void, onClose: @escaping () -> Void) {
         self.image = image
+        self.onOpen = onOpen
         self.onClose = onClose
         super.init(frame: CGRect(origin: .zero, size: Self.preferredSize(for: image)))
         wantsLayer = true
@@ -144,7 +150,10 @@ final class CaptureCardView: NSView, NSDraggingSource {
     // MARK: - Actions
 
     override func mouseDown(with event: NSEvent) {
-        copyToPasteboard()
+        // Clicking opens the editor, like the reference app: the pasteboard
+        // already has the image, so copy is not the interesting action here.
+        dismissTimer?.invalidate()
+        onOpen()
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -179,14 +188,17 @@ final class CaptureCardView: NSView, NSDraggingSource {
 
 /// Keeps capture cards stacked in the corner of the display they came from.
 final class CaptureCardController {
+    var onOpen: ((CGImage) -> Void)?
     private var cards: [CaptureCard] = []
     private let maximumCards = 4
 
     func show(_ image: CGImage, on screen: NSScreen?) {
         var card: CaptureCard!
-        card = CaptureCard(image: image) { [weak self] in
-            self?.cards.removeAll { $0 === card }
-        }
+        card = CaptureCard(
+            image: image,
+            onOpen: { [weak self] image in self?.onOpen?(image) },
+            onDismiss: { [weak self] in self?.cards.removeAll { $0 === card } }
+        )
         cards.append(card)
 
         while cards.count > maximumCards {

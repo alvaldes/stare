@@ -55,8 +55,12 @@ final class CaptureService: ScreenCapturing {
 
                 let filter = SCContentFilter(display: display, excludingWindows: ownWindows)
                 let configuration = SCStreamConfiguration()
-                configuration.width = Int(CGDisplayPixelsWide(displayID))
-                configuration.height = Int(CGDisplayPixelsHigh(displayID))
+                // The display mode carries the real framebuffer size. CGDisplayPixelsWide
+                // reports points here (1920 for a 3840-wide Retina screen), so
+                // asking for it would quietly halve the capture resolution.
+                let mode = CGDisplayCopyDisplayMode(displayID)
+                configuration.width = mode?.pixelWidth ?? Int(CGDisplayPixelsWide(displayID))
+                configuration.height = mode?.pixelHeight ?? Int(CGDisplayPixelsHigh(displayID))
                 configuration.showsCursor = false
                 configuration.capturesAudio = false
 
