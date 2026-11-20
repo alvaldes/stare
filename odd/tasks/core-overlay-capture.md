@@ -26,13 +26,13 @@ S14. Dibujar no pide permisos de macOS. Cada feature que lee píxeles los pide p
 | T1 | Modelo vectorial, geometría y sesión de dibujo (`StareCore`) con tests | S6–S8, S14 | parent | 8a2bead |
 | T2 | Shell de barra de menú, atajo global y overlay multi-display | S3–S5 | parent | 541388e, cdb52a9 |
 | T3 | Toolbar flotante con herramientas e tintas | S6–S7 | parent | 541388e, cdb52a9 |
-| T4a | Núcleo de captura: servicio ScreenCaptureKit, permiso y compositor de marcas | S12, S14, S30 | parent | _pending_ |
-| T4b | Integración de captura: selección de área, atajos S / ⇧S, composición y portapapeles | S12, S30 | parent | _pending_ |
-| T4 | Captura de display y de área con marcas compuestas + permiso de Screen Recording | S12, S14 | parent | _pending_ |
-| T5a | Card de captura: miniatura, hover que extiende, copiar, arrastrar afuera | S13 | parent | _pending_ |
-| T5b | Editor de captura con crop y re-anotación | S13 | parent | _pending_ |
-| T7 | Herramientas faltantes del dock: eraser, text, laser y marco del cursor | S21–S24 | parent | _pending_ |
-| T6 | Ventana de Settings que reúne las preferencias existentes (worker, worktree) | S31 | worker | _pending_ |
+| T4a | Núcleo de captura: servicio ScreenCaptureKit, permiso y compositor de marcas | S12, S14, S30 | parent | b09058a |
+| T4b | Integración de captura: selección de área, atajos S / ⇧S, composición y portapapeles | S12, S30 | parent | b09058a |
+| T4 | Captura de display y de área con marcas compuestas + permiso de Screen Recording | S12, S14 | parent | b09058a, 91c8e1a |
+| T5a | Card de captura: miniatura, hover que extiende, copiar, arrastrar afuera | S13 | parent | 0a3012f |
+| T5b | Editor de captura con crop y re-anotación | S13 | parent | ac9f85a, 18bd713 |
+| T7 | Herramientas faltantes del dock: eraser, text, laser y puntero | S21–S24 | parent | 6f9569e, 3738502 |
+| T6 | Ventana de Settings con todas las preferencias | S15, S16, S31 | parent | 6ff4562, 660e47b |
 
 ## Log
 
@@ -142,3 +142,14 @@ L45. Limpieza: `Diag` no escribe nada salvo que `STARE_DIAG=1` esté en el entor
 
 S35. El editor respeta los mismos atajos que el overlay: teclas de herramienta, 1–8 para tintas, ⌘Z para deshacer y Escape para cancelar el crop o cerrar la ventana. El ruteo de teclas vive en `ShortcutRouter` (StareCore) para que overlay y editor no diverjan.
 L46. Hueco encontrado al revisar el editor: tenía la palette pero ningún atajo de teclado. Se extrajo el ruteo a StareCore con tests y lo usan ambos.
+
+## Estado al cerrar v0.1
+
+Todo lo anterior está hecho y verificado por el usuario. 58 tests unitarios, 22 commits, app instalada en `/Applications` firmada con Apple Development. El README del repo documenta build, atajos, arquitectura, las trampas de AppKit/TCC que costaron tiempo y el rumbo para cuando se retome.
+
+## Lo que sigue (documentado, no empezado)
+
+D1. Publicación: certificado Developer ID Application, hardened runtime, `notarytool` + staple, DMG, página de descarga con el mismo enfoque de Lasso (pago único, sin cuenta).
+D2. v0.2: blur (entra al permiso de captura), páginas con whiteboard y blackboard infinitos, redo, pin con clicks que atraviesan.
+D3. Pulido ya identificado: animación de escala del puntero al clickear, y un modo "display de la ventana en foco" que no dependa de la heurística de la lista de ventanas.
+D4. Antes de publicar: apagar `SelfTest` del binario de release y revisar que no queden affordances de desarrollo.
