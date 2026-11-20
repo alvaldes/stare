@@ -29,11 +29,35 @@ final class ToolAndInkTests: XCTestCase {
         XCTAssertNil(ToolShortcut.tool(for: "Z"))
     }
 
-    func testOnlyNumberCompletesOnAClick() {
-        XCTAssertTrue(Tool.number.isClickTool)
+    func testOnlyNumberCompletesImmediately() {
+        XCTAssertTrue(Tool.number.commitsImmediately)
         for tool in Tool.allCases where tool != .number {
+            XCTAssertFalse(tool.commitsImmediately, "\(tool) waits for confirmation")
+        }
+    }
+
+    func testClickToolsAreNumberAndText() {
+        XCTAssertTrue(Tool.number.isClickTool)
+        XCTAssertTrue(Tool.text.isClickTool)
+        for tool in [Tool.pen, .highlighter, .arrow, .line, .rectangle, .ellipse, .laser, .eraser] {
             XCTAssertFalse(tool.isClickTool, "\(tool) needs a drag")
         }
+    }
+
+    func testLaserIsTransientAndEraserRemoves() {
+        XCTAssertTrue(Tool.laser.isTransient)
+        XCTAssertFalse(Tool.pen.isTransient)
+        XCTAssertTrue(Tool.eraser.isEraser)
+        XCTAssertFalse(Tool.pen.isEraser)
+    }
+
+    func testNewToolShortcuts() {
+        XCTAssertEqual(Tool.text.shortcut, "T")
+        XCTAssertEqual(Tool.laser.shortcut, "F")
+        XCTAssertEqual(Tool.eraser.shortcut, "E")
+        XCTAssertEqual(ToolShortcut.tool(for: "t"), .text)
+        XCTAssertEqual(ToolShortcut.tool(for: "F"), .laser)
+        XCTAssertEqual(ToolShortcut.tool(for: "e"), .eraser)
     }
 
     func testShapeToolsKeepOnlyEndpoints() {

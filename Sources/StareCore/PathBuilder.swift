@@ -18,6 +18,11 @@ public enum PathBuilder {
         guard let first = points.first else { return CGMutablePath() }
 
         switch stroke.tool {
+        case .text:
+            // Text is drawn by the platform layer; the model keeps its box.
+            return CGMutablePath()
+        case .eraser:
+            return CGMutablePath()
         case .number:
             return badgePath(centeredAt: first)
         case .line:
@@ -28,12 +33,16 @@ public enum PathBuilder {
             return rectanglePath(from: first, to: points.last ?? first)
         case .ellipse:
             return ellipsePath(from: first, to: points.last ?? first)
-        case .pen, .highlighter:
+        case .pen, .highlighter, .laser:
             return freehandPath(points: points)
         }
     }
 
     public static func bounds(for stroke: Stroke) -> CGRect {
+        if stroke.tool == .text, let origin = stroke.points.first {
+            let size = stroke.textSize ?? CGSize(width: 0, height: 0)
+            return CGRect(origin: origin, size: size).insetBy(dx: -2, dy: -2)
+        }
         let geometry = path(for: stroke)
         var box = geometry.boundingBoxOfPath
         if box.isNull || box.isEmpty { box = .zero }

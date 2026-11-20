@@ -14,7 +14,7 @@ public enum MarkRenderer {
         context.restoreGState()
     }
 
-    public static func draw(stroke: Stroke, in context: CGContext) {
+    public static func draw(stroke: Stroke, in context: CGContext, opacity: CGFloat? = nil) {
         let path = PathBuilder.path(for: stroke)
 
         if stroke.tool == .number {
@@ -33,7 +33,7 @@ public enum MarkRenderer {
         // dot instead of a zero-length line.
         if stroke.tool == .pen, stroke.points.count == 1, let point = stroke.points.first {
             let radius = stroke.lineWidth / 2
-            context.setFillColor(stroke.ink.cgColor(alpha: stroke.opacity))
+            context.setFillColor(stroke.ink.cgColor(alpha: opacity ?? stroke.opacity))
             context.fillEllipse(
                 in: CGRect(
                     x: point.x - radius,
@@ -45,7 +45,7 @@ public enum MarkRenderer {
             return
         }
 
-        context.setStrokeColor(stroke.ink.cgColor(alpha: stroke.opacity))
+        context.setStrokeColor(stroke.ink.cgColor(alpha: opacity ?? stroke.opacity))
         context.setLineWidth(stroke.lineWidth)
         context.addPath(path)
         context.strokePath()

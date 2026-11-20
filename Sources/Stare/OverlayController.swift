@@ -35,13 +35,17 @@ final class OverlayController {
         // change has to repaint even when nothing else moved.
         for publisher in [state.$ink.map { _ in () }.eraseToAnyPublisher(),
                           state.$tool.map { _ in () }.eraseToAnyPublisher(),
-                          state.$showArmedFrame.map { _ in () }.eraseToAnyPublisher()] {
+                          state.$showArmedFrame.map { _ in () }.eraseToAnyPublisher(),
+                          state.$showCursorFrame.map { _ in () }.eraseToAnyPublisher()] {
             publisher.sink { [weak self] in self?.repaintCanvases() }.store(in: &cancellables)
         }
     }
 
     private func repaintCanvases() {
-        for canvas in canvases.values { canvas.view.needsDisplay = true }
+        for canvas in canvases.values {
+            canvas.view.syncPointerFromScreen()
+            canvas.view.needsDisplay = true
+        }
     }
 
     /// Command-Z must work from any display, whichever window is key, so it is
@@ -188,6 +192,11 @@ final class OverlayController {
                 self?.commitOrder.append((displayID, stroke.id))
             }
             canvas.view.onUndo = { [weak self] in self?.undo() }
+            canvas.view.onErase = { [weak self] ids in
+                guard let self else { return }
+                let erased = Set(ids)
+                self.commitOrder.removeAll { erased.contains($0.strokeID) }
+            }
             canvases[displayID] = canvas
         }
     }

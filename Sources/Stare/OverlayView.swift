@@ -11,6 +11,16 @@ final class OverlayView: NSView {
     var onCommit: ((Stroke) -> Void)?
     /// Command-Z is global: the controller owns the undo history.
     var onUndo: (() -> Void)?
+    /// Marks removed by the eraser, so the undo history can drop them too.
+    var onErase: (([UUID]) -> Void)?
+
+    static let textFont = NSFont.systemFont(ofSize: 20, weight: .regular)
+    static let cursorFrameDiameter: CGFloat = 40
+    private static let eraserRadius: CGFloat = 8
+
+    private var textField: NSTextField?
+    private var laserTimer: Timer?
+    private var pointerLocation: CGPoint?
 
     /// Bounds of committed marks, computed once, so a redraw never rebuilds a
     /// path just to decide whether a stroke is visible.
@@ -69,6 +79,18 @@ final class OverlayView: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         NSCursor.crosshair.set()
+        updatePointer(to: convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        guard state.showCursorFrame else { return }
+        updatePointer(to: convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        guard let previous = pointerLocation else { return }
+        pointerLocation = nil
+        setNeedsDisplay(pointerRect(around: previous))
     }
 
     // MARK: - Session
@@ -78,6 +100,8 @@ final class OverlayView: NSView {
     func clear() {
         session.clear()
         committedBounds.removeAll()
+        finishTextEditing(commit: false)
+        stopLaserTimer()
         needsDisplay = true
     }
 
@@ -111,11 +135,30 @@ final class OverlayView: NSView {
         lastStraight = false
         lastInputTimestamp = event.timestamp
         Diag.log("mouseDown \(Int(point.x)),\(Int(point.y)) tool=\(state.tool.rawValue)")
+
+        switch state.tool {
+        case .eraser:
+            erase(at: point)
+            return
+        case .text:
+            beginTextEditing(at: point)
+            return
+        default:
+            break
+        }
+
         session.begin(at: point, tool: state.tool, ink: state.ink)
+        if state.tool.isTransient { startLaserTimer() }
         setNeedsDisplay(dirtyRect(around: point, other: nil))
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if state.tool == .eraser {
+            lastDragPoint = convert(event.locationInWindow, from: nil)
+            erase(at: lastDragPoint ?? .zero)
+            return
+        }
+
         let shift = event.modifierFlags.contains(.shift)
         let point = adjusted(convert(event.locationInWindow, from: nil), shift: shift)
         let straight = straightConstraint(shift)
@@ -168,6 +211,118 @@ final class OverlayView: NSView {
         needsDisplay = true
     }
 
+    // MARK: - Eraser
+
+    private func erase(at point: CGPoint) {
+        let removed = session.erase(at: point, radius: Self.eraserRadius)
+        guard !removed.isEmpty else { return }
+        for id in removed { committedBounds.removeValue(forKey: id) }
+        onErase?(removed)
+        Diag.log("erase count=\(removed.count) remaining=\(session.strokes.count)")
+        needsDisplay = true
+    }
+
+    // MARK: - Text
+
+    private func beginTextEditing(at point: CGPoint) {
+        finishTextEditing(commit: true)
+        session.begin(at: point, tool: .text, ink: state.ink)
+
+        let field = NSTextField(frame: CGRect(x: point.x, y: point.y, width: 320, height: 30))
+        field.isBezeled = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.font = Self.textFont
+        field.textColor = NSColor(cgColor: state.ink.cgColor()) ?? .white
+        field.delegate = self
+        field.cell?.wraps = false
+        field.cell?.isScrollable = true
+        addSubview(field)
+        window?.makeFirstResponder(field)
+        textField = field
+        Diag.log("text editing started")
+    }
+
+    /// Confirms or discards the text mark in progress. Empty text never becomes
+    /// a mark: a stray click must not leave an invisible box behind.
+    private func finishTextEditing(commit: Bool) {
+        guard let field = textField else { return }
+        let typed = field.stringValue
+        textField = nil
+        field.removeFromSuperview()
+
+        guard session.active?.tool == .text else {
+            needsDisplay = true
+            return
+        }
+
+        if commit, !typed.isEmpty {
+            let size = (typed as NSString).size(withAttributes: [.font: Self.textFont])
+            session.setActiveText(typed, size: size)
+            session.commit()
+            if let committed = session.strokes.last {
+                committedBounds[committed.id] = committed.bounds
+                onCommit?(committed)
+            }
+        } else {
+            session.undo()
+        }
+
+        window?.makeFirstResponder(self)
+        needsDisplay = true
+        Diag.log("text editing finished commit=\(commit) strokes=\(session.strokes.count)")
+    }
+
+    // MARK: - Laser
+
+    private func startLaserTimer() {
+        guard laserTimer == nil else { return }
+        laserTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let now = Date()
+            _ = self.session.pruneTransient(now: now)
+            self.needsDisplay = true
+            if !self.session.strokes.contains(where: { $0.tool.isTransient }) {
+                self.stopLaserTimer()
+            }
+        }
+    }
+
+    private func stopLaserTimer() {
+        laserTimer?.invalidate()
+        laserTimer = nil
+    }
+
+    // MARK: - Cursor frame
+
+    /// The frame is a mode, not a mark: it follows the pointer and is never
+    /// captured as a drawing.
+    func syncPointerFromScreen() {
+        guard state.showCursorFrame, let window else {
+            if pointerLocation != nil {
+                pointerLocation = nil
+                needsDisplay = true
+            }
+            return
+        }
+        let windowPoint = window.convertPoint(fromScreen: NSEvent.mouseLocation)
+        updatePointer(to: convert(windowPoint, from: nil))
+    }
+
+    private func updatePointer(to point: CGPoint) {
+        let previous = pointerLocation
+        guard previous != point else { return }
+        pointerLocation = point
+        var rect = pointerRect(around: point)
+        if let previous { rect = rect.union(pointerRect(around: previous)) }
+        setNeedsDisplay(rect)
+    }
+
+    private func pointerRect(around point: CGPoint) -> CGRect {
+        let radius = Self.cursorFrameDiameter / 2 + 8
+        return CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2)
+    }
+
     /// Small rect covering the last input segment, so a drag never rebuilds the
     /// whole path of the mark in progress.
     private func dirtyRect(around point: CGPoint, other: CGPoint?) -> CGRect {
@@ -213,11 +368,15 @@ final class OverlayView: NSView {
         if let character = characters.first {
             if let tool = ToolShortcut.tool(for: character) {
                 state.tool = tool
-                Diag.log("tool=\(tool.rawValue)")
                 return
             }
             if let digit = character.wholeNumberValue, let ink = Ink.ink(forNumber: digit) {
                 state.ink = ink
+                return
+            }
+            if character.lowercased() == "m" {
+                state.showCursorFrame.toggle()
+                syncPointerFromScreen()
                 return
             }
         }
@@ -238,6 +397,22 @@ final class OverlayView: NSView {
             self?.hintUntil = nil
             self?.needsDisplay = true
         }
+    }
+
+    private func drawCursorFrame(in context: CGContext) {
+        guard state.showCursorFrame, let point = pointerLocation else { return }
+        let radius = Self.cursorFrameDiameter / 2
+        context.setStrokeColor(state.ink.cgColor(alpha: 0.9))
+        context.setLineWidth(3)
+        context.addEllipse(
+            in: CGRect(
+                x: point.x - radius,
+                y: point.y - radius,
+                width: radius * 2,
+                height: radius * 2
+            )
+        )
+        context.strokePath()
     }
 
     private func drawHint() {
@@ -282,7 +457,12 @@ final class OverlayView: NSView {
         context.setLineCap(.round)
         context.setLineJoin(.round)
 
-        for stroke in session.strokes {
+        let now = Date()
+        for stroke in session.strokes where stroke.tool.isTransient {
+            render(stroke, in: context, now: now)
+        }
+
+        for stroke in session.strokes where !stroke.tool.isTransient {
             let box = committedBounds[stroke.id] ?? {
                 let computed = stroke.bounds
                 committedBounds[stroke.id] = computed
@@ -320,11 +500,28 @@ final class OverlayView: NSView {
         context.strokePath()
     }
 
-    private func render(_ stroke: Stroke, in context: CGContext) {
-        MarkRenderer.draw(stroke: stroke, in: context)
+    private func render(_ stroke: Stroke, in context: CGContext, now: Date = Date()) {
+        if stroke.tool == .text {
+            drawText(stroke)
+            return
+        }
+        MarkRenderer.draw(
+            stroke: stroke,
+            in: context,
+            opacity: stroke.opacity(at: now, laserLifetime: session.laserLifetime)
+        )
         if stroke.tool == .number {
             drawStepNumber(stroke)
         }
+    }
+
+    private func drawText(_ stroke: Stroke) {
+        guard let text = stroke.text, !text.isEmpty, let origin = stroke.points.first else { return }
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: Self.textFont,
+            .foregroundColor: NSColor(cgColor: stroke.ink.cgColor()) ?? .white,
+        ]
+        (text as NSString).draw(at: origin, withAttributes: attributes)
     }
 
     private func drawStepNumber(_ stroke: Stroke) {
@@ -347,5 +544,26 @@ final class OverlayView: NSView {
         case .yellow, .white: .black
         default: .white
         }
+    }
+}
+
+extension OverlayView: NSTextFieldDelegate {
+    /// Return confirms the text mark, Escape cancels it without leaving drawing
+    /// mode.
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        if selector == #selector(NSResponder.insertNewline(_:)) {
+            finishTextEditing(commit: true)
+            return true
+        }
+        if selector == #selector(NSResponder.cancelOperation(_:)) {
+            finishTextEditing(commit: false)
+            return true
+        }
+        return false
+    }
+
+    func controlTextDidEndEditing(_ notification: Notification) {
+        // Clicking away confirms, the same as typing Return.
+        finishTextEditing(commit: true)
     }
 }

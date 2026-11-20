@@ -9,8 +9,25 @@ public struct DrawingSession: Equatable, Sendable {
     /// The mark currently being dragged, not yet committed.
     public private(set) var active: Stroke?
     public private(set) var nextStepNumber: Int = 1
+    /// How long laser marks live before they are pruned.
+    public var laserLifetime: TimeInterval = 1.2
 
     public init() {}
+
+    /// Marks that must be painted right now, with laser marks that already
+    /// expired removed.
+    public func visibleStrokes(at now: Date) -> [Stroke] {
+        var result: [Stroke] = []
+        for stroke in visibleStrokes {
+            if stroke.tool.isTransient,
+               let createdAt = stroke.createdAt,
+               now.timeIntervalSince(createdAt) >= laserLifetime {
+                continue
+            }
+            result.append(stroke)
+        }
+        return result
+    }
 
     /// Every mark that must be visible right now, including the one in progress.
     public var visibleStrokes: [Stroke] {
@@ -22,19 +39,65 @@ public struct DrawingSession: Equatable, Sendable {
 
     public var stepCount: Int { nextStepNumber - 1 }
 
-    /// Starts a mark. Click tools (`number`) complete immediately.
+    /// Starts a mark. Numbered steps complete immediately; text stays active
+    /// until its content is confirmed.
     @discardableResult
-    public mutating func begin(at point: CGPoint, tool: Tool, ink: Ink) -> Stroke {
+    public mutating func begin(at point: CGPoint, tool: Tool, ink: Ink, now: Date = Date()) -> Stroke {
         var stroke = Stroke(tool: tool, ink: ink, points: [point])
+        if tool.isTransient { stroke.createdAt = now }
 
-        if tool.isClickTool {
+        if tool.commitsImmediately {
             stroke.stepNumber = nextStepNumber
             nextStepNumber += 1
         }
 
         active = stroke
-        if tool.isClickTool { commit() }
+        if tool.commitsImmediately { commit() }
         return stroke
+    }
+
+    /// Records what the user typed into the text mark in progress.
+    public mutating func setActiveText(_ text: String, size: CGSize?) {
+        guard var current = active, current.tool == .text else { return }
+        current.text = text
+        current.textSize = size
+        active = current
+    }
+
+    /// Removes every mark the pointer touches. Returns the removed ids.
+    @discardableResult
+    public mutating func erase(at point: CGPoint, radius: CGFloat = 6) -> [UUID] {
+        let doomed = strokes.filter { $0.hitTest(point, radius: radius) }
+        guard !doomed.isEmpty else { return [] }
+
+        let ids = Set(doomed.map(\.id))
+        strokes.removeAll { ids.contains($0.id) }
+        for stroke in doomed where stroke.stepNumber != nil {
+            renumberFromScratch()
+            break
+        }
+        return Array(ids)
+    }
+
+    /// Drops transient marks older than the lifetime.
+    @discardableResult
+    public mutating func pruneTransient(now: Date) -> Bool {
+        let before = strokes.count
+        strokes.removeAll { stroke in
+            guard stroke.tool.isTransient, let createdAt = stroke.createdAt else { return false }
+            return now.timeIntervalSince(createdAt) >= laserLifetime
+        }
+        return strokes.count != before
+    }
+
+    /// Numbered marks stay gapless after an erase.
+    private mutating func renumberFromScratch() {
+        var next = 1
+        for index in strokes.indices where strokes[index].tool == .number {
+            strokes[index].stepNumber = next
+            next += 1
+        }
+        nextStepNumber = next
     }
 
     /// Extends the mark in progress. Ignored for click tools and when idle.

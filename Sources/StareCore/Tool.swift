@@ -10,7 +10,10 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
     case line
     case rectangle
     case ellipse
+    case text
     case number
+    case laser
+    case eraser
 
     public var id: String { rawValue }
 
@@ -23,7 +26,10 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
         case .line: "L"
         case .rectangle: "R"
         case .ellipse: "O"
+        case .text: "T"
         case .number: "C"
+        case .laser: "F"
+        case .eraser: "E"
         }
     }
 
@@ -35,7 +41,10 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
         case .line: "Line"
         case .rectangle: "Rectangle"
         case .ellipse: "Ellipse"
+        case .text: "Text"
         case .number: "Numbered step"
+        case .laser: "Laser pointer"
+        case .eraser: "Eraser"
         }
     }
 
@@ -47,7 +56,10 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
         case .line: "line.diagonal"
         case .rectangle: "rectangle"
         case .ellipse: "circle"
+        case .text: "textformat"
         case .number: "1.circle"
+        case .laser: "sparkles"
+        case .eraser: "eraser"
         }
     }
 
@@ -56,12 +68,26 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
     public var usesEndpointsOnly: Bool {
         switch self {
         case .line, .arrow, .rectangle, .ellipse: true
-        case .pen, .highlighter, .number: false
+        case .pen, .highlighter, .text, .number, .laser, .eraser: false
         }
     }
 
-    /// Tools that complete on a single click instead of a drag.
-    public var isClickTool: Bool { self == .number }
+    /// Tools that lay a mark with a single click instead of a drag.
+    public var isClickTool: Bool {
+        switch self {
+        case .number, .text: true
+        case .pen, .highlighter, .arrow, .line, .rectangle, .ellipse, .laser, .eraser: false
+        }
+    }
+
+    /// Marks that complete the moment they are placed.
+    public var commitsImmediately: Bool { self == .number }
+
+    /// Marks that fade away and must never be captured.
+    public var isTransient: Bool { self == .laser }
+
+    /// The eraser removes existing marks instead of creating one.
+    public var isEraser: Bool { self == .eraser }
 }
 
 public enum ToolShortcut {

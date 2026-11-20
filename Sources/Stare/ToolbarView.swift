@@ -22,6 +22,16 @@ struct ToolbarView: View {
 
             divider
 
+            toggleButton(
+                "cursorarrow",
+                isOn: state.showCursorFrame,
+                help: Text(verbatim: "Cursor frame (M)")
+            ) {
+                state.showCursorFrame.toggle()
+            }
+
+            divider
+
             iconButton("arrow.uturn.backward", help: "Undo (⌘Z)", action: onUndo)
             iconButton("trash", help: "Clear all (esc)", action: onClear)
             iconButton("xmark", help: "Done (esc)", action: onDone)
@@ -76,6 +86,26 @@ struct ToolbarView: View {
         }
         .buttonStyle(.plain)
         .help(Text(verbatim: "\(ink.displayName) (\(ink.number))"))
+    }
+
+    private func toggleButton(
+        _ symbol: String,
+        isOn: Bool,
+        help: Text,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 28, height: 26)
+                .foregroundStyle(isOn ? Color.white : Color.white.opacity(0.55))
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(isOn ? Color.accentColor.opacity(0.55) : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 
     private func iconButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {

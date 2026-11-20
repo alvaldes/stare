@@ -28,6 +28,7 @@ S14. Dibujar no pide permisos de macOS. Cada feature que lee píxeles los pide p
 | T3 | Toolbar flotante con herramientas e tintas | S6–S7 | parent | 541388e, cdb52a9 |
 | T4 | Captura de display y de área con marcas compuestas + permiso de Screen Recording | S12, S14 | parent | _pending_ |
 | T5 | Cards de captura, clipboard y editor con crop y re-anotación | S13 | parent | _pending_ |
+| T7 | Herramientas faltantes del dock: eraser, text, laser y marco del cursor | S21–S24 | parent | _pending_ |
 | T6 | Ventana de configuración: ubicación de la palette y alcance del overlay | S15, S16 | parent | _pending_ |
 
 ## Log
@@ -75,3 +76,12 @@ L15. Correcciones: (a) las herramientas definidas por extremos invalidaban sólo
 L16. Verificado con capturas de pantalla tomadas a mitad de arrastre: la herramienta línea deja una sola línea limpia sin estela, y Shift+rectángulo produce un cuadrado exacto.
 
 L17. "solo un detalle y es saber porque el borde desaparece con la primera pontada". Respuesta: lo decidí yo, no estaba en el spec; el marco era la señal de armado y vacío. El usuario eligió que quede mientras dure el modo dibujo. Verificado con captura posterior a un trazo: marco de la tinta activa en los cuatro bordes con la marca ya pintada.
+
+S21. "faltan elementos en el dock como el ease erase" — borrador con tecla `E`: borra marcas completas por hit-test sobre el trazo, no píxeles. Los pasos numerados se renumeran sin huecos.
+S22. "falta el puntero lazer" — láser con tecla `F`: trazo efímero que se desvanece en 1,2 s, se descarta solo y nunca se incluye en una captura.
+S23. "el text" — texto con tecla `T`: click coloca un editor en línea, Enter o click afuera confirma, Escape cancela; fuente 20 pt con la tinta activa.
+S24. "la opcion de poner un marco al cursor" — marco/anel de 40 pt alrededor del puntero que lo sigue, en la tinta activa, apagado por defecto y conmutable desde la palette o con `M`. Es un modo de presentación, no una marca: no se captura.
+
+L18. "no podemos pasar a T4 porque faltan elementos en el dock como el ease erase y el text. Ademas falta el puntero lazer y algo que no hemos visto antes es la opcion de poner un marco al cursor."
+L19. Implementado en el modelo y en la UI, con 49 tests unitarios en verde: borrado por trazo con renumeración, láser transitorio con desvanecido y poda, texto colocado por click y confirmado, marco del cursor como modo. Verificación manual pendiente (el usuario la corre).
+L20. Nota de proceso: las sondas de eventos inyectados requieren normalizar el estado con Escape antes de activar; una corrida que no lo hizo dejó el modo dibujo apagado y el tipeo inyectado terminó en el chat del usuario.
