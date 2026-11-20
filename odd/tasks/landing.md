@@ -19,12 +19,25 @@ S9. CTA principal: descargar la app. Apunta al último GitHub Release; mientras 
 
 | ID | Tarea | Specs | Ruta | Estado | Commit |
 | --- | --- | --- | --- | --- | --- |
-| T1 | Scaffold, Tailwind, pipeline `toSSG` → static assets, wrangler sin costo | S1–S4 | inline | pendiente | |
-| T2 | Sistema visual y secciones (hero, features, atajos, download, FAQ, footer) | S6–S9 | inline | pendiente | |
-| T3 | Motor de la demo: herramientas, tintas, undo, Esc, toolbar | S5 | inline | pendiente | |
-| T4 | Captura S → card con Copy al portapapeles | S5 | inline | pendiente | |
-| T5 | Botón de descarga con GitHub Releases y "Coming soon" | S9 | inline | pendiente | |
-| T6 | README de `landing/`: dev, build, deploy gratis | S3–S4 | inline | pendiente | |
+| T1 | Scaffold, Tailwind, pipeline `toSSG` → static assets, wrangler sin costo | S1–S4 | inline | hecho | b7a4af5 |
+| T2 | Sistema visual y secciones (hero, features, atajos, download, FAQ, footer) | S6–S9 | inline | hecho | ver Log L8 |
+| T3 | Motor de la demo: herramientas, tintas, undo, Esc, toolbar | S5 | inline | hecho | ver Log L8 |
+| T4 | Captura S → card con Copy al portapapeles | S5 | inline | hecho | ver Log L8 |
+| T5 | Botón de descarga con GitHub Releases y "Coming soon" | S9 | inline | hecho | ver Log L8 |
+| T6 | README de `landing/`: dev, build, deploy gratis | S3–S4 | inline | hecho | ver Log L8 |
+| T7 | Efectos con vida (aurora, grilla, glass nav, blur-in, sheen, spotlight, reveals, atajos vivos) | S6 | inline | hecho, sin commit | |
+| T8 | Logo: plumilla abierta sobre vidrio aurora + glifo relleno para barra de menú | S6 | inline | hecho, sin commit | |
+| T8b | Nav alineado al contenedor y logo centrado; mini-escena animada en el hero (dibujar → S → Copied → chat) | S6 | inline | hecho, sin commit | |
+| T9 | Commitear T2–T8b en slices en `feat/landing` | S1 | inline | pendiente | |
+| T10 | Licencia (decisión del usuario) y repo público `alvaldes/stare`; hoy los links dan 404 y "open source" no es cierto aún | S9 | — | pendiente, bloquea publicar | |
+| T11 | Primer deploy: `pnpm wrangler login` (usuario, interactivo) + `pnpm deploy` | S3–S4 | — | pendiente, bloquea publicar | |
+| T12 | Imagen og:image generada en el build para previews en redes | S6 | inline | pendiente | |
+| T13 | Auditoría Lighthouse: performance (blur de auroras en móviles) y accesibilidad | S6 | inline | pendiente | |
+| T14 | Página 404 con el mismo estilo | S6 | inline | pendiente | |
+| T15 | Demo: sumar text, laser, eraser (T7 de la app) y quizás el editor, cuando la app los tenga | S5 | inline | esperando app | |
+| T16 | Video corto real de la app (dibujar → S → pegar) cuando la captura esté terminada | S7 | — | esperando app | |
+| T17 | Mergear `feat/landing` a `main` cuando T4/T6 de la app se integren | S1 | — | esperando app | |
+| T18 | Aplicar logo y glifo en la app: reemplazar `pencil.tip` en `StatusBarController.swift` (template image, relleno siempre) | S6 | — | esperando app | |
 
 Ruta: todo inline; T2 y T3 comparten tokens visuales y la toolbar, así que no son unidades independientes para escritores paralelos.
 
@@ -35,3 +48,10 @@ L2 (2026-11-20, respuestas): ubicación "Carpeta en este repo"; demo "Interactiv
 L3 (2026-11-20): "estoy viendo lo de de honoX y no se si es lo que usa la doc offical porque lo que quiero usar es pnpm create hono@latest" → template `cloudflare-workers+vite`, "con claudflare-workers+vite siempre que lo que vayamos a usar de claudflare sea gratis". Verificado en developers.cloudflare.com: Workers Free = 100k requests/día; static assets gratis e ilimitados.
 L4 (2026-11-20): pre-render estático, "con lo recomendado". El plugin de Cloudflare para Vite no tiene pre-render genérico (solo TanStack Start / React Router), así que usamos `toSSG` sobre el Worker compilado.
 L5 (investigación): ninguna referencia tiene una demo que termine en captura + copia; Epic Pen es la única con canvas en el navegador (solo dibujar). Ese es el diferencial de Stare.
+L6 (T1): RED `src/prerender.test.ts` → GREEN. El Worker compilado sale en `dist/<nombre_del_worker>` (`stare_landing`); `scripts/prerender.ts` busca el directorio con `wrangler.json` y el build arranca con `rm -rf dist`.
+L7 (T3–T5): 17 tests (atajos, sesión, puntas de flecha portadas de PathBuilder, selección de release). Verificado en navegador: dibujo, S → card, la captura excluye toolbar y cards. Corregidos: `aria-pressed` vacío en hono/jsx/dom, feedback inmediato al capturar, toolbar en dos filas en mobile.
+L8 (2026-11-20): "le falta algo de vida ese fondo esta muy plano y no tiene animaciones. El demo funciona pero el resto no tiene vida. de verdad revisaste 21st?" → T7.
+L9 (2026-11-20): logo "el que pusiste esta feisimo" → tras 3 rondas: D3 nib, "N1 pero la punta del boligrafo no es cerrada es abbireta como una real estilografica"; barra de menú "definitivamente filled siempre" → T8. SF Symbols no se puede usar como logo (licencia).
+L10 (2026-11-20): "en la app aun no podemos tocar nada porque aun se esta trabajando asi que seguimos trabajando en la landing y depues mesclamos" → T15–T18 esperan a la app. "pon todo esto en cosas que hacer para retomarlas despues" → T9–T18.
+L11 (2026-11-20): barra de menú de la demo: "debe estar el logo de mac con el nombre de la app Stare y la hora real". Hora real hecha (clock.ts, 3 tests). Logo de Apple: se advirtió que las guías de Apple para terceros lo prohíben sin licencia escrita; el usuario respondió "el icono de la mac claro que se puede usar" y, tras la explicación del riesgo, eligió "1." (la manzana, aceptando el riesgo). Implementado con el glifo del sistema U+F8FF solo en dispositivos Apple; círculo neutro en el resto. Pendiente: nombre "Stare" vs "Ledger" en negrita (Stare no toma el foco, en un Mac real se vería la app de abajo).
+L12 (2026-11-20): "porque usar ascii cuando puedes usar svg o algun otro icono de internet como el que esta en svgl.app" → la manzana pasa a ser un path SVG (svgl.app) dentro de DemoScreen; se eliminan el glifo U+F8FF, el círculo de fallback y la detección de plataforma. Se ve igual en todos los sistemas.
