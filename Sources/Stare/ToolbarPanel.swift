@@ -86,8 +86,8 @@ final class ToolbarPanel: NSPanel {
     /// Places the palette on the display that has the pointer, at the relative
     /// spot the user last chose. Moving it between displays keeps the offset,
     /// so it lands near the same place on whichever screen you are working.
-    func positionNearPointerDisplay() {
-        guard let target = screenUnderPointer() else { return }
+    func positionNearPointerDisplay(placement: String) {
+        guard let target = targetScreen(for: placement) else { return }
 
         let anchor = savedAnchor() ?? CGPoint(x: 0.5, y: 0.08)
         let center = CGPoint(
@@ -107,6 +107,49 @@ final class ToolbarPanel: NSPanel {
         setFrameOrigin(origin)
     }
 
+    /// Resolves the display the palette should open on.
+    private func targetScreen(for placement: String) -> NSScreen? {
+        switch placement {
+        case "frontWindow":
+            return frontWindowScreen() ?? screenUnderPointer()
+        case "fixed":
+            return savedScreen() ?? screenUnderPointer()
+        default:
+            return screenUnderPointer()
+        }
+    }
+
+    /// The screen holding the frontmost application's frontmost normal window.
+    /// Read from the window list, so it needs no Accessibility permission.
+    private func frontWindowScreen() -> NSScreen? {
+        guard let front = NSWorkspace.shared.frontmostApplication else { return nil }
+        let windows = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]] ?? []
+
+        for window in windows {
+            guard (window[kCGWindowOwnerPID as String] as? Int32) == front.processIdentifier,
+                  (window[kCGWindowLayer as String] as? Int) == 0,
+                  let raw = window[kCGWindowBounds as String] as? [String: Any],
+                  let rect = CGRect(dictionaryRepresentation: raw as CFDictionary),
+                  rect.width > 200, rect.height > 200 else { continue }
+
+            // Window list bounds are top-left based; screens are bottom-left.
+            let primaryHeight = NSScreen.screens.first?.frame.maxY ?? 0
+            let centre = CGPoint(x: rect.midX, y: primaryHeight - rect.midY)
+            return NSScreen.screens.first { $0.frame.contains(centre) }
+        }
+        return nil
+    }
+
+    private static let screenKey = "toolbarScreen"
+
+    private func savedScreen() -> NSScreen? {
+        guard let name = UserDefaults.standard.string(forKey: Self.screenKey) else { return nil }
+        return NSScreen.screens.first { $0.localizedName == name }
+    }
+
     private func screenUnderPointer() -> NSScreen? {
         let pointer = NSEvent.mouseLocation
         return NSScreen.screens.first { $0.frame.contains(pointer) }
@@ -118,6 +161,7 @@ final class ToolbarPanel: NSPanel {
     /// display changes.
     @objc private func persistAnchor() {
         guard let screen = screen ?? NSScreen.main else { return }
+        UserDefaults.standard.set(screen.localizedName, forKey: Self.screenKey)
         let anchor = CGPoint(
             x: (frame.midX - screen.frame.minX) / screen.frame.width,
             y: (frame.midY - screen.frame.minY) / screen.frame.height

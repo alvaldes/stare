@@ -25,9 +25,11 @@ final class SettingsWindowController {
     }
 
     private func makeWindow() -> NSWindow {
+        // A fixed content size: NSHostingView.fittingSize is zero before a layout
+        // pass, and a zero-sized window is created but never seen.
+        let size = CGSize(width: 420, height: 560)
         let hosting = NSHostingView(rootView: SettingsView(state: state))
-        hosting.sizingOptions = [.preferredContentSize]
-        let size = hosting.fittingSize
+        hosting.frame = CGRect(origin: .zero, size: size)
 
         let window = NSWindow(
             contentRect: CGRect(origin: .zero, size: size),

@@ -8,6 +8,8 @@ final class EditorState: ObservableObject {
     private static let frameKey = "showArmedFrame"
     private static let laserLifetimeKey = "laserLifetime"
     private static let pointerSizeKey = "pointerSize.v3"
+    private static let overlayScopeKey = "overlayScope"
+    private static let palettePlacementKey = "palettePlacement"
     private static let pointerShapeKey = "pointerShape"
     private static let pointerGlowKey = "pointerGlow"
     private static let pointerFadeKey = "pointerFadeWhenIdle"
@@ -22,6 +24,14 @@ final class EditorState: ObservableObject {
     /// Presentation mode: the layer is visible but passes clicks through, so the
     /// pointer highlight works while the user keeps working in another app.
     @Published var pointerActive: Bool = false
+    /// "all" draws on every display, "active" only on the one under the pointer.
+    @Published var overlayScope: String {
+        didSet { UserDefaults.standard.set(overlayScope, forKey: Self.overlayScopeKey) }
+    }
+    /// Where the palette opens: "cursor", "frontWindow" or "fixed".
+    @Published var palettePlacement: String {
+        didSet { UserDefaults.standard.set(palettePlacement, forKey: Self.palettePlacementKey) }
+    }
     /// Diameter of the pointer highlight ring, in points.
     @Published var pointerSize: CGFloat {
         didSet { UserDefaults.standard.set(Double(pointerSize), forKey: Self.pointerSizeKey) }
@@ -57,10 +67,18 @@ final class EditorState: ObservableObject {
         for key in [Self.pointerShapeKey, Self.pointerGlowKey, Self.pointerFadeKey] where defaults.object(forKey: key) == nil {
             defaults.set(key == Self.pointerShapeKey ? "squircle" : true, forKey: key)
         }
+        if defaults.object(forKey: Self.overlayScopeKey) == nil {
+            defaults.set("all", forKey: Self.overlayScopeKey)
+        }
+        if defaults.object(forKey: Self.palettePlacementKey) == nil {
+            defaults.set("cursor", forKey: Self.palettePlacementKey)
+        }
         laserLifetime = defaults.double(forKey: Self.laserLifetimeKey)
         pointerSize = CGFloat(defaults.double(forKey: Self.pointerSizeKey))
         pointerShape = defaults.string(forKey: Self.pointerShapeKey) ?? "squircle"
         pointerGlow = defaults.bool(forKey: Self.pointerGlowKey)
         pointerFadeWhenIdle = defaults.bool(forKey: Self.pointerFadeKey)
+        overlayScope = defaults.string(forKey: Self.overlayScopeKey) ?? "all"
+        palettePlacement = defaults.string(forKey: Self.palettePlacementKey) ?? "cursor"
     }
 }

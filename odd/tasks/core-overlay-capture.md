@@ -58,13 +58,13 @@ L5. Reporte de la primera prueba manual: "mira la prueba dio varias cosas:
 
 L6. Corrección (cdb52a9): los cinco síntomas comparten una causa — la app accesoria estaba inactiva y macOS consumía el click para activarla, así que nunca llegaba a `mouseDown`; sin Esc tampoco había salida, y el overlay invisible quedó tapando el Dock real. Se activa la app al entrar y se devuelve el foco a la app anterior al salir, el overlay toma key status y first responder, se agrega un hint visible de 2 s, la palette se arrastra con `performDrag` y se ancla al display del puntero, y deja de seguir Spaces. S5 se reescribe: entrar al modo dibujo sí activa Stare de forma invisible; al salir, el foco vuelve a la app que estaba adelante.
 
-S15. "ahora el dock aparece donde esta el cursor pero el usuario puede querer esto o puede qurere que aparezca donde esta el foco en la ventana donde se invoco o en monitor donde esta el foco" — la ubicación de la palette es una preferencia con al menos tres modos: display bajo el cursor (por defecto), display de la ventana con foco, y display principal fijo.
+S15. Ubicación de la palette: preferencia con tres modos — bajo el cursor (por defecto), display de la ventana en foco (resuelto leyendo la lista de ventanas, sin permisos), y el último display usado. Decisión del usuario: "por defecto en cursor en settings se cambia".
 
 L9. Verificación end-to-end con clicks reales inyectados (el proceso de la sesión tiene Accessibility): tras `⌥⇧A` las ventanas de Stare quedan en `layer=1000` por encima de la app de adelante (`Ghostty layer=0`), `cursorUpdate` dispara, `mouseDown 960,540` llega, `commit strokes=1` registra el trazo y `Esc` desactiva. Segunda ronda: dibujo, `Ctrl→` a otro Space, las tres ventanas siguen en `layer=1000`, el punto de prueba sigue teniendo a Stare arriba y un click vuelve a pintar. La app queda `active=false` y aun así recibe clicks y teclas: la activación no era el problema, lo era `.canJoinAllSpaces` sobre un `NSPanel`.
 L10. Falta confirmación humana de pantalla completa (spec S4) y de la estética del marco de armado.
 L11. Deuda declarada: `Diag` escribe `/tmp/stare.log` siempre; hay que apagarlo antes de distribuir.
 
-S16. "en settings se puede configurar si quieres que sea en todos o en active" — el overlay dibuja en todos los displays o sólo en el display activo, según preferencia. Por defecto: todos.
+S16. Alcance del overlay: todos los displays (por defecto, decisión del usuario) o sólo el activo, cuando la sesión arranca con el puntero ahí.
 S17. "si se presiona shift mientras se usa pen o highlight haga una linea recta como en los editores como photoshop" — con Shift apretado, pen y highlighter colapsan el trazo a una recta desde el punto inicial hasta el actual; al soltarlo se retoma el trazo libre.
 S18. "cmd+Z funciona pero solo en las modificaciones del monitor activo no quiera las del resto de monitores" — el historial de deshacer es global entre displays: ⌘Z deshace la última marca en el orden real en que se dibujó, sin importar en qué monitor esté el puntero.
 
@@ -135,3 +135,7 @@ L40. "el crop el copy y el save en la misma barra todo en esa barra nada de boto
 
 L41. T6: Settings reúne marco de dibujo, duración del láser (1/2/2,5/3/5 s) y tamaño, forma, glow y fade del puntero. El menú de la barra quedó en Draw Over Screen, Pointer Highlight, Clear Drawing, Settings… y Quit. `--selftest` renderiza también el form en ambas apariencias.
 L42. Defecto encontrado al mirar el render: el picker de duración salía vacío porque el valor guardado por defecto (2,5 s) no estaba entre las opciones.
+
+L43. La ventana de Settings no se veía: `NSHostingView.fittingSize` devuelve 0 antes del primer layout, así que la ventana se creaba con tamaño cero. Ahora usa un tamaño fijo y `--selftest` verifica `frame` y `visible` de la ventana real (420x592, visible=true).
+L44. Preferencias nuevas con su comportamiento: alcance del overlay (todos por defecto) y ubicación de la palette (cursor por defecto, ventana en foco, último display usado). El modo "ventana en foco" se resuelve con la lista de ventanas, sin Accessibility.
+L45. Limpieza: `Diag` no escribe nada salvo que `STARE_DIAG=1` esté en el entorno. Verificado: tras lanzar la app, /tmp/stare.log no se crea.

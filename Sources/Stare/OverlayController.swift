@@ -319,7 +319,16 @@ final class OverlayController {
     }
 
     private func buildCanvases() {
-        for screen in NSScreen.screens {
+        // "active" limits drawing to the display the pointer is on when the
+        // session starts; "all" is the documented default.
+        let screens: [NSScreen]
+        if state.overlayScope == "active", let active = screenUnderPointer() {
+            screens = [active]
+        } else {
+            screens = NSScreen.screens
+        }
+
+        for screen in screens {
             guard let canvas = DisplayCanvas(
                 screen: screen,
                 state: state,
@@ -348,6 +357,11 @@ final class OverlayController {
         canvases.removeAll()
     }
 
+    private func screenUnderPointer() -> NSScreen? {
+        let location = NSEvent.mouseLocation
+        return NSScreen.screens.first { $0.frame.contains(location) }
+    }
+
     private func canvasUnderPointer() -> DisplayCanvas? {
         let location = NSEvent.mouseLocation
         if let canvas = canvases.values.first(where: { $0.panel.frame.contains(location) }) {
@@ -366,7 +380,7 @@ final class OverlayController {
             onDone: { [weak self] in self?.deactivate() }
         )
         self.toolbar = toolbar
-        toolbar.positionNearPointerDisplay()
+        toolbar.positionNearPointerDisplay(placement: state.palettePlacement)
         toolbar.orderFrontRegardless()
     }
 

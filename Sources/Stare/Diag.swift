@@ -1,21 +1,19 @@
 import Foundation
 
-/// Development diagnostics. `log show` no longer surfaces this app's `NSLog`
-/// output reliably on macOS 26, so the same lines also go to a file that the
-/// agent and the user can read directly.
+/// Development diagnostics. Off unless `STARE_DIAG=1` is in the environment:
+/// shipping builds must not write a trace file into /tmp.
 enum Diag {
     static let path = "/tmp/stare.log"
+    private static let enabled = ProcessInfo.processInfo.environment["STARE_DIAG"] == "1"
     private static let queue = DispatchQueue(label: "dev.alvaldes.stare.diagnostics")
 
     static func reset() {
-        queue.sync {
-            try? "".write(toFile: path, atomically: true, encoding: .utf8)
-        }
+        guard enabled else { return }
+        queue.sync { try? "".write(toFile: path, atomically: true, encoding: .utf8) }
     }
 
-    /// File only: `NSLog` serialises on the main thread and was measurably
-    /// adding tens of milliseconds to every painted frame.
     static func log(_ message: String) {
+        guard enabled else { return }
         let line = "\(String(format: "%.3f", Date().timeIntervalSince1970)) \(message)\n"
         queue.async {
             guard let data = line.data(using: .utf8) else { return }

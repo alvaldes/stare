@@ -98,6 +98,20 @@ enum SelfTest {
             report.append("settings \(name) rendered=\(rendered)")
         }
 
+        // A window measured before layout used to come out zero-sized: created,
+        // "opened", and never seen.
+        let settingsController = SettingsWindowController(state: EditorState())
+        settingsController.show()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+        if let window = NSApp.windows.first(where: { $0.title == "Stare Settings" }) {
+            report.append(
+                "settings window frame=\(window.frame) visible=\(window.isVisible) key=\(window.isKeyWindow)"
+            )
+            window.close()
+        } else {
+            report.append("FAIL: settings window not created")
+        }
+
         // Render path: same code the overlay uses.
         let marks = sampleSession()
         let rendered = renderToPNG(strokes: marks.visibleStrokes)

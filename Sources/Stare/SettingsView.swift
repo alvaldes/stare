@@ -14,6 +14,21 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Displays") {
+                Picker("Draw on", selection: $state.overlayScope) {
+                    Text("Every display").tag("all")
+                    Text("Only the active display").tag("active")
+                }
+                Picker("Open the palette", selection: $state.palettePlacement) {
+                    Text("Under the pointer").tag("cursor")
+                    Text("On the display of the front window").tag("frontWindow")
+                    Text("On the last used display").tag("fixed")
+                }
+                Text("Marking every display is the default; the palette follows the pointer unless told otherwise.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Laser") {
                 Picker("Laser lasts", selection: $state.laserLifetime) {
                     // 2.5 is the stored default: leaving it out showed an empty picker.
