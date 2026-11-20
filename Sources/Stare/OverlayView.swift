@@ -13,6 +13,8 @@ final class OverlayView: NSView {
     var onUndo: (() -> Void)?
     /// Marks removed by the eraser, so the undo history can drop them too.
     var onErase: (([UUID]) -> Void)?
+    /// Asks for a capture: nil means the whole display, a rect means that area.
+    var onCaptureRequest: ((CGRect?) -> Void)?
 
     static let textFont = NSFont.systemFont(ofSize: 20, weight: .regular)
     /// The pointer highlight is a thick translucent band with bright edges and a
@@ -24,6 +26,9 @@ final class OverlayView: NSView {
     private var textField: NSTextField?
     private var laserTimer: Timer?
     private var pointerLocation: CGPoint?
+    private var isSelectingArea = false
+    private var selectionOrigin: CGPoint?
+    private var selectionRect: CGRect?
     private var lastPointerChange = Date()
     /// Pointer mode paints only the highlight: no marks, no frame, no hint.
     var showsOnlyPointer = false {
@@ -157,6 +162,13 @@ final class OverlayView: NSView {
         lastInputTimestamp = event.timestamp
         Diag.log("mouseDown \(Int(point.x)),\(Int(point.y)) tool=\(state.tool.rawValue)")
 
+        if isSelectingArea {
+            selectionOrigin = point
+            selectionRect = CGRect(origin: point, size: .zero)
+            needsDisplay = true
+            return
+        }
+
         switch state.tool {
         case .eraser:
             finishPendingTextEditing()
@@ -177,6 +189,14 @@ final class OverlayView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if isSelectingArea {
+            let point = convert(event.locationInWindow, from: nil)
+            guard let origin = selectionOrigin else { return }
+            selectionRect = PathBuilder.normalizedRect(from: origin, to: point)
+            needsDisplay = true
+            return
+        }
+
         if state.tool == .eraser {
             lastDragPoint = convert(event.locationInWindow, from: nil)
             erase(at: lastDragPoint ?? .zero)
@@ -220,6 +240,20 @@ final class OverlayView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if isSelectingArea {
+            let rect = selectionRect
+            isSelectingArea = false
+            selectionOrigin = nil
+            selectionRect = nil
+            needsDisplay = true
+            if let rect, rect.width >= 4, rect.height >= 4 {
+                onCaptureRequest?(rect)
+            } else {
+                Diag.log("capture area too small, ignored")
+            }
+            return
+        }
+
         // Click tools are committed by their own path: numbered steps when
         // placed, text when the editor confirms. Committing here would close the
         // text mark the click just opened.
@@ -238,6 +272,47 @@ final class OverlayView: NSView {
         Diag.log("commit strokes=\(session.strokes.count)")
         // Full redraw: the first mark also removes the armed frame at the edges.
         needsDisplay = true
+    }
+
+    // MARK: - Area selection
+
+    private func beginAreaSelection() {
+        finishPendingTextEditing()
+        isSelectingArea = true
+        selectionOrigin = nil
+        selectionRect = nil
+        needsDisplay = true
+        Diag.log("area selection started")
+    }
+
+    private func cancelAreaSelection() {
+        isSelectingArea = false
+        selectionOrigin = nil
+        selectionRect = nil
+        needsDisplay = true
+        Diag.log("area selection cancelled")
+    }
+
+    private func drawSelection(in context: CGContext) {
+        guard isSelectingArea else { return }
+
+        guard let rect = selectionRect, rect.width > 0, rect.height > 0 else {
+            context.setFillColor(CGColor(gray: 0, alpha: 0.18))
+            context.fill(bounds)
+            return
+        }
+
+        let shroud = CGMutablePath()
+        shroud.addRect(bounds)
+        shroud.addRect(rect)
+        context.setFillColor(CGColor(gray: 0, alpha: 0.32))
+        context.addPath(shroud)
+        context.fillPath(using: .evenOdd)
+
+        context.setStrokeColor(state.ink.cgColor(alpha: 0.95))
+        context.setLineWidth(2)
+        context.addRect(rect)
+        context.strokePath()
     }
 
     // MARK: - Eraser
@@ -395,6 +470,10 @@ final class OverlayView: NSView {
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { // Escape
+            if isSelectingArea {
+                cancelAreaSelection()
+                return
+            }
             onEscape?()
             return
         }
@@ -422,6 +501,14 @@ final class OverlayView: NSView {
             }
             if let digit = character.wholeNumberValue, let ink = Ink.ink(forNumber: digit) {
                 state.ink = ink
+                return
+            }
+            if character.lowercased() == "s" {
+                if event.modifierFlags.contains(.shift) {
+                    beginAreaSelection()
+                } else {
+                    onCaptureRequest?(nil)
+                }
                 return
             }
         }
@@ -599,6 +686,7 @@ final class OverlayView: NSView {
         notePaintLatency()
 
         drawDrawingFrame(in: context)
+        drawSelection(in: context)
         drawHint()
     }
 

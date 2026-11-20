@@ -14,12 +14,14 @@ final class OverlayController {
     private var commitOrder: [(displayID: CGDirectDisplayID, strokeID: UUID)] = []
     private var toolbar: ToolbarPanel?
     private var previousApplication: NSRunningApplication?
+    private let captureService: ScreenCapturing
     private var cancellables: Set<AnyCancellable> = []
     private var keyMonitor: Any?
     private var pointerTimer: Timer?
     private(set) var isPointerActive = false
 
-    init() {
+    init(captureService: ScreenCapturing = CaptureService()) {
+        self.captureService = captureService
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(screenParametersChanged),
@@ -197,6 +199,53 @@ final class OverlayController {
         previousApplication?.activate()
     }
 
+    /// Capture, recompose the marks at pixel resolution, and put the result on
+    /// the pasteboard. Nothing of Stare's interface ends up in the image: the
+    /// capture filter excludes our own windows and the marks are redrawn.
+    func capture(displayID: CGDirectDisplayID, area: CGRect?) {
+        guard let canvas = canvases[displayID] else { return }
+
+        do {
+            let base = try captureService.captureDisplay(displayID)
+            let scale = CGFloat(base.width) / max(canvas.panel.frame.width, 1)
+
+            guard let composed = MarkCompositor.composite(
+                marks: canvas.view.session.strokes,
+                over: base,
+                scale: scale
+            ) else {
+                Diag.log("capture failed: composition returned nil")
+                return
+            }
+
+            let result: CGImage
+            if let area {
+                let pixelRect = CoordinateMapping.toPixels(area, scale: scale).integral
+                result = composed.cropping(to: pixelRect) ?? composed
+            } else {
+                result = composed
+            }
+
+            let representation = NSBitmapImageRep(cgImage: result)
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            // Both types: some apps take PNG, others only TIFF.
+            pasteboard.declareTypes([.png, .tiff], owner: nil)
+            if let png = representation.representation(using: .png, properties: [:]) {
+                pasteboard.setData(png, forType: .png)
+            }
+            if let tiff = representation.tiffRepresentation {
+                pasteboard.setData(tiff, forType: .tiff)
+            }
+            Diag.log("capture copied \(result.width)x\(result.height) marks=\(canvas.view.session.strokes.count)")
+        } catch CaptureError.permissionDenied {
+            Diag.log("capture needs Screen Recording permission")
+            captureService.requestPermission()
+        } catch {
+            Diag.log("capture failed: \(error)")
+        }
+    }
+
     func clearAll() {
         for canvas in canvases.values { canvas.clear() }
         commitOrder.removeAll()
@@ -251,6 +300,9 @@ final class OverlayController {
                 self?.commitOrder.append((displayID, stroke.id))
             }
             canvas.view.onUndo = { [weak self] in self?.undo() }
+            canvas.view.onCaptureRequest = { [weak self] area in
+                self?.capture(displayID: displayID, area: area)
+            }
             canvas.view.onErase = { [weak self] ids in
                 guard let self else { return }
                 let erased = Set(ids)

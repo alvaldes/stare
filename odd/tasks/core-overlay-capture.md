@@ -26,8 +26,8 @@ S14. Dibujar no pide permisos de macOS. Cada feature que lee píxeles los pide p
 | T1 | Modelo vectorial, geometría y sesión de dibujo (`StareCore`) con tests | S6–S8, S14 | parent | 8a2bead |
 | T2 | Shell de barra de menú, atajo global y overlay multi-display | S3–S5 | parent | 541388e, cdb52a9 |
 | T3 | Toolbar flotante con herramientas e tintas | S6–S7 | parent | 541388e, cdb52a9 |
-| T4a | Núcleo de captura: servicio ScreenCaptureKit, permiso y compositor de marcas (worker, worktree) | S12, S14, S30 | worker | _pending_ |
-| T4b | Integración de captura en el overlay: selección de área, atajos S / ⇧S y portapapeles (parent) | S12, S30 | parent | _pending_ |
+| T4a | Núcleo de captura: servicio ScreenCaptureKit, permiso y compositor de marcas | S12, S14, S30 | parent | _pending_ |
+| T4b | Integración de captura: selección de área, atajos S / ⇧S, composición y portapapeles | S12, S30 | parent | _pending_ |
 | T4 | Captura de display y de área con marcas compuestas + permiso de Screen Recording | S12, S14 | parent | _pending_ |
 | T5 | Cards de captura, clipboard y editor con crop y re-anotación | S13 | parent | _pending_ |
 | T7 | Herramientas faltantes del dock: eraser, text, laser y marco del cursor | S21–S24 | parent | _pending_ |
@@ -114,3 +114,5 @@ S30. La captura incluye las marcas y excluye la palette, el marco de dibujo, el 
 S31. La ventana de Settings reúne las preferencias que ya existen y funcionan: marco de dibujo, duración del láser, tamaño, forma, glow y fade del puntero. Ese contenido sale del menú de la barra, que queda con Settings, Pointer Highlight y Quit. Ubicación de la palette y alcance del overlay llegan cuando exista el comportamiento (T6 queda reabrible).
 
 L32. "dale avanza y si crees que se puede hacer trabajo en paralelo prepara todo con varios agentes trabajando y si es necesario en su worktree". T4 se parte en T4a (núcleo de captura, worker en worktree) y T4b (integración, parent), y T6 (Settings) corre en paralelo en su propio worktree con superficies de edición disjuntas.
+
+L33. El trabajo en paralelo con subagentes no fue posible: `session_worktree_register` rechaza worktrees porque el root de la sesión no es el repo, y `subagent_run` con `workspace_root` responde "Writer bootstrap requires the original safe project root". Se retiraron los worktrees creados y T4 se hizo inline en el parent. T6 queda pendiente.
