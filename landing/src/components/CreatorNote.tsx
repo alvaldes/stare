@@ -35,7 +35,7 @@ export function CreatorNote() {
         class="group/note relative z-30 mt-6 flex w-full max-w-[340px] flex-col gap-3 rounded-3xl rounded-bl-md border border-white/80 bg-paper/80 p-4 font-mac shadow-glass backdrop-blur-xl transition-transform hover:-translate-y-0.5 lg:absolute lg:top-4 lg:right-8 lg:mt-0"
       >
         <span class="flex items-center gap-3">
-          {/* Cropped from the portfolio's own photo (portfolio/src/assets/images/angel.webp). */}
+          {/* Head-and-shoulders crop of the portfolio's own photo (portfolio/src/assets/images/angel.webp). */}
           <img
             src="/creator.jpg"
             alt=""
