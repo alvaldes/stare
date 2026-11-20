@@ -122,3 +122,7 @@ S32. "el diálogo de Screen Recording debe de aparecer cuando se instala la app 
 S33. El bundle se firma con una identidad estable cuando existe (`CODESIGN_IDENTITY`, o la primera Apple Development disponible). Con firma ad-hoc TCC olvida el permiso de Screen Recording en cada rebuild, porque el requisito de código cambia.
 
 L34. El permiso de Screen Recording sigue sin otorgarse (`capture=false` con la app instalada en /Applications y firmada con Apple Development). El código pide el permiso al lanzar y nunca en `S`; el otorgamiento es del humano en System Settings. Diagnóstico agregado: el log registra la ruta del bundle al lanzar.
+
+L35. Calidad de captura: `CGDisplayPixelsWide` devuelve puntos (1920 en una pantalla de 3840), así que las capturas salían a la mitad de resolución. Ahora se usa `CGDisplayCopyDisplayMode(...).pixelWidth/Height`: 3840x2160 de display y 800x400 de un área de 400x200 pt.
+L36. Editor: apariencia oscura forzada (la palette reusa glifos blancos), y al abrirlo se sale del modo dibujo sin devolver el foco, porque esa devolución competía con la ventana del editor y la dejaba detrás.
+L37. Las sondas de eventos inyectados se suspenden: interrumpen al humano mientras escribe. La verificación visual de la card y del editor queda en manos del usuario.
