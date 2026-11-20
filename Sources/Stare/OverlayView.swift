@@ -298,14 +298,14 @@ final class OverlayView: NSView {
 
         notePaintLatency()
 
-        drawArmedFrame(in: context)
+        drawDrawingFrame(in: context)
         drawHint()
     }
 
-    /// While the layer is armed and empty, a thin frame in the current ink shows
-    /// which displays are live. It disappears with the first mark.
-    private func drawArmedFrame(in context: CGContext) {
-        guard state.showArmedFrame, session.isEmpty else { return }
+    /// A thin frame in the current ink marks every armed display for the whole
+    /// drawing session, so it is always clear which screens will take a mark.
+    private func drawDrawingFrame(in context: CGContext) {
+        guard state.showArmedFrame else { return }
         let rect = bounds.insetBy(dx: 3, dy: 3)
         context.setStrokeColor(state.ink.cgColor(alpha: 0.45))
         context.setLineWidth(3)
