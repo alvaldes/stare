@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Monochrome menu bar glyph (template image): the same open nib. -->
+  <defs>
+    <mask id="nib" maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64">
+      <path d="M32 6c8 7 12.5 16 10.3 28.5L32 56 21.7 34.5C19.5 22 24 13 32 6z" fill="#fff"/>
+      <circle cx="32" cy="30.5" r="3.4" fill="#000"/>
+      <path d="M31 32h2v26h-2z" fill="#000"/>
+    </mask>
+  </defs>
+  <g transform="rotate(40 32 32)">
+    <rect width="64" height="64" fill="#000" mask="url(#nib)"/>
+  </g>
+</svg>
