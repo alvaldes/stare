@@ -13,8 +13,9 @@ enum Diag {
         }
     }
 
+    /// File only: `NSLog` serialises on the main thread and was measurably
+    /// adding tens of milliseconds to every painted frame.
     static func log(_ message: String) {
-        NSLog("Stare: %@", message)
         let line = "\(String(format: "%.3f", Date().timeIntervalSince1970)) \(message)\n"
         queue.async {
             guard let data = line.data(using: .utf8) else { return }

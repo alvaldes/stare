@@ -38,9 +38,16 @@ public struct DrawingSession: Equatable, Sendable {
     }
 
     /// Extends the mark in progress. Ignored for click tools and when idle.
-    public mutating func extend(to point: CGPoint) {
+    /// With `straight`, the mark collapses to a straight line from its start to
+    /// the current point, which is what holding Shift means while drawing.
+    public mutating func extend(to point: CGPoint, straight: Bool = false) {
         guard var current = active, !current.tool.isClickTool else { return }
-        current.points.append(point)
+
+        if straight, let first = current.points.first {
+            current.points = [first, point]
+        } else {
+            current.points.append(point)
+        }
         active = current
     }
 

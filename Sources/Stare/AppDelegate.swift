@@ -21,9 +21,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.overlay.toggle()
         }
 
-        if hotkey == nil {
-            NSLog("Stare: could not register the \(HotkeyDefaults.displayName) shortcut")
-        }
+        Diag.log(
+            "hotkey \(HotkeyDefaults.displayName) registered=\(hotkey != nil) activePolicy=\(NSApp.activationPolicy().rawValue)"
+        )
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

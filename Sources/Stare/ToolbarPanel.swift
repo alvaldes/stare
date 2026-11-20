@@ -50,7 +50,9 @@ final class ToolbarPanel: NSPanel {
             defer: false
         )
 
-        level = .screenSaver
+        // Above the drawing layer: the palette must stay clickable while the
+        // overlay covers the whole display.
+        level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
         // Associated with the Space where drawing started, instead of following
         // the user across Spaces.
         collectionBehavior = [

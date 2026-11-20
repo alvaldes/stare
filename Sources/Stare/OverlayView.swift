@@ -7,13 +7,25 @@ final class OverlayView: NSView {
     let state: EditorState
     private(set) var session = DrawingSession()
     var onEscape: (() -> Void)?
+    /// Reports a committed mark so the controller can undo across displays.
+    var onCommit: ((Stroke) -> Void)?
+    /// Command-Z is global: the controller owns the undo history.
+    var onUndo: (() -> Void)?
+
+    /// Bounds of committed marks, computed once, so a redraw never rebuilds a
+    /// path just to decide whether a stroke is visible.
+    private var committedBounds: [UUID: CGRect] = [:]
+    private var lastDragPoint: CGPoint?
+    private var lastStraight = false
+    private var lastInputTimestamp: TimeInterval = 0
 
     init(frame: NSRect, state: EditorState, onEscape: @escaping () -> Void) {
         self.state = state
         self.onEscape = onEscape
         super.init(frame: frame)
-        wantsLayer = true
-        layer?.backgroundColor = NSColor.clear.cgColor
+        // No layer backing: a stroke is a handful of paths, and direct drawing
+        // into the window's backing store avoids a Core Animation transaction
+        // per mouse event.
     }
 
     @available(*, unavailable)
@@ -65,47 +77,93 @@ final class OverlayView: NSView {
 
     func clear() {
         session.clear()
+        committedBounds.removeAll()
         needsDisplay = true
     }
 
-    func undo() {
-        guard session.undo() else { return }
+    /// Discards the mark being dragged, if any.
+    @discardableResult
+    func discardActiveMark() -> Bool {
+        guard session.active != nil else { return false }
+        session.undo()
         needsDisplay = true
+        return true
+    }
+
+    /// Removes a specific committed mark, used by the global undo history.
+    @discardableResult
+    func removeMark(id: UUID) -> Bool {
+        guard session.remove(id: id) else { return false }
+        committedBounds.removeValue(forKey: id)
+        needsDisplay = true
+        return true
     }
 
     // MARK: - Mouse
 
     override func mouseDown(with event: NSEvent) {
-        // The panel under the pointer owns the keyboard so tool keys always
+        // The window under the pointer owns the keyboard so tool keys always
         // apply to the display being drawn on.
         window?.makeKey()
         window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
+        lastDragPoint = point
+        lastStraight = false
+        lastInputTimestamp = event.timestamp
         Diag.log("mouseDown \(Int(point.x)),\(Int(point.y)) tool=\(state.tool.rawValue)")
         session.begin(at: point, tool: state.tool, ink: state.ink)
-        invalidateActive(previousBounds: nil)
+        setNeedsDisplay(dirtyRect(around: point, other: nil))
     }
 
     override func mouseDragged(with event: NSEvent) {
-        let previousBounds = session.active?.bounds
-        session.extend(to: convert(event.locationInWindow, from: nil))
-        invalidateActive(previousBounds: previousBounds)
+        let point = convert(event.locationInWindow, from: nil)
+        let straight = event.modifierFlags.contains(.shift) && !state.tool.isClickTool
+        let previousPoint = lastDragPoint
+        lastDragPoint = point
+        lastInputTimestamp = event.timestamp
+
+        session.extend(to: point, straight: straight)
+        if straight != lastStraight || straight {
+            // The mark collapses to a straight line, so stale freehand pixels
+            // have to go too.
+            lastStraight = straight
+            needsDisplay = true
+        } else {
+            setNeedsDisplay(dirtyRect(around: point, other: previousPoint))
+        }
     }
 
     override func mouseUp(with event: NSEvent) {
-        session.extend(to: convert(event.locationInWindow, from: nil))
+        let point = convert(event.locationInWindow, from: nil)
+        session.extend(to: point, straight: event.modifierFlags.contains(.shift))
         session.commit()
+        if let committed = session.strokes.last {
+            committedBounds[committed.id] = committed.bounds
+            onCommit?(committed)
+        }
+        lastDragPoint = nil
+        lastStraight = false
         Diag.log("commit strokes=\(session.strokes.count)")
         // Full redraw: the first mark also removes the armed frame at the edges.
         needsDisplay = true
     }
 
-    private func invalidateActive(previousBounds: CGRect?) {
-        guard let bounds = session.active?.bounds else {
-            needsDisplay = true
-            return
+    /// Small rect covering the last input segment, so a drag never rebuilds the
+    /// whole path of the mark in progress.
+    private func dirtyRect(around point: CGPoint, other: CGPoint?) -> CGRect {
+        let padding = state.tool == .highlighter ? 14.0 : 6.0
+        var rect = CGRect(x: point.x, y: point.y, width: 0, height: 0)
+        if let other {
+            rect = rect.union(CGRect(x: other.x, y: other.y, width: 0, height: 0))
         }
-        setNeedsDisplay(previousBounds?.union(bounds) ?? bounds)
+        return rect.insetBy(dx: -padding, dy: -padding)
+    }
+
+    /// Milliseconds between the input event and the frame that paints it.
+    private func notePaintLatency() {
+        guard lastInputTimestamp > 0 else { return }
+        let delta = (ProcessInfo.processInfo.systemUptime - lastInputTimestamp) * 1000
+        Diag.log("paintDeltaMs=\(String(format: "%.1f", delta))")
     }
 
     // MARK: - Keyboard
@@ -120,7 +178,12 @@ final class OverlayView: NSView {
 
         if event.modifierFlags.contains(.command) {
             if characters.lowercased() == "z" {
-                undo()
+                if let onUndo {
+                    onUndo()
+                } else {
+                    session.undo()
+                    needsDisplay = true
+                }
                 return
             }
             super.keyDown(with: event)
@@ -199,9 +262,21 @@ final class OverlayView: NSView {
         context.setLineCap(.round)
         context.setLineJoin(.round)
 
-        for stroke in session.visibleStrokes where stroke.bounds.intersects(dirtyRect) {
+        for stroke in session.strokes {
+            let box = committedBounds[stroke.id] ?? {
+                let computed = stroke.bounds
+                committedBounds[stroke.id] = computed
+                return computed
+            }()
+            guard box.intersects(dirtyRect) else { continue }
             render(stroke, in: context)
         }
+
+        if let active = session.active {
+            render(active, in: context)
+        }
+
+        notePaintLatency()
 
         drawArmedFrame(in: context)
         drawHint()
@@ -226,27 +301,10 @@ final class OverlayView: NSView {
     }
 
     private func render(_ stroke: Stroke, in context: CGContext) {
-        let path = PathBuilder.path(for: stroke)
-
+        MarkRenderer.draw(stroke: stroke, in: context)
         if stroke.tool == .number {
-            context.setFillColor(stroke.ink.cgColor())
-            context.addPath(path)
-            context.fillPath()
-
-            // A faint ring keeps a badge readable on any background.
-            context.setStrokeColor(CGColor(gray: 0, alpha: 0.18))
-            context.setLineWidth(1)
-            context.addPath(path)
-            context.strokePath()
-
             drawStepNumber(stroke)
-            return
         }
-
-        context.setStrokeColor(stroke.ink.cgColor(alpha: stroke.opacity))
-        context.setLineWidth(stroke.lineWidth)
-        context.addPath(path)
-        context.strokePath()
     }
 
     private func drawStepNumber(_ stroke: Stroke) {

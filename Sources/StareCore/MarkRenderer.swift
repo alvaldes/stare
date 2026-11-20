@@ -29,6 +29,22 @@ public enum MarkRenderer {
             return
         }
 
+        // A click with a freehand tool has no direction, so it must show as a
+        // dot instead of a zero-length line.
+        if stroke.tool == .pen, stroke.points.count == 1, let point = stroke.points.first {
+            let radius = stroke.lineWidth / 2
+            context.setFillColor(stroke.ink.cgColor(alpha: stroke.opacity))
+            context.fillEllipse(
+                in: CGRect(
+                    x: point.x - radius,
+                    y: point.y - radius,
+                    width: radius * 2,
+                    height: radius * 2
+                )
+            )
+            return
+        }
+
         context.setStrokeColor(stroke.ink.cgColor(alpha: stroke.opacity))
         context.setLineWidth(stroke.lineWidth)
         context.addPath(path)

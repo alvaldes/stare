@@ -8,6 +8,9 @@ final class OverlayController {
     private(set) var isActive = false
 
     private var canvases: [CGDirectDisplayID: DisplayCanvas] = [:]
+    /// Global undo order across displays: Command-Z undoes the last mark on
+    /// whichever display it was drawn, not only on the one under the pointer.
+    private var commitOrder: [(displayID: CGDirectDisplayID, strokeID: UUID)] = []
     private var toolbar: ToolbarPanel?
     private var previousApplication: NSRunningApplication?
 
@@ -62,6 +65,7 @@ final class OverlayController {
             guard let self, self.isActive else { return }
             Diag.log("activate settled active=\(NSApp.isActive) key=\(NSApp.keyWindow != nil)")
             for canvas in self.canvases.values { canvas.panel.orderFrontRegardless() }
+            self.toolbar?.orderFrontRegardless()
             self.canvasUnderPointer()?.panel.makeKey()
             NSCursor.crosshair.set()
         }
@@ -95,10 +99,20 @@ final class OverlayController {
 
     func clearAll() {
         for canvas in canvases.values { canvas.clear() }
+        commitOrder.removeAll()
     }
 
-    func undoOnPointerDisplay() {
-        canvasUnderPointer()?.undo()
+    /// Command-Z: first the mark being dragged, then the most recent committed
+    /// mark on any display.
+    func undo() {
+        if let canvas = canvasUnderPointer(), canvas.discardActiveMark() { return }
+        while let last = commitOrder.popLast() {
+            if let canvas = canvases[last.displayID], canvas.removeMark(id: last.strokeID) {
+                Diag.log("undo display=\(last.displayID) remaining=\(commitOrder.count)")
+                return
+            }
+        }
+        Diag.log("undo empty")
     }
 
     // MARK: - Canvases
@@ -119,6 +133,7 @@ final class OverlayController {
     @objc private func activeSpaceChanged() {
         guard isActive else { return }
         for canvas in canvases.values { canvas.panel.orderFrontRegardless() }
+        toolbar?.orderFrontRegardless()
         canvasUnderPointer()?.panel.makeKey()
         NSCursor.crosshair.set()
     }
@@ -130,7 +145,13 @@ final class OverlayController {
                 state: state,
                 onEscape: { [weak self] in self?.deactivate() }
             ) else { continue }
-            canvases[canvas.displayID] = canvas
+
+            let displayID = canvas.displayID
+            canvas.view.onCommit = { [weak self] stroke in
+                self?.commitOrder.append((displayID, stroke.id))
+            }
+            canvas.view.onUndo = { [weak self] in self?.undo() }
+            canvases[displayID] = canvas
         }
     }
 
@@ -151,7 +172,7 @@ final class OverlayController {
     private func showToolbar() {
         let toolbar = toolbar ?? ToolbarPanel(
             state: state,
-            onUndo: { [weak self] in self?.undoOnPointerDisplay() },
+            onUndo: { [weak self] in self?.undo() },
             onClear: { [weak self] in self?.clearAll() },
             onDone: { [weak self] in self?.deactivate() }
         )
@@ -184,5 +205,6 @@ final class DisplayCanvas {
     var isEmpty: Bool { view.isEmpty }
 
     func clear() { view.clear() }
-    func undo() { view.undo() }
+    func discardActiveMark() -> Bool { view.discardActiveMark() }
+    func removeMark(id: UUID) -> Bool { view.removeMark(id: id) }
 }

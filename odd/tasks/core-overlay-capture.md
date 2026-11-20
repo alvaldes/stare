@@ -28,7 +28,7 @@ S14. Dibujar no pide permisos de macOS. Cada feature que lee píxeles los pide p
 | T3 | Toolbar flotante con herramientas e tintas | S6–S7 | parent | 541388e, cdb52a9 |
 | T4 | Captura de display y de área con marcas compuestas + permiso de Screen Recording | S12, S14 | parent | _pending_ |
 | T5 | Cards de captura, clipboard y editor con crop y re-anotación | S13 | parent | _pending_ |
-| T6 | Ventana de configuración con la preferencia de ubicación de la palette | S15 | parent | _pending_ |
+| T6 | Ventana de configuración: ubicación de la palette y alcance del overlay | S15, S16 | parent | _pending_ |
 
 ## Log
 
@@ -59,3 +59,10 @@ S15. "ahora el dock aparece donde esta el cursor pero el usuario puede querer es
 L9. Verificación end-to-end con clicks reales inyectados (el proceso de la sesión tiene Accessibility): tras `⌥⇧A` las ventanas de Stare quedan en `layer=1000` por encima de la app de adelante (`Ghostty layer=0`), `cursorUpdate` dispara, `mouseDown 960,540` llega, `commit strokes=1` registra el trazo y `Esc` desactiva. Segunda ronda: dibujo, `Ctrl→` a otro Space, las tres ventanas siguen en `layer=1000`, el punto de prueba sigue teniendo a Stare arriba y un click vuelve a pintar. La app queda `active=false` y aun así recibe clicks y teclas: la activación no era el problema, lo era `.canJoinAllSpaces` sobre un `NSPanel`.
 L10. Falta confirmación humana de pantalla completa (spec S4) y de la estética del marco de armado.
 L11. Deuda declarada: `Diag` escribe `/tmp/stare.log` siempre; hay que apagarlo antes de distribuir.
+
+S16. "en settings se puede configurar si quieres que sea en todos o en active" — el overlay dibuja en todos los displays o sólo en el display activo, según preferencia. Por defecto: todos.
+S17. "si se presiona shift mientras se usa pen o highlight haga una linea recta como en los editores como photoshop" — con Shift apretado, pen y highlighter colapsan el trazo a una recta desde el punto inicial hasta el actual; al soltarlo se retoma el trazo libre.
+S18. "cmd+Z funciona pero solo en las modificaciones del monitor activo no quiera las del resto de monitores" — el historial de deshacer es global entre displays: ⌘Z deshace la última marca en el orden real en que se dibujó, sin importar en qué monitor esté el puntero.
+
+L12. Segunda verificación con eventos inyectados: la palette queda en `layer=1001` por encima del overlay (`layer=1000`) y las dos pantallas quedan por encima de las apps. Latencia de pintado medida sobre 56 frames de un drag continuo: mediana 2,5 ms, p90 6,3 ms, antes 50-170 ms. Causa: `NSLog` sincrónico en el main thread por frame y `wantsLayer` (una transacción de Core Animation por evento). El log pasó a sólo archivo y la vista dejó de ser layer-backed.
+L13. Límite conocido de la sonda: los eventos sintéticos de teclado no traen `charactersIgnoringModifiers`, así que ⌘Z y las teclas de herramienta no se pueden verificar inyectando; quedan para confirmación humana.

@@ -119,6 +119,37 @@ final class DrawingSessionTests: XCTestCase {
         XCTAssertTrue(session.visibleStrokes.isEmpty)
     }
 
+    // S17: Shift while drawing with a freehand tool collapses to a straight line.
+    func testShiftCollapsesTheMarkToAStraightLine() {
+        var session = DrawingSession()
+        session.begin(at: CGPoint(x: 0, y: 0), tool: .pen, ink: .red)
+        session.extend(to: CGPoint(x: 10, y: 40))
+        session.extend(to: CGPoint(x: 30, y: 20))
+        session.commit()
+        XCTAssertEqual(session.strokes.first?.points.count, 3)
+
+        var straight = DrawingSession()
+        straight.begin(at: CGPoint(x: 0, y: 0), tool: .pen, ink: .red)
+        straight.extend(to: CGPoint(x: 10, y: 40))
+        straight.extend(to: CGPoint(x: 30, y: 20), straight: true)
+        straight.commit()
+
+        XCTAssertEqual(
+            straight.strokes.first?.points,
+            [CGPoint(x: 0, y: 0), CGPoint(x: 30, y: 20)]
+        )
+    }
+
+    func testReleasingShiftResumesFreehand() {
+        var session = DrawingSession()
+        session.begin(at: CGPoint(x: 0, y: 0), tool: .pen, ink: .red)
+        session.extend(to: CGPoint(x: 10, y: 10), straight: true)
+        session.extend(to: CGPoint(x: 20, y: 30))
+
+        XCTAssertEqual(session.active?.points.count, 3)
+        XCTAssertEqual(session.active?.points.last, CGPoint(x: 20, y: 30))
+    }
+
     func testRemovingAMarkByIdKeepsTheRest() {
         var session = DrawingSession()
         drawLine(in: &session)
