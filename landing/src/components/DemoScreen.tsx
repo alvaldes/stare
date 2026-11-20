@@ -13,7 +13,7 @@ export const PORTFOLIO_URL = 'https://www.alvaldes.dev/'
 export const PORTFOLIO_HOST = 'alvaldes.dev'
 
 const WINDOW = { x: 100, y: 46, width: 1000, height: 650, radius: 12 }
-const TOOLBAR_HEIGHT = 46
+const TOOLBAR_HEIGHT = 28
 
 /** Horizontal position inside the window, in screen points. */
 const X = (offset: number) => WINDOW.x + offset
@@ -56,7 +56,7 @@ export function DemoScreen() {
           <stop offset="1" stop-color="#ffe7d6" stop-opacity="0" />
         </radialGradient>
         <filter id="capsule-shadow" x="-10%" y="-20%" width="120%" height="160%">
-          <feDropShadow dx="0" dy="0.6" stdDeviation="0.8" flood-color="#000" flood-opacity="0.12" />
+          <feDropShadow dx="0" dy="0.4" stdDeviation="0.5" flood-color="#000" flood-opacity="0.12" />
         </filter>
         <filter id="window-shadow" x="-10%" y="-10%" width="120%" height="130%">
           <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#1c2030" flood-opacity="0.28" />
@@ -109,45 +109,48 @@ export function DemoScreen() {
         filter="url(#window-shadow)"
       />
       <g clip-path="url(#window-clip)">
-        {/* Toolbar, after Safari 26: controls sit in glass capsules on a grey bar. */}
+        {/* Toolbar, measured from a Safari 26 screenshot (window 2576 px wide →
+            1000 units, factor 0.388): controls in glass capsules on a grey bar.
+            The extension and settings icons of that install are left out. */}
         <rect x={WINDOW.x} y={WINDOW.y} width={WINDOW.width} height={TOOLBAR_HEIGHT} fill="#ececec" />
-        <rect x={WINDOW.x} y={v.y - 1} width={WINDOW.width} height="1" fill="#d4d4d6" />
+        <rect x={WINDOW.x} y={v.y - 0.5} width={WINDOW.width} height="0.5" fill="#cfcfd2" />
 
-        <circle cx={X(20)} cy={toolbarY} r="6" fill="#ff5f57" />
-        <circle cx={X(39)} cy={toolbarY} r="6" fill="#febc2e" />
-        <circle cx={X(58)} cy={toolbarY} r="6" fill="#28c840" />
+        <circle cx={X(13.6)} cy={toolbarY} r="4.4" fill="#ff5f57" />
+        <circle cx={X(25.9)} cy={toolbarY} r="4.4" fill="#febc2e" />
+        <circle cx={X(38.1)} cy={toolbarY} r="4.4" fill="#28c840" />
 
-        {/* Sidebar capsule: sidebar icon plus a menu chevron */}
-        <rect x={X(76)} y={toolbarY - 14} width="50" height="28" rx="14" fill="#fbfbfb" stroke="#000" stroke-opacity="0.09" filter="url(#capsule-shadow)" />
-        {/* Back / forward capsule, split by a hairline */}
-        <rect x={X(134)} y={toolbarY - 14} width="58" height="28" rx="14" fill="#fbfbfb" stroke="#000" stroke-opacity="0.09" filter="url(#capsule-shadow)" />
-        <path d={`M${X(163)} ${toolbarY - 7}v14`} stroke="#000" stroke-opacity="0.13" />
+        {/* Sidebar capsule (sidebar icon + menu chevron) and back/forward capsule */}
+        <g fill="#fbfbfb" stroke="#000" stroke-opacity="0.1" stroke-width="0.5" filter="url(#capsule-shadow)">
+          <rect x={X(50.4)} y={toolbarY - 9.3} width="32.2" height="18.6" rx="9.3" />
+          <rect x={X(87.7)} y={toolbarY - 9.3} width="37.6" height="18.6" rx="9.3" />
+        </g>
+        <path d={`M${X(106.4)} ${toolbarY - 4.6}v9.2`} stroke="#000" stroke-opacity="0.14" stroke-width="0.6" />
 
-        <g fill="none" stroke={chrome} stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <rect x={X(86)} y={toolbarY - 6.5} width="17" height="13" rx="3" />
-          <path d={`M${X(92)} ${toolbarY - 6.5}v13`} />
-          <path d={`M${X(88.5)} ${toolbarY - 3}h1.5M${X(88.5)} ${toolbarY - 0.5}h1.5`} stroke-width="1.2" />
-          <path d={`M${X(109)} ${toolbarY - 1.5}l3 3 3-3`} />
-          <path d={`M${X(152)} ${toolbarY - 6}l-5.5 6 5.5 6`} />
-          <path d={`M${X(174)} ${toolbarY - 6}l5.5 6-5.5 6`} opacity="0.4" />
+        <g fill="none" stroke={chrome} stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round">
+          <rect x={X(54.9)} y={toolbarY - 4.1} width="10.4" height="8.2" rx="1.8" />
+          <path d={`M${X(58.6)} ${toolbarY - 4.1}v8.2`} />
+          <path d={`M${X(56.5)} ${toolbarY - 2}h0.8M${X(56.5)} ${toolbarY - 0.4}h0.8`} stroke-width="0.7" />
+          <path d={`M${X(71.8)} ${toolbarY - 0.9}l1.9 1.9 1.9-1.9`} />
+          <path d={`M${X(98.4)} ${toolbarY - 3.6}l-3.2 3.6 3.2 3.6`} />
+          <path d={`M${X(114.5)} ${toolbarY - 3.6}l3.2 3.6-3.2 3.6`} opacity="0.45" />
 
-          {/* Share */}
-          <path d={`M${X(900)} ${toolbarY - 9.5}v11M${X(896)} ${toolbarY - 5.5}l4-4 4 4M${X(895)} ${toolbarY - 3}h-3v11h16v-11h-3`} />
+          {/* Share: tray with an arrow out of it */}
+          <path d={`M${X(946.5)} ${toolbarY - 5.6}v6.6M${X(944)} ${toolbarY - 3.4}l2.5-2.5 2.5 2.5M${X(944.4)} ${toolbarY - 1.7}h-1.6v6.6h7.4v-6.6h-1.6`} />
           {/* New tab */}
-          <path d={`M${X(934)} ${toolbarY - 7}v14M${X(927)} ${toolbarY}h14`} />
-          {/* Tab overview: two overlapping squares */}
-          <path d={`M${X(963)} ${toolbarY - 8.5}h8a2.5 2.5 0 0 1 2.5 2.5v8`} />
-          <rect x={X(958)} y={toolbarY - 5.5} width="12" height="12" rx="2.5" />
+          <path d={`M${X(965.2)} ${toolbarY - 4.3}v8.6M${X(960.9)} ${toolbarY}h8.6`} />
+          {/* Tab overview: two overlapping rounded squares */}
+          <path d={`M${X(981.9)} ${toolbarY - 4.9}h4.4a1.6 1.6 0 0 1 1.6 1.6v4.4`} />
+          <rect x={X(979.4)} y={toolbarY - 2.6} width="7" height="7" rx="1.6" />
         </g>
 
         {/* Address field: a full capsule, domain centred, reload at the end */}
-        <rect x={X(290)} y={toolbarY - 15} width="420" height="30" rx="15" fill="#000" fill-opacity="0.06" />
-        <text x={X(500)} y={toolbarY + 4.5} font-size="13" fill={ink} text-anchor="middle">{PORTFOLIO_HOST}</text>
+        <rect x={X(293.7)} y={toolbarY - 10} width="411.3" height="20" rx="10" fill="#000" fill-opacity="0.055" />
+        <text x={X(499.4)} y={toolbarY + 2.7} font-size="7.6" fill={ink} text-anchor="middle">{PORTFOLIO_HOST}</text>
         <path
-          d={`M${X(690)} ${toolbarY - 4}a5 5 0 1 0 1.2 4.6M${X(691)} ${toolbarY - 8}v4.5h-4.5`}
+          d={`M${X(693)} ${toolbarY - 2.2}a3 3 0 1 0 0.7 2.8M${X(693.6)} ${toolbarY - 4.8}v2.7h-2.7`}
           fill="none"
           stroke={chrome}
-          stroke-width="1.4"
+          stroke-width="0.85"
           stroke-linecap="round"
           stroke-linejoin="round"
         />
