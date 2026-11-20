@@ -18,10 +18,17 @@ final class OverlayController {
             name: NSApplication.didChangeScreenParametersNotification,
             object: nil
         )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(activeSpaceChanged),
+            name: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil
+        )
     }
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
     }
 
     func toggle() {
@@ -45,8 +52,23 @@ final class OverlayController {
             canvas.view.showIntroHint()
         }
         canvasUnderPointer()?.panel.makeKey()
+        NSCursor.crosshair.set()
         showToolbar()
-        NSLog("Stare: drawing on %d display(s)", canvases.count)
+        NSLog(
+            "Stare: drawing on %d display(s) active=%@",
+            canvases.count,
+            NSApp.isActive ? "yes" : "no"
+        )
+
+        // Activation is asynchronous: re-assert once it settles so the panels
+        // are ordered in front of the now-active app.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isActive else { return }
+            NSLog("Stare: active after settle=%@", NSApp.isActive ? "yes" : "no")
+            for canvas in self.canvases.values { canvas.panel.orderFrontRegardless() }
+            self.canvasUnderPointer()?.panel.makeKey()
+            NSCursor.crosshair.set()
+        }
     }
 
     func deactivate() {
@@ -58,6 +80,7 @@ final class OverlayController {
         clearAll()
         tearDownCanvases()
         restoreFrontmostApplication()
+        NSCursor.arrow.set()
         NSLog("Stare: left drawing mode")
     }
 
@@ -93,6 +116,15 @@ final class OverlayController {
             canvas.panel.makeFirstResponder(canvas.view)
         }
         canvasUnderPointer()?.panel.makeKey()
+    }
+
+    /// Windows no longer join every Space, so a Space switch is what brings the
+    /// drawing layer back over the new Space.
+    @objc private func activeSpaceChanged() {
+        guard isActive else { return }
+        for canvas in canvases.values { canvas.panel.orderFrontRegardless() }
+        canvasUnderPointer()?.panel.makeKey()
+        NSCursor.crosshair.set()
     }
 
     private func buildCanvases() {

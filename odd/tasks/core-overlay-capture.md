@@ -28,6 +28,7 @@ S14. Dibujar no pide permisos de macOS. Cada feature que lee píxeles los pide p
 | T3 | Toolbar flotante con herramientas e tintas | S6–S7 | parent | 541388e, cdb52a9 |
 | T4 | Captura de display y de área con marcas compuestas + permiso de Screen Recording | S12, S14 | parent | _pending_ |
 | T5 | Cards de captura, clipboard y editor con crop y re-anotación | S13 | parent | _pending_ |
+| T6 | Ventana de configuración con la preferencia de ubicación de la palette | S15 | parent | _pending_ |
 
 ## Log
 
@@ -40,6 +41,10 @@ L3. "aun no podemos hacer eso porque no me gusta el nombre (trazo) necesito otro
 
 L4. Nombre elegido por el usuario: "Stare". Verificado: sin app de anotación de pantalla con ese nombre; existen "Stare Network" (otra categoría) y "StarePatrol" (salud visual).
 
+L7. Segunda prueba: "1. no se pone el cursor en cruz 2. no pinta 3. si cambia [las teclas] 4. no lo pude probar por lo que paso en 2. 5. si funciona 6. si funciona / un detalle, sigo sin ver el overlay y nada se pinta."
+
+L8. Medición con `--selftest`: la ventana está en pantalla (WindowServer layer=1000, 1920x1080 en 0,0, alpha 1, unoccluded), el contentView es el OverlayView con frame correcto, y un click inyectado en la vista deja marca (`syntheticClickStrokes=1`); el render vectorial produce el PNG esperado. La app nunca se activa (`appActive=false`). Cambio aplicado: el overlay deja de usar `.canJoinAllSpaces` y `.nonactivatingPanel` —la única diferencia con la palette, que sí recibe clicks—, se reordena al cambiar de Space por `NSWorkspace.activeSpaceDidChangeNotification`, y el cursor de cruz se fuerza con un tracking area `.activeAlways` en vez de cursor rects.
+
 L5. Reporte de la primera prueba manual: "mira la prueba dio varias cosas:
 1. no pinta nada en ninguna pantalla sobre ninguna app
 2. no se puede mover la posicion del dock
@@ -48,3 +53,5 @@ L5. Reporte de la primera prueba manual: "mira la prueba dio varias cosas:
 5. una pregunta que hiciste es que si aparecia el overlay y creo que no lo veo"
 
 L6. Corrección (cdb52a9): los cinco síntomas comparten una causa — la app accesoria estaba inactiva y macOS consumía el click para activarla, así que nunca llegaba a `mouseDown`; sin Esc tampoco había salida, y el overlay invisible quedó tapando el Dock real. Se activa la app al entrar y se devuelve el foco a la app anterior al salir, el overlay toma key status y first responder, se agrega un hint visible de 2 s, la palette se arrastra con `performDrag` y se ancla al display del puntero, y deja de seguir Spaces. S5 se reescribe: entrar al modo dibujo sí activa Stare de forma invisible; al salir, el foco vuelve a la app que estaba adelante.
+
+S15. "ahora el dock aparece donde esta el cursor pero el usuario puede querer esto o puede qurere que aparezca donde esta el foco en la ventana donde se invoco o en monitor donde esta el foco" — la ubicación de la palette es una preferencia con al menos tres modos: display bajo el cursor (por defecto), display de la ventana con foco, y display principal fijo.

@@ -35,6 +35,30 @@ final class OverlayView: NSView {
         addCursorRect(bounds, cursor: .crosshair)
     }
 
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(
+            NSTrackingArea(
+                rect: bounds,
+                options: [.cursorUpdate, .activeAlways, .inVisibleRect, .mouseEnteredAndExited],
+                owner: self,
+                userInfo: nil
+            )
+        )
+    }
+
+    /// `.activeAlways` keeps the crosshair working even when the app is not the
+    /// active one, which cursor rectangles alone do not allow.
+    override func cursorUpdate(with event: NSEvent) {
+        NSLog("Stare: cursorUpdate")
+        NSCursor.crosshair.set()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        NSCursor.crosshair.set()
+    }
+
     // MARK: - Session
 
     var isEmpty: Bool { session.isEmpty }

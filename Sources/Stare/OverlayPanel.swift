@@ -10,14 +10,16 @@ final class OverlayPanel: NSPanel {
     init(screen: NSScreen) {
         super.init(
             contentRect: screen.frame,
-            styleMask: [.borderless, .nonactivatingPanel],
+            styleMask: [.borderless],
             backing: .buffered,
             defer: false
         )
 
         level = .screenSaver
+        // Same collection behaviour as the palette, which is the configuration
+        // proven to receive clicks. `.canJoinAllSpaces` made the window a
+        // non-interactive ghost outside the Space it was ordered in.
         collectionBehavior = [
-            .canJoinAllSpaces,
             .fullScreenAuxiliary,
             .stationary,
             .ignoresCycle,
