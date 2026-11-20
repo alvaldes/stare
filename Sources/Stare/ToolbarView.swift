@@ -5,6 +5,7 @@ import StareCore
 struct ToolbarView: View {
     @ObservedObject var state: EditorState
     let onUndo: () -> Void
+    let onPointerToggle: () -> Void
     let onClear: () -> Void
     let onDone: () -> Void
 
@@ -24,10 +25,10 @@ struct ToolbarView: View {
 
             toggleButton(
                 "cursorarrow",
-                isOn: state.showCursorFrame,
-                help: Text(verbatim: "Cursor frame (M)")
+                isOn: state.pointerActive,
+                help: Text(verbatim: "Pointer highlight (⌥⇧M)")
             ) {
-                state.showCursorFrame.toggle()
+                onPointerToggle()
             }
 
             divider

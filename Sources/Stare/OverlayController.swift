@@ -16,6 +16,8 @@ final class OverlayController {
     private var previousApplication: NSRunningApplication?
     private var cancellables: Set<AnyCancellable> = []
     private var keyMonitor: Any?
+    private var pointerTimer: Timer?
+    private(set) var isPointerActive = false
 
     init() {
         NotificationCenter.default.addObserver(
@@ -36,13 +38,15 @@ final class OverlayController {
         for publisher in [state.$ink.map { _ in () }.eraseToAnyPublisher(),
                           state.$tool.map { _ in () }.eraseToAnyPublisher(),
                           state.$showArmedFrame.map { _ in () }.eraseToAnyPublisher(),
-                          state.$showCursorFrame.map { _ in () }.eraseToAnyPublisher()] {
+                          state.$showCursorFrame.map { _ in () }.eraseToAnyPublisher(),
+                          state.$laserLifetime.map { _ in () }.eraseToAnyPublisher()] {
             publisher.sink { [weak self] in self?.repaintCanvases() }.store(in: &cancellables)
         }
     }
 
     private func repaintCanvases() {
         for canvas in canvases.values {
+            canvas.view.syncPreferences()
             canvas.view.syncPointerFromScreen()
             canvas.view.needsDisplay = true
         }
@@ -77,8 +81,56 @@ final class OverlayController {
         if isActive { deactivate() } else { activate() }
     }
 
+    /// Presentation mode: a click-through layer that follows the pointer so the
+    /// audience sees where the user is while they keep working in another app.
+    func togglePointer() {
+        if isPointerActive { stopPointerMode() } else { startPointerMode() }
+    }
+
+    private func startPointerMode() {
+        guard !isPointerActive, !isActive, !NSScreen.screens.isEmpty else { return }
+        isPointerActive = true
+        state.pointerActive = true
+        state.showCursorFrame = true
+
+        buildCanvases()
+        for canvas in canvases.values {
+            canvas.view.showsOnlyPointer = true
+            canvas.panel.ignoresMouseEvents = true
+            canvas.panel.orderFrontRegardless()
+            canvas.panel.level = .screenSaver
+        }
+        canvasUnderPointer()?.view.followPointerFromScreen()
+        startPointerTimer()
+        Diag.log("pointer mode on displays=\(canvases.count)")
+    }
+
+    private func stopPointerMode() {
+        guard isPointerActive else { return }
+        isPointerActive = false
+        state.pointerActive = false
+        stopPointerTimer()
+        tearDownCanvases()
+        Diag.log("pointer mode off")
+    }
+
+    private func startPointerTimer() {
+        guard pointerTimer == nil else { return }
+        // NSEvent.mouseLocation needs no permission, unlike a global event tap.
+        pointerTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            for canvas in self.canvases.values { canvas.view.followPointerFromScreen() }
+        }
+    }
+
+    private func stopPointerTimer() {
+        pointerTimer?.invalidate()
+        pointerTimer = nil
+    }
+
     func activate() {
         guard !isActive, !NSScreen.screens.isEmpty else { return }
+        if isPointerActive { stopPointerMode() }
         isActive = true
 
         // The drawing layer has to be the thing receiving clicks and keys. As an
@@ -89,6 +141,7 @@ final class OverlayController {
 
         buildCanvases()
         for canvas in canvases.values {
+            canvas.view.syncPreferences()
             canvas.panel.orderFrontRegardless()
             canvas.panel.makeFirstResponder(canvas.view)
             canvas.view.showIntroHint()
@@ -192,6 +245,7 @@ final class OverlayController {
                 self?.commitOrder.append((displayID, stroke.id))
             }
             canvas.view.onUndo = { [weak self] in self?.undo() }
+            canvas.view.onPointerToggle = { [weak self] in self?.togglePointer() }
             canvas.view.onErase = { [weak self] ids in
                 guard let self else { return }
                 let erased = Set(ids)
@@ -202,6 +256,7 @@ final class OverlayController {
     }
 
     private func tearDownCanvases() {
+        for canvas in canvases.values { canvas.panel.orderOut(nil) }
         canvases.removeAll()
     }
 
@@ -219,6 +274,7 @@ final class OverlayController {
         let toolbar = toolbar ?? ToolbarPanel(
             state: state,
             onUndo: { [weak self] in self?.undo() },
+            onPointerToggle: { [weak self] in self?.togglePointer() },
             onClear: { [weak self] in self?.clearAll() },
             onDone: { [weak self] in self?.deactivate() }
         )

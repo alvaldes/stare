@@ -92,9 +92,12 @@ final class GlobalHotkey {
     }
 }
 
-/// The fixed shortcut from the specification: Option-Shift-A.
+/// The two system-wide shortcuts: drawing and the pointer highlight.
 enum HotkeyDefaults {
     static let keyCode = UInt32(kVK_ANSI_A)
     static let carbonModifiers = UInt32(optionKey | shiftKey)
     static let displayName = "⌥⇧A"
+
+    static let pointerKeyCode = UInt32(kVK_ANSI_M)
+    static let pointerDisplayName = "⌥⇧M"
 }

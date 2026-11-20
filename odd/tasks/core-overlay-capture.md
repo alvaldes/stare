@@ -85,3 +85,11 @@ S24. "la opcion de poner un marco al cursor" — marco/anel de 40 pt alrededor d
 L18. "no podemos pasar a T4 porque faltan elementos en el dock como el ease erase y el text. Ademas falta el puntero lazer y algo que no hemos visto antes es la opcion de poner un marco al cursor."
 L19. Implementado en el modelo y en la UI, con 49 tests unitarios en verde: borrado por trazo con renumeración, láser transitorio con desvanecido y poda, texto colocado por click y confirmado, marco del cursor como modo. Verificación manual pendiente (el usuario la corre).
 L20. Nota de proceso: las sondas de eventos inyectados requieren normalizar el estado con Escape antes de activar; una corrida que no lo hizo dejó el modo dibujo apagado y el tipeo inyectado terminó en el chat del usuario.
+
+S25. "lo que pedís con el marco del cursor es un highlight del puntero que funciona mientras usás la app": modo presentación con `⌥⇧M` — la capa se muestra pero deja pasar los clicks al app de abajo, sigue al puntero con un timer de 60 Hz, no roba foco y no activa Stare. Se apaga con `⌥⇧M` o desde el menú.
+S26. "el cursor debe cambiar cuando cambian los tipos" — cursor por herramienta: `I`-beam para texto, cruz para las herramientas de dibujo.
+S27. "desaparece muy pronto (igual se debe de poder configurar en settings)" — duración del láser configurable (1, 2, 3 o 5 s; por defecto 2,5 s) desde el menú; el control en Settings llega con T6.
+S28. "el enter borra lo escrito" — el texto se toma del editor de campo en vivo, no de la celda, que puede no tener las últimas teclas.
+
+L21. Reporte: "1. funciona / 2. el enter borra lo escrito / 3. desaparece muy pronto ... el cursor debe cambiar cuando cambian los tipos / 4. este no funciona no se ve nada ... se mantuvo el laser y no pude hacer click en la app ... Este es el objetivo del puntero que me marque el maus mientras hago cosas en la app ... https://presentifyapp.com/"
+L22. Correcciones: texto confirmado desde el field editor, cursor por herramienta, duración del láser por preferencia y menú, y el marco del cursor pasó de ser un dibujo dentro del modo dibujo a un modo presentación con capa click-through y seguimiento por timer (sin permisos, a diferencia de un event tap global).

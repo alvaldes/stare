@@ -13,6 +13,8 @@ final class OverlayView: NSView {
     var onUndo: (() -> Void)?
     /// Marks removed by the eraser, so the undo history can drop them too.
     var onErase: (([UUID]) -> Void)?
+    /// M leaves drawing mode for the click-through pointer highlight.
+    var onPointerToggle: (() -> Void)?
 
     static let textFont = NSFont.systemFont(ofSize: 20, weight: .regular)
     static let cursorFrameDiameter: CGFloat = 40
@@ -21,6 +23,10 @@ final class OverlayView: NSView {
     private var textField: NSTextField?
     private var laserTimer: Timer?
     private var pointerLocation: CGPoint?
+    /// Pointer mode paints only the highlight: no marks, no frame, no hint.
+    var showsOnlyPointer = false {
+        didSet { needsDisplay = true }
+    }
 
     /// Bounds of committed marks, computed once, so a redraw never rebuilds a
     /// path just to decide whether a stroke is visible.
@@ -70,15 +76,20 @@ final class OverlayView: NSView {
         )
     }
 
-    /// `.activeAlways` keeps the crosshair working even when the app is not the
+    /// `.activeAlways` keeps the tool cursor working even when the app is not the
     /// active one, which cursor rectangles alone do not allow.
     override func cursorUpdate(with event: NSEvent) {
-        Diag.log("cursorUpdate")
-        NSCursor.crosshair.set()
+        cursorForTool.set()
+    }
+
+    /// Each tool shouts what it does: text wants an I-beam, drawing tools want a
+    /// crosshair.
+    private var cursorForTool: NSCursor {
+        state.tool == .text ? .iBeam : .crosshair
     }
 
     override func mouseEntered(with event: NSEvent) {
-        NSCursor.crosshair.set()
+        cursorForTool.set()
         updatePointer(to: convert(event.locationInWindow, from: nil))
     }
 
@@ -96,6 +107,12 @@ final class OverlayView: NSView {
     // MARK: - Session
 
     var isEmpty: Bool { session.isEmpty }
+
+    /// The session fades laser marks using the user's configured lifetime.
+    func syncPreferences() {
+        session.laserLifetime = state.laserLifetime
+        cursorForTool.set()
+    }
 
     func clear() {
         session.clear()
@@ -245,9 +262,12 @@ final class OverlayView: NSView {
 
     /// Confirms or discards the text mark in progress. Empty text never becomes
     /// a mark: a stray click must not leave an invisible box behind.
-    private func finishTextEditing(commit: Bool) {
+    ///
+    /// `typed` must come from the field editor while it is live: the cell behind
+    /// an editing NSTextField is not guaranteed to hold the latest keystrokes.
+    private func finishTextEditing(commit: Bool, text: String? = nil) {
         guard let field = textField else { return }
-        let typed = field.stringValue
+        let typed = text ?? field.currentEditor()?.string ?? field.stringValue
         textField = nil
         field.removeFromSuperview()
 
@@ -297,6 +317,14 @@ final class OverlayView: NSView {
 
     /// The frame is a mode, not a mark: it follows the pointer and is never
     /// captured as a drawing.
+    /// One tracking tick from the controller's timer, used in pointer mode where
+    /// the window ignores mouse events and therefore receives none.
+    func followPointerFromScreen() {
+        guard let window else { return }
+        let windowPoint = window.convertPoint(fromScreen: NSEvent.mouseLocation)
+        updatePointer(to: convert(windowPoint, from: nil))
+    }
+
     func syncPointerFromScreen() {
         guard state.showCursorFrame, let window else {
             if pointerLocation != nil {
@@ -375,8 +403,7 @@ final class OverlayView: NSView {
                 return
             }
             if character.lowercased() == "m" {
-                state.showCursorFrame.toggle()
-                syncPointerFromScreen()
+                onPointerToggle?()
                 return
             }
         }
@@ -456,6 +483,11 @@ final class OverlayView: NSView {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         context.setLineCap(.round)
         context.setLineJoin(.round)
+
+        if showsOnlyPointer {
+            drawCursorFrame(in: context)
+            return
+        }
 
         let now = Date()
         for stroke in session.strokes where stroke.tool.isTransient {
@@ -552,7 +584,7 @@ extension OverlayView: NSTextFieldDelegate {
     /// mode.
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
         if selector == #selector(NSResponder.insertNewline(_:)) {
-            finishTextEditing(commit: true)
+            finishTextEditing(commit: true, text: textView.string)
             return true
         }
         if selector == #selector(NSResponder.cancelOperation(_:)) {
@@ -563,7 +595,8 @@ extension OverlayView: NSTextFieldDelegate {
     }
 
     func controlTextDidEndEditing(_ notification: Notification) {
+        let editor = notification.userInfo?["NSFieldEditor"] as? NSTextView
         // Clicking away confirms, the same as typing Return.
-        finishTextEditing(commit: true)
+        finishTextEditing(commit: true, text: editor?.string)
     }
 }

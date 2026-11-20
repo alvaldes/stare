@@ -6,9 +6,17 @@ final class StatusBarController: NSObject {
     private let state: EditorState
     private let onDraw: () -> Void
     private let onClear: () -> Void
+    private let onPointerToggle: () -> Void
     private let frameItem = NSMenuItem(title: "Show Drawing Frame", action: nil, keyEquivalent: "")
+    private let pointerItem = NSMenuItem(title: "Pointer Highlight  ⌥⇧M", action: nil, keyEquivalent: "")
 
-    init(state: EditorState, onDraw: @escaping () -> Void, onClear: @escaping () -> Void) {
+    init(
+        state: EditorState,
+        onDraw: @escaping () -> Void,
+        onClear: @escaping () -> Void,
+        onPointerToggle: @escaping () -> Void
+    ) {
+        self.onPointerToggle = onPointerToggle
         self.state = state
         self.onDraw = onDraw
         self.onClear = onClear
@@ -30,6 +38,26 @@ final class StatusBarController: NSObject {
         frameItem.target = self
         frameItem.state = state.showArmedFrame ? .on : .off
         menu.addItem(frameItem)
+
+        pointerItem.action = #selector(togglePointer)
+        pointerItem.target = self
+        menu.addItem(pointerItem)
+
+        let laserMenu = NSMenu()
+        for seconds in [1.0, 2.0, 3.0, 5.0] {
+            let item = NSMenuItem(
+                title: "\(Int(seconds)) seconds",
+                action: #selector(setLaserLifetime(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = seconds
+            item.state = abs(state.laserLifetime - seconds) < 0.01 ? .on : .off
+            laserMenu.addItem(item)
+        }
+        let laserItem = NSMenuItem(title: "Laser Duration", action: nil, keyEquivalent: "")
+        laserItem.submenu = laserMenu
+        menu.addItem(laserItem)
         menu.addItem(.separator())
         menu.addItem(menuItem(title: "Quit Stare", action: #selector(quit), keyEquivalent: "q"))
         statusItem.menu = menu
@@ -46,6 +74,16 @@ final class StatusBarController: NSObject {
     }
 
     @objc private func draw() { onDraw() }
+    @objc private func togglePointer() { onPointerToggle() }
+
+    @objc private func setLaserLifetime(_ sender: NSMenuItem) {
+        guard let seconds = sender.representedObject as? Double else { return }
+        state.laserLifetime = seconds
+        for item in sender.menu?.items ?? [] {
+            item.state = (item.representedObject as? Double) == seconds ? .on : .off
+        }
+    }
+
     @objc private func toggleFrame() {
         state.showArmedFrame.toggle()
         frameItem.state = state.showArmedFrame ? .on : .off

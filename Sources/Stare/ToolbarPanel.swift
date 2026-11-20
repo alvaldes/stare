@@ -29,6 +29,7 @@ final class ToolbarPanel: NSPanel {
     init(
         state: EditorState,
         onUndo: @escaping () -> Void,
+        onPointerToggle: @escaping () -> Void,
         onClear: @escaping () -> Void,
         onDone: @escaping () -> Void
     ) {
@@ -36,6 +37,7 @@ final class ToolbarPanel: NSPanel {
             rootView: ToolbarView(
                 state: state,
                 onUndo: onUndo,
+                onPointerToggle: onPointerToggle,
                 onClear: onClear,
                 onDone: onDone
             )
