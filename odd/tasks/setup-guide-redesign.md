@@ -25,6 +25,12 @@ S6. La dirección visual se elige entre alternativas mostradas en el canvas de `
 | T2 | Reimplementar `OnboardingView.swift` con la dirección elegida, sin tocar el contrato de S4 | S2–S4 | worker, después de T1 | hecho, sin commit: `Sources/Stare/OnboardingView.swift` + `Sources/StareCore/OnboardingActionPlan.swift` |
 | T3 | Extraer la regla "una acción primaria por estado" a `StareCore` con test, y pinear el copy de la guía | S2–S3 | worker, después de T2 | hecho, sin commit: `OnboardingActionPlanTests` (5 tests), suite 394 verde |
 
+## Entrega
+
+Slice de esta rama: 5 commits sobre `main` local (`d0db74b` probe, `42cde61` copy, `1e1c351` espejo del modelo, `d28bba2` rediseño, `844a3d0` diseño+doc), 1771 inserciones y 159 borrados en 22 archivos. Los commits de código quedan en 167, 17, 142 y 394 líneas; `844a3d0` arrastra ~1000 líneas de artefactos HTML autocontenidos y documentación.
+
+Ojo al publicar: `origin/main` está 42 commits atrás de `main` local, así que un PR contra `origin/main` incluiría esos 42 commits previos. La forma de entrega (empujar `main` antes, o un PR encadenado) es decisión del owner; nada se empujó.
+
 ## Log
 
 L1. Pedido original, textual: "[Image#2] hay que mejorar la UI de esta pantalla usa 21st para que luzca moderna y buena UX al aceptar los permisos y demas". La imagen es la guía con el permiso ya concedido: ícono de la app, "Stare", el párrafo de qué hace, la fila "Screen Recording on / Stare can draw over the screen." en verde, y tres acciones apiladas — "Open System Settings…" en azul primario (deshabilitado), "Continue" en gris, "Not now" como texto.
