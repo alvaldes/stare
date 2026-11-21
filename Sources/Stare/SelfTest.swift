@@ -173,6 +173,12 @@ enum SelfTest {
             report.append("FAIL: settings window not created")
         }
 
+        // Onboarding (T5/S1–S3): the guide renders in both appearances, its
+        // window can become key from an .accessory app, has a real frame and
+        // reports the permission state it saw. The finish closure records the
+        // close, so the S3 contract (every close marks it seen) is observed.
+        report.append(contentsOf: MainActor.assumeIsolated { onboardingReport() })
+
         // Render path: same code the overlay uses.
         let marks = sampleSession()
         let rendered = renderToPNG(strokes: marks.visibleStrokes)
@@ -689,6 +695,87 @@ enum SelfTest {
             lines.append("  ws id=\(number) layer=\(layer) alpha=\(alpha) bounds=\(bounds)")
         }
         return lines
+    }
+
+    /// Renders the onboarding guide with a fixed appearance and the real
+    /// permission model behind it, so the render shows the state this machine
+    /// actually reports.
+    @MainActor
+    private static func renderOnboarding(appearanceName: NSAppearance.Name, to path: String) -> Bool {
+        let model = OnboardingModel(
+            permission: ScreenRecordingPermission(
+                client: SystemScreenRecordingClient(captureService: CaptureService())
+            )
+        )
+        // The render shows the state this machine actually reports, like the
+        // live guide does.
+        model.refresh()
+        let hosting = NSHostingView(rootView: OnboardingView(
+            model: model,
+            onContinue: {},
+            onRestart: {},
+            onNotNow: {}
+        ))
+        hosting.appearance = NSAppearance(named: appearanceName)
+        hosting.frame = CGRect(origin: .zero, size: CGSize(width: 460, height: 430))
+        hosting.layoutSubtreeIfNeeded()
+
+        guard let representation = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else {
+            return false
+        }
+        hosting.cacheDisplay(in: hosting.bounds, to: representation)
+        guard let png = representation.representation(using: .png, properties: [:]) else {
+            return false
+        }
+        return (try? png.write(to: URL(fileURLWithPath: path))) != nil
+    }
+
+    /// Opens the guide through its real controller: renders both appearances
+    /// offscreen, then asserts the window can become key, has a non-zero
+    /// frame, reports a permission state, and that closing it reports the
+    /// finish exactly once (S3: any close marks the guide as seen).
+    @MainActor
+    private static func onboardingReport() -> [String] {
+        var report: [String] = []
+
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            let rendered = renderOnboarding(appearanceName: appearance, to: "/tmp/stare-onboarding-\(name).png")
+            report.append("onboarding \(name) rendered=\(rendered) png=/tmp/stare-onboarding-\(name).png")
+        }
+
+        var finishes: [Bool] = []
+        let controller = OnboardingWindowController(
+            permission: ScreenRecordingPermission(
+                client: SystemScreenRecordingClient(captureService: CaptureService())
+            ),
+            onDismissOverlay: {},
+            onFinish: { continueToSettings in finishes.append(continueToSettings) }
+        )
+        controller.show()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+
+        var windowOk = false
+        var frameOk = false
+        if let window = controller.window {
+            windowOk = window.isVisible && window.canBecomeKey
+            frameOk = window.frame.width > 0 && window.frame.height > 0
+            report.append(
+                "onboarding window frame=\(window.frame) visible=\(window.isVisible) "
+                    + "canBecomeKey=\(window.canBecomeKey) isKey=\(window.isKeyWindow) "
+                    + "level=\(window.level.rawValue) state=\(controller.access)"
+            )
+            window.close()
+        } else {
+            report.append("FAIL: onboarding window not created")
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        report.append(
+            "onboarding close reported finishes=\(finishes.map(String.init).joined(separator: ", ")) expect false once"
+        )
+
+        let passed = windowOk && frameOk && finishes == [false]
+        report.append("onboarding result=\(passed ? "PASS" : "FAIL")")
+        return report
     }
 
     /// Renders the settings form with a fixed appearance.
