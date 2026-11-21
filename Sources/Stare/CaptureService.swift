@@ -127,8 +127,11 @@ final class CaptureService: ScreenCapturing {
 
     private static func makeConfiguration(pixelWidth: Int, pixelHeight: Int) -> SCStreamConfiguration {
         let configuration = SCStreamConfiguration()
-        configuration.width = pixelWidth
-        configuration.height = pixelHeight
+        // ScreenCaptureKit rejects a degenerate configuration, and a rejected
+        // probe is indistinguishable from a missing permission, so the floor
+        // lives here too and not only in the caller's downscale.
+        configuration.width = max(2, pixelWidth)
+        configuration.height = max(2, pixelHeight)
         configuration.showsCursor = false
         configuration.capturesAudio = false
         return configuration

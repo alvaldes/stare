@@ -1,5 +1,6 @@
 import AppKit
 import StareCore
+import os
 
 /// The real `ScreenRecordingClient` Stare ships: every method answers the same
 /// TCC question with the same call the capture path makes, so the onboarding
@@ -12,20 +13,22 @@ import StareCore
 /// - `canCapture()` runs the smallest real capture the app knows how to do:
 ///   the live-blur frame path (`CaptureService.captureDisplay(_:downscale:)`,
 ///   which is `SCShareableContent.excludingDesktopWindows` +
-///   `ScreenContent.prepare` + `SCScreenshotManager.captureImage`, only at a
-///   handful of pixels instead of full framebuffer size). It is a fair probe
-///   because it is the production capture path end to end — sharing content,
-///   own-windows filter and screenshot included — so a pass means a real
-///   capture succeeds, which is exactly what drawing over the screen needs,
-///   and a per-process grant that has not landed yet fails it. It blocks the
-///   calling thread on a semaphore, the same way the synchronous
-///   `CaptureService.captureDisplay(_:)` already blocks its caller.
+///   `ScreenContent.prepare` + `SCScreenshotManager.captureImage`, at a
+///   reduced pixel size instead of full framebuffer size, falling back to the
+///   full size before it answers false). It is a fair probe because it is the
+///   production capture path end to end — sharing content, own-windows filter
+///   and screenshot included — on the same display the capture key targets, so
+///   a pass means a real capture succeeds, which is exactly what drawing over
+///   the screen needs, and a per-process grant that has not landed yet fails
+///   it. It blocks the calling thread on a semaphore, the same way the
+///   synchronous `CaptureService.captureDisplay(_:)` already blocks its caller.
 /// - `openPrivacySettings()` opens System Settings exactly on the Screen
 ///   Recording privacy pane.
 final class SystemScreenRecordingClient: ScreenRecordingClient, @unchecked Sendable {
-    /// The probe capture is downscaled until it is a few pixels wide; any
-    /// current display divided by this still yields a valid 1×1 configuration.
-    private static let probeDownscale: CGFloat = 1000
+    /// Where the probe reports why a capture failed. The permission pane shows
+    /// the same failure as "granted, restart needed", so without this line the
+    /// real ScreenCaptureKit error is unrecoverable after the fact.
+    private static let log = Logger(subsystem: "dev.alvaldes.stare", category: "screenRecording")
 
     private let captureService: CaptureService
 
@@ -45,30 +48,67 @@ final class SystemScreenRecordingClient: ScreenRecordingClient, @unchecked Senda
     }
 
     func canCapture() -> Bool {
-        guard let displayID = Self.primaryDisplayID() else { return false }
+        // The probe must vouch for the capture the app actually performs, and
+        // that capture targets the display holding the front-most window. A
+        // probe pointed at a different display — the main one, or a display
+        // that cannot be captured at all — fails while capturing works, and
+        // the permission UI reads that failure as a missing permission.
+        guard let screen = FrontWindowLocator.frontmostNormalWindowScreen()
+            ?? NSScreen.screens.first,
+            let displayID = Self.displayID(of: screen) else {
+            Self.log.error("probe: no display to capture")
+            return false
+        }
 
-        // `captureDisplay(_:downscale:)` is async and this protocol is not, so
-        // a detached task does the work and the caller waits, mirroring the
-        // synchronous capture path. The main thread is not doing anything else
-        // in between: the probe runs from the permission model's refresh.
+        // The reduced capture is the cheap answer, the full-size one is the
+        // capture the capture key takes. Falling back to it keeps the probe
+        // from ever being stricter than the capture it vouches for.
+        for downscale in [Self.probeDownscale(for: screen), 1] {
+            if let failure = Self.capture(
+                displayID: displayID,
+                downscale: downscale,
+                using: captureService
+            ) {
+                let error = failure as NSError
+                Self.log.error(
+                    "probe capture failed display=\(displayID) downscale=\(downscale, privacy: .public) error=\(error.domain, privacy: .public)/\(error.code) \(error.localizedDescription, privacy: .public)"
+                )
+                continue
+            }
+            return true
+        }
+        return false
+    }
+
+    /// One capture attempt, blocked on until it finishes: `captureDisplay` is
+    /// async and `ScreenRecordingClient` is not, so a detached task does the
+    /// work and this thread waits, exactly like the synchronous capture path.
+    /// The main thread has nothing else to do in between — the caller is the
+    /// permission model's refresh — and the wait is bounded by one frame.
+    ///
+    /// Returns the failure, or nil when the capture succeeded.
+    private static func capture(
+        displayID: CGDirectDisplayID,
+        downscale: CGFloat,
+        using captureService: CaptureService
+    ) -> Error? {
         let semaphore = DispatchSemaphore(value: 0)
-        var captured = false
+        var failure: Error?
 
-        Task.detached(priority: .userInitiated) { [captureService] in
+        Task.detached(priority: .userInitiated) {
             defer { semaphore.signal() }
             do {
                 _ = try await captureService.captureDisplay(
                     displayID,
-                    downscale: Self.probeDownscale
+                    downscale: downscale
                 )
-                captured = true
             } catch {
-                captured = false
+                failure = error
             }
         }
 
         semaphore.wait()
-        return captured
+        return failure
     }
 
     func openPrivacySettings() {
@@ -77,9 +117,23 @@ final class SystemScreenRecordingClient: ScreenRecordingClient, @unchecked Senda
         Diag.log("opened screen recording privacy pane")
     }
 
-    /// The primary display, the one a capture of "the screen" starts from.
-    private static func primaryDisplayID() -> CGDirectDisplayID? {
-        guard let screen = NSScreen.screens.first else { return nil }
+    /// How much the probe divides the primary display's pixels by.
+    ///
+    /// The factor follows the display instead of being a fixed constant: a
+    /// constant tuned for one display collapses a bigger one into a
+    /// configuration ScreenCaptureKit rejects, and a rejected probe reads as a
+    /// missing permission. `ProbeCaptureSize` owns the floor and its rationale.
+    private static func probeDownscale(for screen: NSScreen) -> CGFloat {
+        let scale = screen.backingScaleFactor
+        return ProbeCaptureSize.downscale(
+            pixelWidth: Int((screen.frame.width * scale).rounded()),
+            pixelHeight: Int((screen.frame.height * scale).rounded())
+        )
+    }
+
+    /// The display behind a screen, the one a capture of "the screen" starts
+    /// from.
+    private static func displayID(of screen: NSScreen) -> CGDirectDisplayID? {
         let key = NSDeviceDescriptionKey("NSScreenNumber")
         return (screen.deviceDescription[key] as? NSNumber)?.uint32Value
     }
