@@ -159,6 +159,12 @@ enum SelfTest {
         // and clearly wider than the old fixed 420-pt form.
         report.append(contentsOf: MainActor.assumeIsolated { settingsReport() })
 
+        // Tools and global-hotkeys panes (T8/T9/S6): the panes render in both
+        // appearances (via the settings report above), the effective shortcut
+        // table is reported as the router sees it, and the four hotkeys are
+        // registered through the real Carbon path.
+        report.append(contentsOf: MainActor.assumeIsolated { toolsAndHotkeysReport() })
+
         // Marker styles (T7/S5): every pointer preset rendered in light and
         // dark through the same preview view the Settings pane uses.
         report.append(contentsOf: MainActor.assumeIsolated { markerStylesReport() })
@@ -841,6 +847,110 @@ enum SelfTest {
 
         let passed = windowOk && frameOk && finishes == [false]
         report.append("onboarding result=\(passed ? "PASS" : "FAIL")")
+        return report
+    }
+
+    /// T8/T9/S6: the two shortcut panes end to end, detached from the user's
+    /// real preferences (the harness model uses an in-memory store). The tool
+    /// section reports the effective shortcut table — the map as the router
+    /// the overlay builds from `EditorState` sees it — after an edit and two
+    /// refusals. The hotkey section registers through the real Carbon path
+    /// (`RegisterEventHotKey`, the same call the app makes at every launch,
+    /// in this same process), so the four defaults are proven to register,
+    /// a changed binding is proven to re-register, and a modifier-less key
+    /// is proven to be refused while the previous binding stays live.
+    @MainActor
+    private static func toolsAndHotkeysReport() -> [String] {
+        var report: [String] = []
+        let store = SelfTestPreferenceStore()
+        let model = PreferencesModel(store: store)
+
+        // The starting ink and tool persist through the one blob.
+        model.ink = .green
+        model.tool = .laser
+        let reloaded = PreferencesModel(store: store)
+        let startPersisted = reloaded.ink == .green && reloaded.tool == .laser
+        report.append(
+            "tools start ink=\(reloaded.ink.rawValue) tool=\(reloaded.tool.rawValue) persisted=\(startPersisted)"
+        )
+
+        // Tool shortcuts: one edit, then the two refusals the map itself
+        // rejects — a taken key naming its holder, and an unsupported
+        // character — both leaving the map untouched.
+        var map = model.toolShortcuts
+        let assigned: Bool
+        if case .success = map.assigning("Z", to: .laser) { assigned = true } else { assigned = false }
+        // The two refusals are checked against the map as it stands after the
+        // successful edit: both must fail and leave it exactly as it was.
+        let mapAfterEdit = map
+        let conflictRefused: Bool
+        if case .failure(.conflict(let holder)) = map.assigning("Z", to: .blur), holder == .laser, map == mapAfterEdit {
+            conflictRefused = true
+        } else {
+            conflictRefused = false
+        }
+        let unsupportedRefused: Bool
+        if case .failure(.unsupportedCharacter) = map.assigning("!", to: .blur), map == mapAfterEdit {
+            unsupportedRefused = true
+        } else {
+            unsupportedRefused = false
+        }
+        model.toolShortcuts = map
+
+        // The effective table, as the router the overlay builds from the
+        // editor state sees it.
+        let state = EditorState(preferences: model)
+        let router = state.shortcutRouter
+        let table = Tool.allCases.map { "\($0.rawValue)=\(state.toolShortcuts[$0])" }.joined(separator: " ")
+        report.append("tools shortcuts table \(table)")
+        let routerSeesEdit = router.resolve("z") == .tool(.laser)
+            && router.resolve("f") == .none
+            && router.resolve("3") == .ink(.yellow)
+        let mapPersisted = PreferencesModel(store: store).toolShortcuts[.laser] == "Z"
+
+        // The two new panes render in light and dark through the settings
+        // report, which ran just before this one.
+        let pngPaths = ["tools", "shortcuts"].flatMap { area in
+            ["light", "dark"].map { "/tmp/stare-settings-\(area)-\($0).png" }
+        }
+        let rendered = pngPaths.filter { FileManager.default.fileExists(atPath: $0) }.count
+
+        let toolsPassed = startPersisted && assigned && conflictRefused && unsupportedRefused
+            && routerSeesEdit && mapPersisted && rendered == pngPaths.count
+        report.append(
+            "tools pane conflictRefused=\(conflictRefused) unsupportedRefused=\(unsupportedRefused) "
+                + "routerSeesEdit=\(routerSeesEdit) mapPersisted=\(mapPersisted) pngs=\(rendered)/\(pngPaths.count) "
+                + "result=\(toolsPassed ? "PASS" : "FAIL")"
+        )
+
+        // Global hotkeys through the real Carbon path: the four defaults
+        // register (the same registration the app performs at launch), a
+        // changed binding re-registers, and a modifier-less key is refused
+        // with the previous binding left registered.
+        let manager = GlobalHotkeyManager()
+        var handlers: [HotkeyAction: () -> Void] = [:]
+        for action in HotkeyAction.allCases { handlers[action] = {} }
+        let defaults = HotkeyBindings.standard
+        let outcomes = manager.applyAll(defaults, handlers: handlers)
+        let defaultsRegistered = outcomes.filter { $0.value }.count
+        report.append(
+            "hotkeys defaults \(HotkeyAction.allCases.map { "\($0.rawValue)=\(defaults[$0].displayTitle)" }.joined(separator: " ")) "
+                + "registered=\(defaultsRegistered)/\(HotkeyAction.allCases.count)"
+        )
+
+        var changed = defaults
+        let newPin = HotkeyBinding(key: .k, modifiers: [.control, .shift])
+        _ = changed.assigning(newPin, to: .pin)
+        let pinMoved = manager.apply(newPin, to: .pin, handler: {})
+            && manager.registeredBindings[.pin] == newPin
+        let bare = HotkeyBinding(key: .q, modifiers: [])
+        let bareRefused = !manager.apply(bare, to: .pin, handler: {})
+            && manager.registeredBindings[.pin] == newPin
+        report.append(
+            "hotkeys pane pin→\(newPin.displayTitle) reregistered=\(pinMoved) "
+                + "bareKeyRefused=\(bareRefused) previousKept=\(manager.registeredBindings[.pin] == newPin) "
+                + "result=\(defaultsRegistered == HotkeyAction.allCases.count && pinMoved && bareRefused ? "PASS" : "FAIL")"
+        )
         return report
     }
 

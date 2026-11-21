@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import StareCore
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -49,10 +50,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
     )
-    private var hotkey: GlobalHotkey?
-    private var pointerHotkey: GlobalHotkey?
-    private var pinHotkey: GlobalHotkey?
-    private var whiteboardHotkey: GlobalHotkey?
+    /// The four global hotkeys, registered from the live `HotkeyBindings`
+    /// (T9/S6) instead of hardcoded constants; the registration path re-runs
+    /// whenever the bindings change in Settings.
+    private let hotkeyManager = GlobalHotkeyManager()
+    private var hotkeysCancellable: AnyCancellable?
+    /// The bindings currently registered, so a changed action can be applied
+    /// alone and a refused one can be reverted to what was live.
+    private var appliedHotkeys: HotkeyBindings = .standard
 
     @MainActor
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -70,36 +75,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             isPinned: { [weak self] in self?.overlay.isPinned ?? false }
         )
 
-        hotkey = GlobalHotkey(
-            keyCode: HotkeyDefaults.keyCode,
-            carbonModifiers: HotkeyDefaults.carbonModifiers
-        ) { [weak self] in
-            self?.overlay.toggle()
-        }
-
-        pointerHotkey = GlobalHotkey(
-            keyCode: HotkeyDefaults.pointerKeyCode,
-            carbonModifiers: HotkeyDefaults.carbonModifiers
-        ) { [weak self] in
-            self?.overlay.togglePointer()
-        }
-
-        // Pinning is only useful while another app has focus, so it has to be a
-        // global shortcut and not a local key monitor.
-        pinHotkey = GlobalHotkey(
-            keyCode: HotkeyDefaults.pinKeyCode,
-            carbonModifiers: HotkeyDefaults.carbonModifiers
-        ) { [weak self] in
-            self?.overlay.togglePin()
-        }
-
-        // T6: the whiteboard replaces the transparent overlay with an opaque,
-        // permission-free board.
-        whiteboardHotkey = GlobalHotkey(
-            keyCode: HotkeyDefaults.whiteboardKeyCode,
-            carbonModifiers: HotkeyDefaults.carbonModifiers
-        ) { [weak self] in
-            self?.overlay.toggleBoard()
+        registerGlobalHotkeys(from: preferences.hotkeys)
+        hotkeysCancellable = preferences.$hotkeys.dropFirst().sink { [weak self] bindings in
+            guard let self else { return }
+            MainActor.assumeIsolated { self.registerGlobalHotkeys(from: bindings) }
         }
 
         // First run (T5/S3): the setup guide is the one asking for Screen
@@ -116,8 +95,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         Diag.log(
-            "hotkeys draw=\(hotkey != nil) pointer=\(pointerHotkey != nil) pin=\(pinHotkey != nil) whiteboard=\(whiteboardHotkey != nil) policy=\(NSApp.activationPolicy().rawValue) capture=\(captureService.hasPermission)"
+            "hotkeys \(hotkeyManager.registeredBindings.map { "\($0.key.rawValue)=\($0.value.displayTitle)" }.sorted().joined(separator: " ")) policy=\(NSApp.activationPolicy().rawValue) capture=\(captureService.hasPermission)"
         )
+    }
+
+    /// Registers (or re-registers) the global hotkeys from `bindings`. Every
+    /// action registers independently, so one refusal at launch leaves the
+    /// rest working (T9/S7). A refused binding is reverted to the previous
+    /// one — which stayed registered — and reported to the Settings pane,
+    /// where the refusal is visible instead of silent.
+    @MainActor
+    private func registerGlobalHotkeys(from bindings: HotkeyBindings) {
+        let handlers: [HotkeyAction: () -> Void] = [
+            .drawOverlay: { [weak self] in self?.overlay.toggle() },
+            .pointerHighlight: { [weak self] in self?.overlay.togglePointer() },
+            .pin: { [weak self] in self?.overlay.togglePin() },
+            .whiteboard: { [weak self] in self?.overlay.toggleBoard() },
+        ]
+        var refused: (action: HotkeyAction, binding: HotkeyBinding)?
+        for action in HotkeyAction.allCases {
+            let binding = bindings[action]
+            if hotkeyManager.apply(binding, to: action, handler: handlers[action] ?? {}) {
+                appliedHotkeys.assigning(binding, to: action)
+            } else if refused == nil {
+                refused = (action, binding)
+            }
+        }
+        if let refused {
+            // The previous binding stayed registered, so the model goes back
+            // to it too: what the pane shows is what the system answers to.
+            preferences.hotkeys = appliedHotkeys
+            preferences.hotkeyRejection = HotkeyRejection(action: refused.action, binding: refused.binding)
+        } else {
+            preferences.hotkeyRejection = nil
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

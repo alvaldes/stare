@@ -4,13 +4,15 @@ import StareCore
 
 /// The areas of the Settings window, in sidebar order.
 enum SettingsArea: String, CaseIterable, Identifiable {
-    case general, marker, permissions, about
+    case general, tools, shortcuts, marker, permissions, about
 
     var id: Self { self }
 
     var title: String {
         switch self {
         case .general: "General"
+        case .tools: "Tools"
+        case .shortcuts: "Shortcuts"
         case .marker: "Pointer Highlight"
         case .permissions: "Permissions"
         case .about: "About"
@@ -20,6 +22,8 @@ enum SettingsArea: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .general: "gearshape"
+        case .tools: "wrench.and.screwdriver"
+        case .shortcuts: "keyboard"
         case .marker: "scope"
         case .permissions: "lock.shield"
         case .about: "info.circle"
@@ -177,6 +181,8 @@ struct SettingsView: View {
     static func pane(for area: SettingsArea, model: PreferencesModel, permission: PermissionProbe) -> some View {
         switch area {
         case .general: GeneralPane(model: model)
+        case .tools: ToolsPane(model: model)
+        case .shortcuts: ShortcutsPane(model: model)
         case .marker: MarkerPane(model: model)
         case .permissions: PermissionsPane(permission: permission)
         case .about: AboutPane()
@@ -250,6 +256,263 @@ private struct GeneralPane: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+}
+
+// MARK: - Tools
+
+/// A rounded key badge: what both shortcut panes show as a row's current key.
+private struct KeyBadge: View {
+    let title: String
+
+    var body: some View {
+        Text(verbatim: title)
+            .font(.system(size: 12, weight: .medium).monospacedDigit())
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
+    }
+}
+
+/// A visible refusal (T8/T9/S6): the map is left unchanged, and the pane says
+/// why instead of failing silently.
+private struct RefusalNote: View {
+    let text: String
+
+    var body: some View {
+        Label(text, systemImage: "exclamationmark.triangle")
+            .font(.caption)
+            .foregroundStyle(.orange)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// The starting tool and ink, the per-tool shortcuts and the palette's
+/// position (T8/S6). Every control writes through the one preferences blob.
+private struct ToolsPane: View {
+    @ObservedObject var model: PreferencesModel
+    /// The tool whose shortcut is being captured, if any.
+    @State private var recordingTool: Tool?
+    /// The last refusal, shown instead of a silent no-op.
+    @State private var notice: String?
+
+    var body: some View {
+        VStack(spacing: 16) {
+            PaneHeader(title: "Tools", subtitle: "The ink you start with, the tool keys and the palette.")
+
+            SettingsCard(title: "Starting ink", symbol: "paintpalette") {
+                SettingRow(
+                    title: "Start drawing with",
+                    detail: "The ink the palette opens with, wherever Stare draws.",
+                    content: HStack(spacing: 7) {
+                        ForEach(Ink.allCases) { ink in
+                            swatch(ink)
+                        }
+                    }
+                )
+                Text("The choice persists across launches; while drawing the swatches and the number keys still switch the ink at once.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            SettingsCard(title: "Tool shortcuts", symbol: "keyboard") {
+                ForEach(Tool.allCases) { tool in
+                    SettingRow(
+                        title: tool.displayName,
+                        content: HStack(spacing: 10) {
+                            KeyBadge(title: String(model.toolShortcuts[tool]))
+                            Button(recordingTool == tool ? "Recording…" : "Record") {
+                                startRecording(tool)
+                            }
+                            .disabled(recordingTool != nil && recordingTool != tool)
+                        }
+                    )
+                }
+                if let notice {
+                    RefusalNote(text: notice)
+                }
+                HStack {
+                    Spacer()
+                    Button("Restore defaults") {
+                        model.toolShortcuts = .standard
+                        notice = nil
+                    }
+                }
+                Text("One key per tool: assigning a key another tool already holds is refused, so every tool stays reachable while drawing.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            SettingsCard(title: "Toolbar", symbol: "rectangle.bottomthird.inset.filled") {
+                SettingRow(
+                    title: "Reset position",
+                    detail: "Puts the palette back where a fresh install opens it, and moves it at once if it is on screen.",
+                    content: Button("Reset") {
+                        ToolbarPanel.requestPositionReset()
+                    }
+                )
+            }
+
+            KeyCaptureField(
+                includesModifiers: false,
+                active: recordingTool != nil,
+                onCapture: { record($0) },
+                onCancel: { recordingTool = nil }
+            )
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+        }
+    }
+
+    private func startRecording(_ tool: Tool) {
+        notice = nil
+        recordingTool = tool
+    }
+
+    /// Runs the captured key through the map's own assignment, so the same
+    /// validation the router relies on refuses it here: a taken key names the
+    /// tool that holds it and an unsupported character explains why, and a
+    /// refusal leaves the map exactly as it was.
+    private func record(_ binding: HotkeyBinding?) {
+        defer { recordingTool = nil }
+        guard let tool = recordingTool else { return }
+        guard let binding else {
+            notice = "That key can't be a tool shortcut."
+            return
+        }
+        var map = model.toolShortcuts
+        switch map.assigning(binding.key.character, to: tool) {
+        case .success:
+            model.toolShortcuts = map
+            notice = nil
+        case .failure(.conflict(let holder)):
+            notice = "“\(binding.key.character)” is already assigned to \(holder.displayName); the map is unchanged."
+        case .failure(.unsupportedCharacter):
+            notice = "Only letters and numbers can be tool shortcuts."
+        }
+    }
+
+    /// One ink as a round swatch; the starting ink carries an accent ring.
+    private func swatch(_ ink: Ink) -> some View {
+        Button {
+            model.ink = ink
+        } label: {
+            Circle()
+                .fill(Color(cgColor: ink.cgColor()))
+                .frame(width: 20, height: 20)
+                .overlay(Circle().strokeBorder(Color(nsColor: .separatorColor)))
+                .overlay {
+                    if model.ink == ink {
+                        Circle().strokeBorder(Color(nsColor: .controlAccentColor), lineWidth: 2)
+                            .padding(-3)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Start drawing with \(ink.displayName)")
+    }
+}
+
+// MARK: - Shortcuts
+
+/// The four global hotkeys (T9/S6): each row shows its binding and offers
+/// Record. The captured binding goes through `HotkeyBindings.assigning` —
+/// conflicts with another action and modifier-less keys refuse visibly — and
+/// then through the AppDelegate's registration path, which reports a system
+/// rejection (usually another app owning the shortcut) while the previous
+/// binding stays registered.
+private struct ShortcutsPane: View {
+    @ObservedObject var model: PreferencesModel
+    @State private var recording: HotkeyAction?
+    @State private var notice: String?
+
+    var body: some View {
+        VStack(spacing: 16) {
+            PaneHeader(title: "Shortcuts", subtitle: "The system-wide shortcuts Stare answers to.")
+
+            SettingsCard(title: "Global shortcuts", symbol: "keyboard") {
+                ForEach(HotkeyAction.allCases, id: \.self) { action in
+                    SettingRow(
+                        title: action.title,
+                        detail: detail(for: action),
+                        content: HStack(spacing: 10) {
+                            KeyBadge(title: model.hotkeys[action].displayTitle)
+                            Button(recording == action ? "Recording…" : "Record") {
+                                startRecording(action)
+                            }
+                            .disabled(recording != nil && recording != action)
+                        }
+                    )
+                }
+                if let rejection = model.hotkeyRejection {
+                    RefusalNote(text: rejectionText(rejection))
+                }
+                if let notice {
+                    RefusalNote(text: notice)
+                }
+                Text("These shortcuts work in any app, without extra permissions. While recording, press a key together with at least one modifier; esc cancels.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            KeyCaptureField(
+                includesModifiers: true,
+                active: recording != nil,
+                onCapture: { record($0) },
+                onCancel: { recording = nil }
+            )
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+        }
+    }
+
+    private func startRecording(_ action: HotkeyAction) {
+        notice = nil
+        model.hotkeyRejection = nil
+        recording = action
+    }
+
+    /// The refusal the registration path reported for this pane's last
+    /// attempt: the system refused the binding, the model went back to the
+    /// previous one, and that previous binding is still armed.
+    private func rejectionText(_ rejection: HotkeyRejection) -> String {
+        "Another app owns \(rejection.binding.displayTitle); \(rejection.action.title) kept \(model.hotkeys[rejection.action].displayTitle)."
+    }
+
+    /// Runs the captured binding through the bindings' own assignment, so the
+    /// same validation the registration relies on refuses it here, and a
+    /// refusal leaves the bindings exactly as they were.
+    private func record(_ binding: HotkeyBinding?) {
+        defer { recording = nil }
+        guard let action = recording else { return }
+        guard let binding else {
+            notice = "That key can't be a shortcut."
+            return
+        }
+        guard binding.isValid else {
+            notice = "Add a modifier — a shortcut needs at least one modifier key."
+            return
+        }
+        var bindings = model.hotkeys
+        switch bindings.assigning(binding, to: action) {
+        case .success:
+            model.hotkeys = bindings
+            notice = nil
+        case .failure(.conflict(let holder)):
+            notice = "\(binding.displayTitle) is already used by \(holder.title)."
+        case .failure(.invalidBinding):
+            notice = "A shortcut needs at least one modifier key."
+        }
+    }
+
+    private func detail(for action: HotkeyAction) -> String {
+        switch action {
+        case .drawOverlay: "Arms and disarms drawing over the screen."
+        case .pointerHighlight: "Shows the highlight that follows the pointer."
+        case .pin: "Keeps the drawing on screen while you work in other apps."
+        case .whiteboard: "Opens the opaque whiteboard."
         }
     }
 }
