@@ -11,6 +11,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let onPinToggle: () -> Void
     private let onBoardToggle: () -> Void
     private let onOpenSettings: () -> Void
+    /// Reopens the setup guide at any time; it must not reset the first-run
+    /// flag, which the caller guarantees (S3).
+    private let onOpenOnboarding: () -> Void
     /// Asked when the menu opens, so a checkmark never shows a stale pin state.
     private let isPinned: () -> Bool
     private let pointerItem = NSMenuItem(title: "Pointer Highlight  ⌥⇧M", action: nil, keyEquivalent: "")
@@ -23,6 +26,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         onPinToggle: @escaping () -> Void,
         onBoardToggle: @escaping () -> Void,
         onOpenSettings: @escaping () -> Void,
+        onOpenOnboarding: @escaping () -> Void,
         isPinned: @escaping () -> Bool
     ) {
         self.onDraw = onDraw
@@ -31,6 +35,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         self.onPinToggle = onPinToggle
         self.onBoardToggle = onBoardToggle
         self.onOpenSettings = onOpenSettings
+        self.onOpenOnboarding = onOpenOnboarding
         self.isPinned = isPinned
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
@@ -55,6 +60,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(menuItem(title: "Clear Drawing", action: #selector(clear)))
         menu.addItem(.separator())
+        menu.addItem(menuItem(title: "Setup Guide…", action: #selector(openOnboarding)))
         menu.addItem(menuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(.separator())
         menu.addItem(menuItem(title: "Quit Stare", action: #selector(quit), keyEquivalent: "q"))
@@ -158,5 +164,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     @objc private func togglePin() { onPinToggle() }
     @objc private func toggleBoard() { onBoardToggle() }
     @objc private func openSettings() { onOpenSettings() }
+    @objc private func openOnboarding() { onOpenOnboarding() }
     @objc private func quit() { NSApp.terminate(nil) }
 }

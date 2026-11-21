@@ -1,15 +1,48 @@
 import AppKit
+import StareCore
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let captureService = CaptureService()
     private lazy var overlay = OverlayController(captureService: captureService)
     private var statusBar: StatusBarController?
     private lazy var settings = SettingsWindowController(state: overlay.state)
+    /// One persisted owner of the app-wide preferences blob, read for the
+    /// first-run check and written when the guide is dismissed.
+    private let preferenceStore = UserDefaultsPreferenceStore()
+    /// One permission model for the whole app; the onboarding guide drives it.
+    @MainActor private lazy var screenRecording = ScreenRecordingPermission(
+        client: SystemScreenRecordingClient(captureService: captureService)
+    )
+    @MainActor private lazy var onboarding = OnboardingWindowController(
+        permission: screenRecording,
+        onDismissOverlay: { [weak self] in
+            guard let self else { return }
+            // The guide replaces whatever drawing surface is armed, through
+            // its existing dismiss APIs: the overlay must not fight the
+            // guide for z-order.
+            if self.overlay.isActive {
+                self.overlay.deactivate(restoringFocus: false)
+            }
+            if self.overlay.isBoardActive {
+                self.overlay.toggleBoard()
+            }
+            if self.overlay.isPointerActive {
+                self.overlay.togglePointer()
+            }
+        },
+        onFinish: { [weak self] continueToSettings in
+            self?.markOnboardingComplete()
+            if continueToSettings {
+                self?.settings.show()
+            }
+        }
+    )
     private var hotkey: GlobalHotkey?
     private var pointerHotkey: GlobalHotkey?
     private var pinHotkey: GlobalHotkey?
     private var whiteboardHotkey: GlobalHotkey?
 
+    @MainActor
     func applicationDidFinishLaunching(_ notification: Notification) {
         Diag.reset()
         Diag.log("launched path=\(Bundle.main.bundlePath)")
@@ -21,6 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onPinToggle: { [weak self] in self?.overlay.togglePin() },
             onBoardToggle: { [weak self] in self?.overlay.toggleBoard() },
             onOpenSettings: { [weak self] in self?.settings.show() },
+            onOpenOnboarding: { [weak self] in self?.onboarding.show() },
             isPinned: { [weak self] in self?.overlay.isPinned ?? false }
         )
 
@@ -56,9 +90,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.overlay.toggleBoard()
         }
 
-        // Ask for Screen Recording now, not when the user is mid-explanation.
-        // A missing permission must never surface as a system prompt on the S key.
-        if !captureService.hasPermission {
+        // First run (T5/S3): the setup guide is the one asking for Screen
+        // Recording now, so the launch-time prompt stays out of the way — the
+        // user must not be asked twice. Every later launch keeps exactly
+        // today's behaviour: request the permission at launch if it is
+        // missing, so it never surfaces as a system prompt on the S key.
+        let preferences = AppPreferences(store: preferenceStore)
+        if !preferences.hasCompletedOnboarding {
+            Diag.log("first launch, showing setup guide")
+            onboarding.show()
+        } else if !captureService.hasPermission {
             Diag.log("screen recording missing, asking at launch")
             captureService.requestPermission()
         }
@@ -70,5 +111,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    /// Marks the guide as seen, once. Idempotent, so reopening it from the
+    /// menu never flips the flag (S3); loading through `AppPreferences` also
+    /// carries the legacy pointer migration into the blob on the first save.
+    @MainActor
+    private func markOnboardingComplete() {
+        var preferences = AppPreferences(store: preferenceStore)
+        guard !preferences.hasCompletedOnboarding else { return }
+        preferences.hasCompletedOnboarding = true
+        preferences.save(to: preferenceStore)
+        Diag.log("onboarding marked complete")
     }
 }
