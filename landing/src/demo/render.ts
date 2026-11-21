@@ -1,21 +1,45 @@
 // Draws the vector model onto a 2D canvas, following StareCore's MarkRenderer.
 import { arrowHeadBarbs, normalizedRect } from './geometry'
-import { BADGE_DIAMETER, inkHex, lineWidth, type Mark, opacity } from './model'
+import { BADGE_DIAMETER, inkHex, isTransient, laserOpacity, lineWidth, type Mark, opacity } from './model'
 import type { DrawingSession } from './session'
 
 /** Inks light enough that a white step number would disappear on them. */
 const LIGHT_INKS = new Set(['white', 'yellow'])
 
-export function drawSession(ctx: CanvasRenderingContext2D, session: DrawingSession): void {
-  session.marks.forEach((mark, index) => drawMark(ctx, mark, session.badgeNumber(index)))
-  if (session.current) drawMark(ctx, session.current, nextBadgeNumber(session))
+export interface DrawOptions {
+  /** Clock for fading lasers, in milliseconds. */
+  now?: number
+  /** False leaves transient marks out, as a capture does. */
+  transient?: boolean
+}
+
+export interface Drawable {
+  mark: Mark
+  badge: number | null
+}
+
+/**
+ * The marks to draw, in the app's order: lasers first so they pass under the
+ * other marks, then everything else, then the stroke in progress.
+ */
+export function drawableMarks(session: DrawingSession, options: DrawOptions = {}): Drawable[] {
+  const committed = session.marks.map((mark, index) => ({ mark, badge: session.badgeNumber(index) }))
+  const current = session.current ? [{ mark: session.current, badge: nextBadgeNumber(session) }] : []
+  const all = [...committed, ...current]
+  const lasers = options.transient === false ? [] : all.filter((d) => isTransient(d.mark.tool))
+  return [...lasers, ...all.filter((d) => !isTransient(d.mark.tool))]
+}
+
+export function drawSession(ctx: CanvasRenderingContext2D, session: DrawingSession, options: DrawOptions = {}): void {
+  for (const { mark, badge } of drawableMarks(session, options)) drawMark(ctx, mark, badge, options.now)
 }
 
 function nextBadgeNumber(session: DrawingSession): number {
   return session.marks.filter((m) => m.tool === 'number').length + 1
 }
 
-export function drawMark(ctx: CanvasRenderingContext2D, mark: Mark, badge: number | null): void {
+/** `now` fades a laser; without it a laser draws at full strength (samples). */
+export function drawMark(ctx: CanvasRenderingContext2D, mark: Mark, badge: number | null, now?: number): void {
   const weight = mark.weight ?? 1
   const width = lineWidth(mark.tool) * weight
   const color = inkHex(mark.ink)
@@ -23,7 +47,7 @@ export function drawMark(ctx: CanvasRenderingContext2D, mark: Mark, badge: numbe
   const end = mark.points[mark.points.length - 1]
 
   ctx.save()
-  ctx.globalAlpha = opacity(mark.tool)
+  ctx.globalAlpha = isTransient(mark.tool) && now !== undefined ? laserOpacity(mark, now) : opacity(mark.tool)
   ctx.strokeStyle = color
   ctx.fillStyle = color
   ctx.lineWidth = width
@@ -33,6 +57,7 @@ export function drawMark(ctx: CanvasRenderingContext2D, mark: Mark, badge: numbe
   switch (mark.tool) {
     case 'pen':
     case 'highlighter':
+    case 'laser':
       if (mark.points.length === 1) {
         ctx.beginPath()
         ctx.arc(start.x, start.y, width / 2, 0, Math.PI * 2)

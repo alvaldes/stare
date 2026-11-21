@@ -1,7 +1,7 @@
 // The demo's drawing vocabulary, mirrored from the macOS app (StareCore Tool,
 // Ink and Stroke) so the browser behaves like the real thing.
 
-export type ToolId = 'pen' | 'highlighter' | 'arrow' | 'line' | 'rectangle' | 'ellipse' | 'number'
+export type ToolId = 'pen' | 'highlighter' | 'arrow' | 'line' | 'rectangle' | 'ellipse' | 'number' | 'laser'
 
 export interface ToolInfo {
   id: ToolId
@@ -18,6 +18,7 @@ export const TOOLS: readonly ToolInfo[] = [
   { id: 'rectangle', name: 'Rectangle', key: 'R' },
   { id: 'ellipse', name: 'Ellipse', key: 'O' },
   { id: 'number', name: 'Numbered step', key: 'C' },
+  { id: 'laser', name: 'Laser pointer', key: 'F' },
 ]
 
 export type InkId = 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'white' | 'black'
@@ -56,6 +57,8 @@ export interface Mark {
    * as visible as they are on a real display. Absent means 1.
    */
   weight?: number
+  /** When a transient mark (the laser) started, in milliseconds. */
+  createdAt?: number
 }
 
 /** Stroke width in points, as in the app. */
@@ -78,6 +81,20 @@ export const BADGE_DIAMETER = 26
 export const ARROW_HEAD_LENGTH = 16
 export const ARROW_HEAD_HALF_ANGLE = Math.PI / 8
 export const MINIMUM_SAMPLE_DISTANCE = 0.75
+
+/** Laser marks fade out and never appear in a capture, like the app's. */
+export function isTransient(tool: ToolId): boolean {
+  return tool === 'laser'
+}
+
+/** The app's default laser duration (its preference starts at 2.5 s). */
+export const LASER_LIFETIME_MS = 2500
+
+/** The whole laser stroke fades evenly, measured from its first point. */
+export function laserOpacity(mark: Mark, now: number): number {
+  const age = now - (mark.createdAt ?? now)
+  return Math.max(0, Math.min(1, 1 - age / LASER_LIFETIME_MS))
+}
 
 export function inkHex(id: InkId): string {
   return INKS.find((ink) => ink.id === id)?.hex ?? '#ff3b30'

@@ -21,6 +21,12 @@ const SHAPES: Partial<Record<ToolId, [Point, Point]>> = {
   ellipse: [{ x: 56, y: 32 }, { x: 264, y: 130 }],
 }
 
+/** A quick swoop across the lines, the way you sweep a laser while talking. */
+const LASER_PATH: Point[] = Array.from({ length: 40 }, (_, i) => {
+  const k = i / 39
+  return { x: 44 + k * 232, y: 96 - Math.sin(k * Math.PI * 1.6) * 38 }
+})
+
 const BADGES: Point[] = [{ x: 92, y: 80 }, { x: 160, y: 80 }, { x: 228, y: 80 }]
 
 export function sampleMarks(tool: ToolId, ink: InkId, t: number): Mark[] {
@@ -30,6 +36,11 @@ export function sampleMarks(tool: ToolId, ink: InkId, t: number): Mark[] {
   if (tool === 'pen') {
     const count = Math.max(2, Math.ceil(PEN_PATH.length * progress))
     return [{ tool, ink, points: PEN_PATH.slice(0, count) }]
+  }
+
+  if (tool === 'laser') {
+    const count = Math.max(2, Math.ceil(LASER_PATH.length * progress))
+    return [{ tool, ink, points: LASER_PATH.slice(0, count) }]
   }
 
   if (tool === 'number') {

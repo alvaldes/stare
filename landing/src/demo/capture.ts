@@ -27,7 +27,8 @@ export async function renderCapture(
 
   ctx.drawImage(image, 0, 0, canvas.width, canvas.height)
   ctx.scale(scale, scale)
-  drawSession(ctx, session)
+  // Like MarkCompositor, a capture never includes the laser.
+  drawSession(ctx, session, { transient: false })
 
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Could not encode the capture'))), 'image/png')

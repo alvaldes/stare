@@ -63,7 +63,7 @@ const rows: KeySpec[][] = [
     tool('A'),
     { label: 'S', press: 's', flash: 'S', kind: 'action', icon: ACTION_ICONS.capture, hint: 'Capture' },
     plain('D'),
-    plain('F'),
+    tool('F'),
     plain('G'),
     tool('H'),
     plain('J'),

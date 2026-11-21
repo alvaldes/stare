@@ -61,7 +61,7 @@ function Demo({ elements }: { elements: DemoElements }) {
     ctx.clearRect(0, 0, width, height)
     const scale = width / SCREEN_WIDTH
     ctx.setTransform(scale, 0, 0, scale, 0, 0)
-    drawSession(ctx, session)
+    drawSession(ctx, session, { now: performance.now() })
     wrapper.toggleAttribute('data-drawn', !session.isEmpty)
   }, [])
 
@@ -102,11 +102,15 @@ function Demo({ elements }: { elements: DemoElements }) {
   useEffect(() => {
     let drawing = false
     let frame = 0
+    // Lasers fade without any input, so keep drawing frames until the last
+    // one has gone; otherwise redraw only when the visitor draws.
     const scheduleRedraw = () => {
       if (frame) return
-      frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame((now) => {
         frame = 0
+        const fading = session.prune(now)
         redraw()
+        if (fading) scheduleRedraw()
       })
     }
     const toScreen = (event: PointerEvent): Point => {
@@ -125,19 +129,22 @@ function Demo({ elements }: { elements: DemoElements }) {
       if (event.button !== 0) return
       drawing = true
       canvas.setPointerCapture(event.pointerId)
-      session.begin(toScreen(event), toolRef.current!, inkRef.current!, strokeWeight())
+      session.begin(toScreen(event), toolRef.current!, inkRef.current!, strokeWeight(), performance.now())
       scheduleRedraw()
     }
     const move = (event: PointerEvent) => {
       if (!drawing) return
-      for (const sample of event.getCoalescedEvents?.() ?? [event]) session.extend(toScreen(sample))
+      // Some browsers hand back an empty list (untrusted events); fall back to
+      // the event itself so no sample is lost.
+      const coalesced = event.getCoalescedEvents?.() ?? []
+      for (const sample of coalesced.length > 0 ? coalesced : [event]) session.extend(toScreen(sample))
       scheduleRedraw()
     }
     const up = () => {
       if (!drawing) return
       drawing = false
       session.end()
-      redraw()
+      scheduleRedraw()
     }
 
     canvas.addEventListener('pointerdown', down)

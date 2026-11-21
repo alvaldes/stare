@@ -1,4 +1,4 @@
-import { SCREEN_HEIGHT, SCREEN_WIDTH } from '../demo/model'
+import { SCREEN_HEIGHT, SCREEN_WIDTH, TOOLS } from '../demo/model'
 import { BROWSER_VIEWPORT, DemoScreen, PORTFOLIO_HOST, PORTFOLIO_URL } from './DemoScreen'
 import { CreatorNote } from './CreatorNote'
 import { Kbd } from './ui'
@@ -92,7 +92,12 @@ export function Demo() {
 
       <ul class="mt-6 flex flex-wrap [@media(hover:none)]:hidden gap-x-6 gap-y-3 text-[14px] text-muted" aria-label="Demo shortcuts">
         <li>
-          <Kbd>P</Kbd> <Kbd>H</Kbd> <Kbd>A</Kbd> <Kbd>L</Kbd> <Kbd>R</Kbd> <Kbd>O</Kbd> <Kbd>C</Kbd> pick a tool
+          {TOOLS.map((t) => (
+            <>
+              <Kbd>{t.key}</Kbd>{' '}
+            </>
+          ))}
+          pick a tool
         </li>
         <li>
           <Kbd>1</Kbd>–<Kbd>8</Kbd> change ink

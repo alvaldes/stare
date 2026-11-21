@@ -1,7 +1,7 @@
 import { distance } from './geometry'
-import { type InkId, type Mark, MINIMUM_SAMPLE_DISTANCE, type Point, type ToolId } from './model'
+import { type InkId, isTransient, LASER_LIFETIME_MS, type Mark, MINIMUM_SAMPLE_DISTANCE, type Point, type ToolId } from './model'
 
-const FREEHAND: ReadonlySet<ToolId> = new Set(['pen', 'highlighter'])
+const FREEHAND: ReadonlySet<ToolId> = new Set(['pen', 'highlighter', 'laser'])
 
 /** A shape shorter than this is a stray click, not a mark. */
 const MINIMUM_SHAPE_LENGTH = 2
@@ -18,8 +18,12 @@ export class DrawingSession {
     return this.marks.length === 0 && this.current === null
   }
 
-  begin(point: Point, tool: ToolId, ink: InkId, weight = 1): void {
-    this.current = weight === 1 ? { tool, ink, points: [point] } : { tool, ink, points: [point], weight }
+  /** `now` stamps transient marks so they can fade; other marks ignore it. */
+  begin(point: Point, tool: ToolId, ink: InkId, weight = 1, now = 0): void {
+    const mark: Mark = { tool, ink, points: [point] }
+    if (weight !== 1) mark.weight = weight
+    if (isTransient(tool)) mark.createdAt = now
+    this.current = mark
   }
 
   extend(point: Point): void {
@@ -45,6 +49,17 @@ export class DrawingSession {
       if (!end || distance(start, end) < MINIMUM_SHAPE_LENGTH) return
     }
     this.marks.push(mark)
+  }
+
+  /**
+   * Drops lasers that have faded out. Returns whether any are still fading,
+   * so the caller knows to keep redrawing.
+   */
+  prune(now: number): boolean {
+    const alive = (m: Mark) => !isTransient(m.tool) || now - (m.createdAt ?? now) < LASER_LIFETIME_MS
+    this.marks = this.marks.filter(alive)
+    const fading = (m: Mark | null) => m !== null && isTransient(m.tool)
+    return this.marks.some(fading) || fading(this.current)
   }
 
   undo(): void {
