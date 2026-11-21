@@ -36,7 +36,7 @@ S9. CTA principal: descargar la app. Apunta al último GitHub Release; mientras 
 | T12 | Imagen og:image generada en el build para previews en redes | S6 | inline | hecho | ver L17 |
 | T13 | Auditoría Lighthouse: performance (blur de auroras en móviles) y accesibilidad | S6 | inline | hecho | ver L17 |
 | T14 | Página 404 con el mismo estilo | S6 | inline | hecho | ver L17 |
-| T15 | Demo: sumar text, laser, eraser (T7 de la app) y quizás el editor, cuando la app los tenga | S5 | inline | hecho | b276ce3, 98c69eb, ver L21 |
+| T15 | Demo: sumar text, laser, eraser (T7 de la app) y quizás el editor, cuando la app los tenga | S5 | inline | hecho | b276ce3, 98c69eb, 7a9ccba, ver L21 |
 | T16 | Video corto real de la app (dibujar → S → pegar) cuando la captura esté terminada | S7 | — | esperando app | |
 | T17 | Mergear `feat/landing` a `main` | S1 | — | hecho | eabc9f1 |
 | T18 | Aplicar logo y glifo en la app: reemplazar `pencil.tip` en `StatusBarController.swift` (template image, relleno siempre) | S6 | — | hecho | 6b194b1 |
