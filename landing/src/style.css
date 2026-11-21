@@ -130,6 +130,26 @@
 }
 
 @layer components {
+  /* A soft disc of aurora light: the radial gradient follows the falloff of
+     filter: blur(var(--sigma)) on a disc of diameter --size (full colour to
+     R-2σ, half at R, clear at R+2σ). Baking the blur into the gradient means
+     the drift animation only moves a transform, so the GPU never re-blurs a
+     huge layer on every frame. */
+  .aurora-blob {
+    --r: calc(var(--size) / 2);
+    margin: calc(var(--sigma) * -2);
+    width: calc(var(--size) + var(--sigma) * 4);
+    height: calc(var(--size) + var(--sigma) * 4);
+    background: radial-gradient(
+      closest-side,
+      var(--blob) calc(var(--r) - var(--sigma) * 2),
+      color-mix(in srgb, var(--blob) 84%, transparent) calc(var(--r) - var(--sigma)),
+      color-mix(in srgb, var(--blob) 50%, transparent) var(--r),
+      color-mix(in srgb, var(--blob) 16%, transparent) calc(var(--r) + var(--sigma)),
+      transparent calc(var(--r) + var(--sigma) * 2)
+    );
+  }
+
   /* Dotted grid that fades out toward the edges. */
   .bg-dots {
     background-image: radial-gradient(rgb(28 32 48 / 0.16) 1px, transparent 1.4px);

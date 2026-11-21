@@ -5,9 +5,18 @@ export function Aurora({ tone = 'light' }: { tone?: 'light' | 'dark' }) {
   const strength = tone === 'light' ? 'opacity-60' : 'opacity-45'
   return (
     <div aria-hidden="true" class={`pointer-events-none absolute inset-0 -z-10 overflow-hidden ${strength}`}>
-      <div class="absolute -top-[20%] -left-[10%] size-[55vmax] rounded-full bg-aurora-blue blur-[90px] motion-safe:animate-drift-a" />
-      <div class="absolute top-[5%] -right-[15%] size-[45vmax] rounded-full bg-aurora-lilac blur-[100px] motion-safe:animate-drift-b" />
-      <div class="absolute -bottom-[25%] left-[25%] size-[40vmax] rounded-full bg-aurora-peach blur-[100px] motion-safe:animate-drift-c" />
+      <div
+        class="aurora-blob absolute -top-[20%] -left-[10%] motion-safe:animate-drift-a"
+        style="--size: 55vmax; --sigma: 90px; --blob: var(--color-aurora-blue)"
+      />
+      <div
+        class="aurora-blob absolute top-[5%] -right-[15%] motion-safe:animate-drift-b"
+        style="--size: 45vmax; --sigma: 100px; --blob: var(--color-aurora-lilac)"
+      />
+      <div
+        class="aurora-blob absolute -bottom-[25%] left-[25%] motion-safe:animate-drift-c"
+        style="--size: 40vmax; --sigma: 100px; --blob: var(--color-aurora-peach)"
+      />
     </div>
   )
 }
