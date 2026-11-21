@@ -589,6 +589,14 @@ final class OverlayController {
         return MainActor.assumeIsolated { preferences.whiteboard }
     }
 
+    /// Whether the app is currently in dark appearance (T13/S8), read through
+    /// `NSApp.effectiveAppearance` and `bestMatch`. The fallback is light: when
+    /// the current appearance best-matches neither (aqua, darkAqua) the board
+    /// stays white — the same default the white choice implies.
+    private func isDarkAppearance() -> Bool {
+        NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+    }
+
     private func screen(for displayID: CGDirectDisplayID) -> NSScreen? {
         let key = NSDeviceDescriptionKey("NSScreenNumber")
         return NSScreen.screens.first { screen in
@@ -766,8 +774,12 @@ final class OverlayController {
         // A fresh board starts from the persisted whiteboard defaults: the
         // background is the user's, and the extra pages are created the same way
         // the toolbar's › does, so each one inherits that background.
+        // The System choice (T13/S8) is resolved at board-open time, from the
+        // app's effective appearance; the board is cached per display until it
+        // closes, so a system theme change later never repaints an already open
+        // board — it applies to the next board.
         let defaults = whiteboardDefaults()
-        let fresh = WhiteboardPages(background: defaults.background)
+        let fresh = WhiteboardPages(background: defaults.resolvedBackground(isDarkAppearance: isDarkAppearance()))
         for _ in 1..<max(defaults.pagesOnOpen, 1) {
             _ = fresh.selectNext()
         }

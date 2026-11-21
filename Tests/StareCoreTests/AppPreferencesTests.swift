@@ -235,6 +235,25 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertEqual(prefs.updates, UpdateSchedulePreference.standard)
     }
 
+    // MARK: Legacy whiteboard blob compatibility (T13/S8)
+
+    /// A whole preferences blob written before the System choice existed must
+    /// load with the user's whiteboard background preserved — a stored black
+    /// board never resets to white.
+    func testLegacyWhiteboardBackgroundSurvivesThroughAppPreferences() {
+        let store = InMemoryPreferenceStore()
+        store.set(
+            Data(#"{"whiteboard":{"background":"black","pagesOnOpen":4}}"#.utf8),
+            forKey: AppPreferences.storageKey
+        )
+
+        let prefs = AppPreferences(store: store)
+        XCTAssertEqual(prefs.whiteboard.background, WhiteboardBackgroundChoice.black)
+        XCTAssertEqual(prefs.whiteboard.pagesOnOpen, 4)
+        XCTAssertEqual(prefs.whiteboard.resolvedBackground(isDarkAppearance: false), .black)
+        XCTAssertEqual(prefs.whiteboard.resolvedBackground(isDarkAppearance: true), .black)
+    }
+
     func testCorruptSubFieldFallsBackToStandardAndKeepsTheRestOfTheBlob() {
         let store = InMemoryPreferenceStore()
         // "capture" is undecodable garbage; the pointer and the other new

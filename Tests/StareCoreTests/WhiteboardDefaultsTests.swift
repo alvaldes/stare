@@ -3,11 +3,17 @@ import XCTest
 
 @testable import StareCore
 
-/// Tests for the persisted whiteboard defaults (T3/S6): today a whiteboard
-/// opens with one white page, so `.standard` must reproduce exactly that, and
-/// `pagesOnOpen` must clamp to 1...10 on every path — init, decoding and
+/// Tests for the persisted whiteboard defaults (T3/S6, T13/S8): a whiteboard
+/// opens with the user's background choice — white, black, or System, which
+/// resolves white in light mode and black in dark mode at board-open time —
+/// and `pagesOnOpen` must clamp to 1...10 on every path — init, decoding and
 /// assignment — because a blob or a malformed UI value must never yield zero
 /// or a runaway page count.
+///
+/// Backward compatibility is part of the contract: blobs written before the
+/// System choice existed store `"white"|"black"` under the same `background`
+/// key, and they must decode into the same choice — a stored black board
+/// never resets to white.
 
 private func decode(_ json: String) throws -> WhiteboardDefaults {
     try JSONDecoder().decode(WhiteboardDefaults.self, from: Data(json.utf8))
@@ -66,6 +72,67 @@ final class WhiteboardDefaultsTests: XCTestCase {
         let decoded = try decode(#"{"background":"sepia","pagesOnOpen":4}"#)
         XCTAssertEqual(decoded.background, .white)
         XCTAssertEqual(decoded.pagesOnOpen, 4)
+    }
+
+    // MARK: Background choice resolution (T13/S8)
+
+    func testStandardResolvesWhiteForBothAppearances() {
+        let standard = WhiteboardDefaults.standard
+        XCTAssertEqual(standard.background, WhiteboardBackgroundChoice.white)
+        XCTAssertEqual(standard.resolvedBackground(isDarkAppearance: false), .white)
+        XCTAssertEqual(standard.resolvedBackground(isDarkAppearance: true), .white)
+    }
+
+    func testWhiteChoiceResolvesWhiteForBothAppearances() {
+        let defaults = WhiteboardDefaults(background: .white)
+        XCTAssertEqual(defaults.resolvedBackground(isDarkAppearance: false), .white)
+        XCTAssertEqual(defaults.resolvedBackground(isDarkAppearance: true), .white)
+    }
+
+    func testBlackChoiceResolvesBlackForBothAppearances() {
+        let defaults = WhiteboardDefaults(background: .black)
+        XCTAssertEqual(defaults.resolvedBackground(isDarkAppearance: false), .black)
+        XCTAssertEqual(defaults.resolvedBackground(isDarkAppearance: true), .black)
+    }
+
+    func testSystemChoiceResolvesByAppearance() {
+        let defaults = WhiteboardDefaults(background: .system)
+        XCTAssertEqual(defaults.resolvedBackground(isDarkAppearance: false), .white)
+        XCTAssertEqual(defaults.resolvedBackground(isDarkAppearance: true), .black)
+    }
+
+    func testSystemChoiceDetailStatesWhatItResolvesTo() {
+        let detail = WhiteboardBackgroundChoice.system.detail
+        XCTAssertTrue(detail.contains("light"), "the System detail must say what light mode resolves to")
+        XCTAssertTrue(detail.contains("dark"), "the System detail must say what dark mode resolves to")
+    }
+
+    // MARK: Legacy blob compatibility (T13/S8)
+
+    /// Old blobs store `"white"|"black"` under the same `background` key; the
+    /// new choice type must decode straight from them, so a user's existing
+    /// black board stays black both in the stored choice and in resolution.
+    func testLegacyBlackBlobDecodesIntoBlackChoiceAndStaysBlack() throws {
+        let decoded = try decode(#"{"background":"black","pagesOnOpen":3}"#)
+        XCTAssertEqual(decoded.background, WhiteboardBackgroundChoice.black)
+        XCTAssertEqual(decoded.pagesOnOpen, 3)
+        XCTAssertEqual(decoded.resolvedBackground(isDarkAppearance: false), .black)
+        XCTAssertEqual(decoded.resolvedBackground(isDarkAppearance: true), .black)
+    }
+
+    func testLegacyWhiteBlobDecodesIntoWhiteChoice() throws {
+        let decoded = try decode(#"{"background":"white"}"#)
+        XCTAssertEqual(decoded.background, WhiteboardBackgroundChoice.white)
+    }
+
+    /// The new shape keeps the `background` raw string, now able to carry
+    /// `"system"`; encoding and decoding round-trip the choice untouched.
+    func testSystemChoiceRoundTripsThroughJSON() throws {
+        var saved = WhiteboardDefaults.standard
+        saved.background = .system
+        saved.pagesOnOpen = 2
+        let data = try JSONEncoder().encode(saved)
+        XCTAssertEqual(try JSONDecoder().decode(WhiteboardDefaults.self, from: data), saved)
     }
 
     // MARK: Background round trip

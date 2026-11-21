@@ -977,10 +977,12 @@ private struct WhiteboardPane: View {
             SettingsCard(title: "Background", symbol: "square.fill") {
                 SettingRow(
                     title: "New pages start",
-                    detail: "⌘B still flips the page you are on, at any time.",
+                    // The detail follows the selection: the System entry states
+                    // what it resolves to in either appearance (T13/S8).
+                    detail: model.whiteboard.background.detail + " ⌘B still flips the page you are on, at any time.",
                     content: Picker("", selection: $model.whiteboard.background) {
-                        ForEach(BoardBackground.allCases, id: \.self) { background in
-                            Text(background.displayName).tag(background)
+                        ForEach(WhiteboardBackgroundChoice.allCases, id: \.self) { choice in
+                            Text(choice.title).tag(choice)
                         }
                     }
                     .labelsHidden()

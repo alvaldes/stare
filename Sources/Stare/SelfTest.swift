@@ -1108,10 +1108,38 @@ enum SelfTest {
         let whiteboardPngs = ["whiteboard"].flatMap { area in
             ["light", "dark"].map { "/tmp/stare-settings-\(area)-\($0).png" }
         }
+
+        // --- Whiteboard pane: the System choice (T13/S8) resolves the page
+        // background from the app's appearance at board-open time. Forcing the
+        // app appearance is exactly what the controller reads
+        // (NSApp.effectiveAppearance). Each appearance opens a fresh board on a
+        // fresh controller — an already open board never repaints on a theme
+        // change, so the resolution is proven on boards created while that
+        // appearance is active.
+        model.whiteboard = WhiteboardDefaults(background: .system, pagesOnOpen: 1)
+        func systemBoardBackground(whenAppearanceIs appearanceName: NSAppearance.Name) -> String {
+            NSApp.appearance = NSAppearance(named: appearanceName)
+            let appearanceController = OverlayController(
+                captureService: CaptureService(),
+                liveFrames: LiveFrameSource(),
+                preferences: model
+            )
+            appearanceController.toggleBoard()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+            let background = appearanceController.activeBoard?.pages.first?.background.rawValue ?? "none"
+            appearanceController.toggleBoard()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            NSApp.appearance = nil
+            return background
+        }
+        let systemLight = systemBoardBackground(whenAppearanceIs: .aqua)
+        let systemDark = systemBoardBackground(whenAppearanceIs: .darkAqua)
+
         let whiteboardRendered = whiteboardPngs.filter { FileManager.default.fileExists(atPath: $0) }.count
         report.append(
-            "whiteboard pane opened=\(boardOpened) pngs=\(whiteboardRendered)/\(whiteboardPngs.count) "
-                + "result=\(boardOpened && whiteboardRendered == whiteboardPngs.count ? "PASS" : "FAIL")"
+            "whiteboard pane opened=\(boardOpened) system-light=\(systemLight) system-dark=\(systemDark) "
+                + "pngs=\(whiteboardRendered)/\(whiteboardPngs.count) "
+                + "result=\(boardOpened && systemLight == "white" && systemDark == "black" && whiteboardRendered == whiteboardPngs.count ? "PASS" : "FAIL")"
         )
         return report
     }
