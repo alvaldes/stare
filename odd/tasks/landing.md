@@ -36,10 +36,10 @@ S9. CTA principal: descargar la app. Apunta al último GitHub Release; mientras 
 | T12 | Imagen og:image generada en el build para previews en redes | S6 | inline | pendiente | |
 | T13 | Auditoría Lighthouse: performance (blur de auroras en móviles) y accesibilidad | S6 | inline | pendiente | |
 | T14 | Página 404 con el mismo estilo | S6 | inline | pendiente | |
-| T15 | Demo: sumar text, laser, eraser (T7 de la app) y quizás el editor, cuando la app los tenga | S5 | inline | esperando app | |
+| T15 | Demo: sumar text, laser, eraser (T7 de la app) y quizás el editor, cuando la app los tenga | S5 | inline | desbloqueado: la app ya tiene text, laser y eraser | |
 | T16 | Video corto real de la app (dibujar → S → pegar) cuando la captura esté terminada | S7 | — | esperando app | |
-| T17 | Mergear `feat/landing` a `main` cuando T4/T6 de la app se integren | S1 | — | esperando app | |
-| T18 | Aplicar logo y glifo en la app: reemplazar `pencil.tip` en `StatusBarController.swift` (template image, relleno siempre) | S6 | — | esperando app | |
+| T17 | Mergear `feat/landing` a `main` | S1 | — | hecho | 115addb |
+| T18 | Aplicar logo y glifo en la app: reemplazar `pencil.tip` en `StatusBarController.swift` (template image, relleno siempre) | S6 | — | hecho | 8754241 |
 
 Ruta: todo inline; T2 y T3 comparten tokens visuales y la toolbar, así que no son unidades independientes para escritores paralelos.
 
@@ -73,3 +73,4 @@ L24 (2026-11-20): "crees que hay suficiente espacio entre el hero y la primera s
 L25 (2026-11-20): "el \"Requires macOS 26 or later.\" no se anima en la carga" → blur-in a 900 ms, cerrando la secuencia del hero.
 L26 (2026-11-20): "la landing no muestra es el pointer highlight" → opción elegida "En esta página": sección "Presenting? Point at it"; ⌥⇧M (event.code KeyM, porque en Mac el carácter es Â) o el botón activan un anillo sobre el cursor real en toda la página. Geometría portada de OverlayView.drawCursorFrame (banda 26% del radio al 55%, bordes 95% de 2 pt, glow hasta 1.9×, squircle 0.62, fade a 25% tras 1.2 s + 0.8 s; pointer.ts, 4 tests). Controles iguales a Settings: tamaño 32–80, círculo/squircle, glow, fade, tinta. Centro del glow recortado para quedar transparente como en la app. Verificado: sigue al cursor, click-through, toggle, fade 0.25. En touch se explica que necesita mouse.
 L27 (2026-11-20): "la seccion \"Out of your way until you need it\" con sus 4 card se me queda poco y no se si sobre" → 3 de 4 cards repetían Three keys / Pointer / FAQ. Aprobado ("si"): sección eliminada; garantías (menu bar, sin cuenta, capturas locales, open source) como fila dentro del bloque de descarga. Pendiente que "Open source" sea cierto (T10).
+L13 (2026-11-21, cierre de la landing): el trabajo de la rama se commiteó y se mergeó a `main` con `115addb`; verificado en `main` (no en el worktree): `pnpm test` 33/33 y `pnpm build` prerenderiza `dist/client/index.html`. El worktree `stare-wt-landing` se eliminó y la rama `feat/landing` queda mergeada. Lo que falta de la landing NO bloquea a la app: deploy del Worker (T11), licencia y repo público (T10), `og:image` (T12), Lighthouse (T13), 404 (T14), demo con text/laser/eraser (T15, ya desbloqueado), video real (T16).
