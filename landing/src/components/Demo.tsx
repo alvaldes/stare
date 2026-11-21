@@ -57,7 +57,7 @@ function LivePage() {
  */
 export function Demo() {
   return (
-    <section id="try" aria-labelledby="try-title" class="relative mx-auto max-w-[1240px] scroll-mt-20 px-4 pt-6 pb-24 md:px-8">
+    <section id="try" aria-labelledby="try-title" class="relative mx-auto max-w-[1240px] scroll-mt-20 px-4 pt-14 pb-24 md:px-8">
       <div data-reveal class="mb-8 max-w-[38rem]">
         <h2 id="try-title" class="text-[clamp(1.75rem,3.2vw,2.5rem)] leading-[1.1] font-bold tracking-[-0.02em]">
           Try it on this pretend Mac

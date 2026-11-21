@@ -46,7 +46,7 @@ const headline = ['Draw', 'on', 'your', 'screen,', 'then', 'paste', 'it', 'anywh
 
 export function Hero() {
   return (
-    <section class={`${container} relative flex items-center gap-10 pt-14 pb-12 md:pt-20 md:pb-16`}>
+    <section class={`${container} relative flex items-center gap-10 pt-14 pb-12 md:pt-20 md:pb-24`}>
       <div class="min-w-0 flex-1">
       <h1
         aria-label={headline.join(' ')}
