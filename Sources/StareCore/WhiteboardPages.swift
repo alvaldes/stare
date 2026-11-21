@@ -115,6 +115,53 @@ public final class WhiteboardPages {
         return true
     }
 
+    /// Moves to the page at `index`. A valid index is always accepted (even the
+    /// already-presented one) and `currentIndex` then names it; anything out of
+    /// range is refused and the board is left exactly as it was. Returns
+    /// whether the board presents the requested page.
+    @discardableResult
+    public func select(index: Int) -> Bool {
+        guard index >= 0, index < pages.count else { return false }
+        currentIndex = index
+        return true
+    }
+
+    /// ⌘⌫ — deletes the current page. The board can never go empty, so with a
+    /// single page the delete is refused and nothing changes; callers disable
+    /// the affordance for that case. Returns whether a page was deleted.
+    @discardableResult
+    public func deleteCurrentPage() -> Bool {
+        guard pages.count > 1 else { return false }
+        pages.remove(at: currentIndex)
+        // Deleting the last page pulls the index back into range; deleting any
+        // other page hands the slot to the page that followed it.
+        if currentIndex == pages.count { currentIndex -= 1 }
+        return true
+    }
+
+    /// ⌥← — swaps the current page with the one before it. At the first page
+    /// there is nothing to the left, so it is refused and nothing changes.
+    /// Returns whether the page moved. The page itself (marks, background,
+    /// offset, identity) stays exactly what it was and remains current.
+    @discardableResult
+    public func moveCurrentPageLeft() -> Bool {
+        guard currentIndex > 0 else { return false }
+        pages.swapAt(currentIndex, currentIndex - 1)
+        currentIndex -= 1
+        return true
+    }
+
+    /// ⌥→ — swaps the current page with the one after it. At the last page
+    /// there is nothing to the right, so it is refused. Returns whether the
+    /// page moved.
+    @discardableResult
+    public func moveCurrentPageRight() -> Bool {
+        guard currentIndex < pages.count - 1 else { return false }
+        pages.swapAt(currentIndex, currentIndex + 1)
+        currentIndex += 1
+        return true
+    }
+
     /// ⌘B — flips only the current page between white and black.
     public func toggleBackground() {
         pages[currentIndex].background = pages[currentIndex].background.toggled

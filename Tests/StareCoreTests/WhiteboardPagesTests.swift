@@ -107,6 +107,156 @@ final class WhiteboardPagesTests: XCTestCase {
         XCTAssertEqual(board.currentPage.offset, CGSize(width: 60, height: 40), "each page keeps its own pan offset")
     }
 
+    // T12/S9: deleting the current page drops only that page; the others and
+    // their marks stay.
+    func testDeleteCurrentPageDropsOnlyThatPageAndKeepsTheRest() {
+        let board = WhiteboardPages()
+        let page1 = drawnSession()
+        board.adopt(page1)
+        board.selectNext()
+        let page2 = drawnSession()
+        board.adopt(page2)
+
+        XCTAssertTrue(board.deleteCurrentPage())
+        XCTAssertEqual(board.count, 1)
+        XCTAssertEqual(board.currentIndex, 0)
+        XCTAssertEqual(board.pages[0].session, page1, "the other page keeps its marks")
+        XCTAssertFalse(board.pages[0].session.strokes.isEmpty)
+    }
+
+    // T12/S9: deleting the page the view is on hands the next page the slot,
+    // and deleting the last page moves the current index back into range.
+    func testDeleteCurrentPageKeepsTheIndexInRange() {
+        let board = WhiteboardPages()
+        let page1 = drawnSession()
+        board.adopt(page1)
+        board.selectNext()
+        let page2 = drawnSession()
+        board.adopt(page2)
+
+        // Current is the last page: after the delete the index must land on the
+        // new last page, never out of range.
+        XCTAssertTrue(board.deleteCurrentPage())
+        XCTAssertEqual(board.count, 1)
+        XCTAssertEqual(board.currentIndex, 0)
+        XCTAssertEqual(board.pages[0].session, page1)
+
+        // Deleting from the middle keeps the following page in the same slot.
+        board.selectNext()
+        let page2b = drawnSession()
+        board.adopt(page2b)
+        board.selectNext()
+        let page3 = drawnSession()
+        board.adopt(page3)
+        XCTAssertEqual(board.count, 3)
+        XCTAssertEqual(board.currentIndex, 2)
+        XCTAssertTrue(board.select(index: 1))
+        XCTAssertTrue(board.deleteCurrentPage())
+        XCTAssertEqual(board.count, 2)
+        XCTAssertEqual(board.currentIndex, 1)
+        XCTAssertEqual(board.pages[1].session, page3, "the page after the deleted one takes its slot")
+        XCTAssertEqual(board.pages[0].session, page1)
+    }
+
+    // T12/S9: the board can never go empty — with one page the delete is
+    // refused, and the page keeps everything it had.
+    func testDeleteIsRefusedWhenOnlyOnePageRemains() {
+        let board = WhiteboardPages()
+        let only = drawnSession()
+        board.adopt(only)
+
+        XCTAssertFalse(board.deleteCurrentPage())
+        XCTAssertEqual(board.count, 1)
+        XCTAssertEqual(board.currentIndex, 0)
+        XCTAssertEqual(board.pages[0].session, only)
+        XCTAssertEqual(board.pages[0].background, .white)
+    }
+
+    // T12/S9: moving the current page reorders the array, keeps the same page
+    // current, and per-page state (background, offset, marks, identity) moves
+    // with it. The pages have distinct backgrounds and offsets so the test can
+    // actually tell them apart after the swap.
+    func testMoveLeftAndRightFollowTheCurrentPage() {
+        let board = WhiteboardPages()
+        board.setOffset(CGSize(width: 30, height: 20))
+        let page1 = drawnSession()
+        board.adopt(page1) // page 1: white, offset (30, 20)
+
+        board.selectNext()
+        board.toggleBackground() // page 2: white -> black
+        board.setOffset(CGSize(width: 5, height: 5))
+        let page2 = drawnSession()
+        board.adopt(page2)
+
+        board.selectNext()
+        board.toggleBackground() // page 3: black -> white
+        board.setOffset(CGSize(width: 70, height: 40))
+        let page3 = drawnSession()
+        board.adopt(page3)
+
+        // Move page 3 right at the last position: refused, nothing changes.
+        XCTAssertFalse(board.moveCurrentPageRight())
+        XCTAssertEqual(board.count, 3)
+        XCTAssertEqual(board.currentIndex, 2)
+
+        // Move page 3 left: it swaps with page 2 and stays current, carrying
+        // its own background, offset and marks.
+        XCTAssertTrue(board.moveCurrentPageLeft())
+        XCTAssertEqual(board.currentIndex, 1)
+        XCTAssertEqual(board.count, 3)
+        XCTAssertEqual(board.currentPage.session, page3, "the moved page is still the current one")
+        XCTAssertEqual(board.currentPage.background, .white, "the moved page keeps its own background")
+        XCTAssertEqual(board.currentPage.offset, CGSize(width: 70, height: 40), "the moved page keeps its own offset")
+        XCTAssertEqual(board.pages[0].session, page1)
+        XCTAssertEqual(board.pages[0].background, .white)
+        XCTAssertEqual(board.pages[0].offset, CGSize(width: 30, height: 20))
+        XCTAssertEqual(board.pages[2].session, page2, "the neighbour took the old slot")
+        XCTAssertEqual(board.pages[2].background, .black)
+        XCTAssertEqual(board.pages[2].offset, CGSize(width: 5, height: 5))
+
+        // Move page 3 (current) left again onto the first position.
+        XCTAssertTrue(board.moveCurrentPageLeft())
+        XCTAssertEqual(board.currentIndex, 0)
+        XCTAssertEqual(board.pages[0].session, page3)
+        XCTAssertEqual(board.pages[0].offset, CGSize(width: 70, height: 40), "the offset travels with the page")
+        XCTAssertEqual(board.pages[1].session, page1)
+
+        // Move left at the first position: refused.
+        XCTAssertFalse(board.moveCurrentPageLeft())
+        XCTAssertEqual(board.currentIndex, 0)
+
+        // Move right twice lands page 3 at the end again, marks intact.
+        XCTAssertTrue(board.moveCurrentPageRight())
+        XCTAssertTrue(board.moveCurrentPageRight())
+        XCTAssertEqual(board.currentIndex, 2)
+        XCTAssertEqual(board.pages[2].session, page3)
+        XCTAssertEqual(board.pages[2].session.strokes.map(\.id), page3.strokes.map(\.id), "mark identity survives the reorder")
+    }
+
+    // T12/S9: selecting by index moves the presentation and refuses anything
+    // out of range, so `currentIndex` can never leave the array.
+    func testSelectIndexMovesAndRefusesOutOfRange() {
+        let board = WhiteboardPages()
+        board.adopt(drawnSession())
+        board.selectNext()
+        let page2 = drawnSession()
+        board.adopt(page2)
+        board.selectNext()
+        let page3 = drawnSession()
+        board.adopt(page3)
+
+        XCTAssertTrue(board.select(index: 0))
+        XCTAssertEqual(board.currentIndex, 0)
+        XCTAssertTrue(board.select(index: 2))
+        XCTAssertEqual(board.currentPage.session, page3)
+        XCTAssertTrue(board.select(index: 1))
+        XCTAssertEqual(board.currentIndex, 1)
+
+        XCTAssertFalse(board.select(index: -1))
+        XCTAssertFalse(board.select(index: 3))
+        XCTAssertEqual(board.currentIndex, 1, "a refused select leaves the board alone")
+    }
+
     func testAdoptReplacesOnlyTheCurrentPageSession() {
         let board = WhiteboardPages()
         board.adopt(drawnSession())

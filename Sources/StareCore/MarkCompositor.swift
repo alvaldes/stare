@@ -9,10 +9,25 @@ import Foundation
 public enum MarkCompositor {
     /// Marks live in overlay space: top-left origin, points. `scale` is image
     /// pixels per point.
+    ///
+    /// `blurBase` (T12/S9) is what blur marks crop from instead of the base —
+    /// the board capture passes the live frame there, because a whiteboard's
+    /// base is the solid page colour and a blur mark has to show the real
+    /// pixels the board's view blurs, not the page colour. It is sampled at
+    /// its own scale (a live frame arrives downscaled), and when it is absent
+    /// the drawing overlay's behaviour is unchanged: blur crops the base.
+    ///
+    /// `offset` (T12 fix) is the whiteboard page's pan: marks stored in page
+    /// space are placed at `pagePoint - offset`, which is where the board's
+    /// view shows them (`viewPoint = pagePoint - offset`), so a panned page's
+    /// capture is what the board shows. Zero leaves the marks where they were
+    /// drawn, exactly as the drawing overlay composes them.
     public static func composite(
         marks: [Stroke],
         over base: CGImage,
-        scale: CGFloat = 1
+        scale: CGFloat = 1,
+        blurBase: CGImage? = nil,
+        offset: CGSize = .zero
     ) -> CGImage? {
         let width = base.width
         let height = base.height
@@ -39,8 +54,26 @@ public enum MarkCompositor {
         context.setLineCap(.round)
         context.setLineJoin(.round)
 
-        for mark in marks where !mark.tool.isTransient {
-            draw(mark, in: context, base: base, scale: scale)
+        // The whiteboard stores marks in page space; the capture (and the
+        // frame a blur mark samples) live in view space, where the board shows
+        // them at pagePoint - offset. The mark's identity, ink, text and
+        // rotation are kept; only the geometry moves, and the rotation anchor
+        // (the centre of the bounds) moves with it consistently.
+        let placed: [Stroke]
+        if offset == .zero {
+            placed = marks
+        } else {
+            placed = marks.map { mark in
+                var shifted = mark
+                shifted.points = mark.points.map { point in
+                    CGPoint(x: point.x - offset.width, y: point.y - offset.height)
+                }
+                return shifted
+            }
+        }
+
+        for mark in placed where !mark.tool.isTransient {
+            draw(mark, in: context, base: base, scale: scale, blurBase: blurBase)
         }
 
         context.restoreGState()
@@ -51,7 +84,8 @@ public enum MarkCompositor {
         _ stroke: Stroke,
         in context: CGContext,
         base: CGImage,
-        scale: CGFloat
+        scale: CGFloat,
+        blurBase: CGImage?
     ) {
         switch stroke.tool {
         case .text:
@@ -67,7 +101,7 @@ public enum MarkCompositor {
             return
         case .blur:
             drawWithRotation(stroke, in: context) { context in
-                drawBlur(stroke, in: context, base: base, scale: scale)
+                drawBlur(stroke, in: context, base: base, scale: scale, blurBase: blurBase)
             }
             return
         default:
@@ -105,22 +139,30 @@ public enum MarkCompositor {
         _ stroke: Stroke,
         in context: CGContext,
         base: CGImage,
-        scale: CGFloat
+        scale: CGFloat,
+        blurBase: CGImage? = nil
     ) {
         guard let first = stroke.points.first, let last = stroke.points.last else { return }
         let rect = PathBuilder.normalizedRect(from: first, to: last)
         guard rect.width > 0, rect.height > 0 else { return }
 
+        // With a blur base (the board's live frame), crop from it at its own
+        // scale: the frame is what the board's view blurs, and it arrives
+        // downscaled relative to the display-sized base.
+        let source = blurBase ?? base
+        let sourceScale = blurBase != nil
+            ? scale * CGFloat(source.width) / CGFloat(base.width)
+            : scale
         let pixelRect = CGRect(
-            x: rect.minX * scale,
-            y: CGFloat(base.height) - rect.maxY * scale,
-            width: rect.width * scale,
-            height: rect.height * scale
+            x: rect.minX * sourceScale,
+            y: CGFloat(source.height) - rect.maxY * sourceScale,
+            width: rect.width * sourceScale,
+            height: rect.height * sourceScale
         )
         guard let blurred = BlurEffect.crop(
-            base,
+            source,
             pixelRect: pixelRect,
-            radius: BlurEffect.defaultRadius * scale
+            radius: BlurEffect.defaultRadius * sourceScale
         ) else { return }
 
         // The crop rectangle never rotates: the pixels always come from the

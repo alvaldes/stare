@@ -173,6 +173,189 @@ final class MarkCompositorTests: XCTestCase {
         XCTAssertEqual(pixel(result!, x: 60, y: 90).r, pixel(baseImage, x: 60, y: 90).r, "below the rectangle")
     }
 
+    // T12/S9: a whiteboard capture composites blur marks over the live frame
+    // (the pixels the board's view blurs), not over the page colour base.
+    func testBoardBlurBaseShowsRealPixelsInsteadOfThePageColour() {
+        // Blur base: black left half, white right half, boundary at x = 50.
+        let blurBase = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        blurBase.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1))
+        blurBase.fill(CGRect(x: 0, y: 0, width: 50, height: height))
+        blurBase.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+        blurBase.fill(CGRect(x: 50, y: 0, width: 50, height: height))
+        let frame = blurBase.makeImage()!
+
+        let mark = Stroke(
+            tool: .blur,
+            ink: .red,
+            points: [CGPoint(x: 35, y: 30), CGPoint(x: 65, y: 70)]
+        )
+
+        let result = MarkCompositor.composite(marks: [mark], over: whiteBase(), blurBase: frame)
+        XCTAssertNotNil(result)
+
+        // The centre of the patch straddles the frame's black/white boundary:
+        // a real blur mixes, the page colour (solid white) would read 255.
+        let centre = pixel(result!, x: 50, y: 50)
+        XCTAssertGreaterThan(centre.r, 40, "the blur must mix in the frame's black half")
+        XCTAssertLessThan(centre.r, 215, "the blur must mix in the frame's white half")
+    }
+
+    // T12/S9: the live frame arrives downscaled (half the display pixels), so
+    // the blur base must be sampled at its own scale, not the base's.
+    func testDownscaledBlurBaseIsSampledAtItsOwnScale() {
+        // Base 200x200 white; frame 100x100 with the boundary at x = 50.
+        let base = CGContext(
+            data: nil,
+            width: 200,
+            height: 200,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        base.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+        base.fill(CGRect(x: 0, y: 0, width: 200, height: 200))
+        let baseImage = base.makeImage()!
+
+        let blurBase = CGContext(
+            data: nil,
+            width: 100,
+            height: 100,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        blurBase.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1))
+        blurBase.fill(CGRect(x: 0, y: 0, width: 50, height: 100))
+        blurBase.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+        blurBase.fill(CGRect(x: 50, y: 0, width: 50, height: 100))
+        let frame = blurBase.makeImage()!
+
+        let mark = Stroke(
+            tool: .blur,
+            ink: .red,
+            points: [CGPoint(x: 35, y: 30), CGPoint(x: 65, y: 70)]
+        )
+
+        let result = MarkCompositor.composite(marks: [mark], over: baseImage, scale: 2, blurBase: frame)
+        XCTAssertNotNil(result)
+
+        // In pixels of the result the patch spans 70..130 and the frame's
+        // boundary sits at 100: a real blur mixes both halves there.
+        let centre = pixel(result!, x: 100, y: 100)
+        XCTAssertGreaterThan(centre.r, 40, "the downscaled frame must be sampled at its own scale")
+        XCTAssertLessThan(centre.r, 215, "the downscaled frame must be sampled at its own scale")
+    }
+
+    // T12 fix: the board capture composes page-space marks translated by the
+    // page's pan, so a panned page copies what the board shows: a mark drawn
+    // at a page point lands at pagePoint - offset in the composed image.
+    func testOffsetPlacesPageMarksAtPageMinusOffset() {
+        let mark = Stroke(
+            tool: .pen,
+            ink: .red,
+            points: [CGPoint(x: 40, y: 40), CGPoint(x: 60, y: 60)]
+        )
+
+        let result = MarkCompositor.composite(
+            marks: [mark],
+            over: whiteBase(),
+            scale: 2,
+            offset: CGSize(width: 10, height: 20)
+        )
+        XCTAssertNotNil(result)
+
+        // Page point (40,40) → view point (30,20) → pixel (60,40) at 2x.
+        XCTAssertTrue(isReddish(pixel(result!, x: 60, y: 40)), "the mark lands where the board shows it")
+        // The unpanned location is empty: the pan actually moved the ink.
+        XCTAssertFalse(isReddish(pixel(result!, x: 80, y: 80)), "the mark must not stay at its page point")
+    }
+
+    // T12 fix: an offset of zero composes exactly like before the pan support
+    // existed — the mark is at its own points.
+    func testZeroOffsetLeavesMarksWhereTheyWereDrawn() {
+        let mark = Stroke(
+            tool: .pen,
+            ink: .red,
+            points: [CGPoint(x: 10, y: 10), CGPoint(x: 30, y: 10)]
+        )
+
+        let result = MarkCompositor.composite(
+            marks: [mark],
+            over: whiteBase(),
+            scale: 2,
+            offset: .zero
+        )
+        XCTAssertNotNil(result)
+
+        XCTAssertTrue(isReddish(pixel(result!, x: 20, y: 20)), "the unpanned case is unchanged")
+        XCTAssertTrue(isWhitesh(pixel(result!, x: 10, y: 10)), "nothing is left behind at 1x")
+    }
+
+    // T12 fix: a blur mark on a panned page must sample the live frame at the
+    // panned (view-space) rectangle, not at the page-space one.
+    func testOffsetBlurSamplesTheFrameAtThePannedLocation() {
+        // Base 200x200 white (scale 2); frame 100x100, black left of x = 50.
+        let base = CGContext(
+            data: nil,
+            width: 200,
+            height: 200,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        base.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+        base.fill(CGRect(x: 0, y: 0, width: 200, height: 200))
+        let baseImage = base.makeImage()!
+
+        let frame = CGContext(
+            data: nil,
+            width: 100,
+            height: 100,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        frame.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1))
+        frame.fill(CGRect(x: 0, y: 0, width: 50, height: 100))
+        frame.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+        frame.fill(CGRect(x: 50, y: 0, width: 50, height: 100))
+        let frameImage = frame.makeImage()!
+
+        let mark = Stroke(
+            tool: .blur,
+            ink: .red,
+            points: [CGPoint(x: 35, y: 30), CGPoint(x: 65, y: 70)]
+        )
+
+        // Offset (35, 0): the view rect is (0,30)-(30,70), well inside the
+        // frame's black half — more than two blur radii (2 × 15) from the
+        // boundary at x = 50. Sampling at the page-space rect would straddle
+        // the boundary and come back much lighter.
+        let result = MarkCompositor.composite(
+            marks: [mark],
+            over: baseImage,
+            scale: 2,
+            blurBase: frameImage,
+            offset: CGSize(width: 35, height: 0)
+        )
+        XCTAssertNotNil(result)
+
+        // The patch centre lands at view point (15,50) → pixel (30,100).
+        XCTAssertLessThan(pixel(result!, x: 30, y: 100).r, 80, "the blur must sample the frame where the board shows the patch")
+    }
+
     // T11/S6: a rotated mark renders rotated about its anchor, and the old
     // orientation is gone.
     func testRotatedMarkRendersAtItsRotatedPlace() {
