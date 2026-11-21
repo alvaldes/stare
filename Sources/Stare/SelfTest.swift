@@ -143,8 +143,13 @@ enum SelfTest {
         report.append(contentsOf: boardReport())
 
         // Board pages (T12/S9): delete, reorder, index select and pan reset
-        // through the real view path, plus real blur pixels on the board.
+        // through the real view path.
         report.append(contentsOf: boardPagesReport())
+
+        // Board blur of content (S1): through the real board canvas, a blur
+        // mark diffuses the page's own content with no frame source, and the
+        // capture shows the same result.
+        report.append(contentsOf: boardBlurReport())
 
         // Palette in both system appearances: the same view must read on a light
         // and on a dark system, which a screenshot of one theme cannot prove.
@@ -510,8 +515,8 @@ enum SelfTest {
     /// Page management end to end through the real board view: adding pages,
     /// deleting the current one (which keeps the remaining pages and their
     /// marks), refusing to delete the last page, moving left/right (which keeps
-    /// the moved page current, with its marks), resetting the pan, and a blur
-    /// mark showing the real frame's pixels instead of the neutral fallback.
+    /// the moved page current, with its marks) and resetting the pan. The
+    /// board's blur of its own content has its own section (`board blur`).
     private static func boardPagesReport() -> [String] {
         var report: [String] = []
         guard let screen = NSScreen.screens.first else {
@@ -626,55 +631,166 @@ enum SelfTest {
         report.append(contentsOf: menuKeyReport)
         let menuKeyOk = menuKeyReport.contains { $0.contains("ok=true") }
 
-        // Blur on the board: with a live frame fed through the real frame
-        // source path, the mark shows the frame's pixels (left of the pattern
-        // edge bright, right dark), not the neutral fallback, which would be
-        // uniform in both halves.
-        state.tool = .blur
-        // Straddle the pattern's sharp edge (the view's centre): the mark has
-        // to mix both halves, which the uniform neutral fallback cannot.
-        sendDrag(to: panel,
-                 from: CGPoint(x: view.bounds.midX - 200, y: 350),
-                 to: CGPoint(x: view.bounds.midX + 200, y: 550))
-        guard let blurMark = board.currentPage.session.strokes.last, blurMark.tool == .blur,
-              view.hasLiveBlurMarks else {
-            report.append("FAIL: board pages blur mark was not committed")
+        let passed = addOk && deleteKeepsOthers && refused && rebuilt && leftOk && moveOk && panReset && menuKeyOk
+        report.append("board pages result=\(passed ? "PASS" : "FAIL")")
+        return report
+    }
+
+    // MARK: - Board blur of content (S1)
+
+    /// The board's blur through the real view path: a blur mark diffuses the
+    /// board's own content — the red rectangle painted before it — while a
+    /// mark painted after it stays sharp, with no frame source and nothing
+    /// asking for Screen Recording, and the board capture composes the same
+    /// blurred patch over the page's solid background.
+    private static func boardBlurReport() -> [String] {
+        var report: [String] = []
+        guard let screen = NSScreen.screens.first else {
+            report.append("FAIL: board blur no screens")
             return report
         }
-        let displayID = CGDirectDisplayID(1)
-        guard let pattern = syntheticScreenPattern(size: view.bounds.size, scale: 1) else {
-            report.append("FAIL: board pages blur pattern could not be built")
+        let state = EditorState()
+        let board = WhiteboardPages()
+        guard let canvas = DisplayCanvas(screen: screen, state: state, onEscape: {}, board: board),
+              let view = canvas.boardView else {
+            report.append("FAIL: board blur canvas could not be created")
             return report
         }
-        let live = LiveFrameSource(capture: { _, _ in pattern })
-        live.displaysNeedingFrames = { [displayID] }
-        view.displayID = displayID
-        view.liveFrameSource = live
-        live.wake()
-        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
-        defer { live.stop() }
-        let rendered = renderView(view, to: "/tmp/stare-board-blur.png")
-        guard let rendered, let first = blurMark.points.first, let last = blurMark.points.last else {
-            report.append("FAIL: board pages blur render failed")
-            return report
-        }
-        let rect = PathBuilder.normalizedRect(from: first, to: last)
-        let scale = CGFloat(rendered.width) / max(view.bounds.width, 1)
-        let midY = (rect.minY + rect.maxY) / 2
-        let left = rgb(rendered, at: view.viewPoint(fromPage: CGPoint(x: rect.midX - rect.width * 0.2, y: midY)), scale: scale)
-        let right = rgb(rendered, at: view.viewPoint(fromPage: CGPoint(x: rect.midX + rect.width * 0.2, y: midY)), scale: scale)
-        // The pattern is white left of centre, black right of it; the blurred
-        // patch must carry that contrast. The fallback (uniform gray over the
-        // page colour) cannot.
-        let contrast = left.red - right.red
-        let blurOk = contrast > 60
+        let panel = canvas.panel
+        panel.orderFrontRegardless()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        defer { panel.orderOut(nil) }
+
+        // S1: board canvases are never given a frame source, a display id or
+        // blur interest — the board never reads frames for its blur.
+        let noFrameSource = view.liveFrameSource == nil && view.displayID == 0 && !view.hasLiveBlurMarks
         report.append(
-            "board pages blur left=\(left.red) right=\(right.red) contrast=\(contrast) expect>60 "
-                + "png=/tmp/stare-board-blur.png ok=\(blurOk)"
+            "board blur frames frameSource=\(view.liveFrameSource == nil ? "nil" : "set") "
+                + "displayID=\(view.displayID) blurInterest=\(view.hasLiveBlurMarks) ok=\(noFrameSource)"
         )
 
-        let passed = addOk && deleteKeepsOthers && refused && rebuilt && leftOk && moveOk && panReset && blurOk && menuKeyOk
-        report.append("board pages result=\(passed ? "PASS" : "FAIL")")
+        // A red rectangle, then a blur overlapping its bottom border, then a
+        // blue pen mark painted after the blur crossing the patch: draw order
+        // decides what the blur diffuses and what stays sharp.
+        state.tool = .rectangle
+        state.ink = .red
+        sendDrag(to: panel, from: CGPoint(x: 150, y: 150), to: CGPoint(x: 450, y: 300))
+        state.tool = .blur
+        sendDrag(to: panel, from: CGPoint(x: 200, y: 220), to: CGPoint(x: 500, y: 380))
+        state.tool = .pen
+        state.ink = .blue
+        sendDrag(to: panel, from: CGPoint(x: 250, y: 250), to: CGPoint(x: 480, y: 330))
+        let strokes = board.currentPage.session.strokes
+        guard strokes.count == 3, strokes[1].tool == .blur else {
+            report.append("FAIL: board blur marks were not committed (strokes=\(strokes.count))")
+            return report
+        }
+
+        guard let rendered = renderView(view, to: "/tmp/stare-board-blur-content.png") else {
+            report.append("FAIL: board blur render failed")
+            return report
+        }
+        let scale = CGFloat(rendered.width) / max(view.bounds.width, 1)
+
+        // Sample points come from the stored marks in page space (the drags
+        // were sent in window coordinates), converted to view space through
+        // the view's own mapping — never hardcoded screen positions.
+        let rectMark = strokes[0], blurMark = strokes[1], penMark = strokes[2]
+        let rectBox = PathBuilder.normalizedRect(from: rectMark.points[0], to: rectMark.points[1])
+        let patch = PathBuilder.normalizedRect(from: blurMark.points[0], to: blurMark.points[1])
+        // A border point of the rectangle inside the patch: the horizontal
+        // border whose y the patch covers, at the patch's middle x.
+        let borderY = patch.contains(CGPoint(x: patch.midX, y: rectBox.minY)) ? rectBox.minY : rectBox.maxY
+        let borderX = min(max(patch.midX, rectBox.minX + 5), rectBox.maxX - 5)
+        let borderPage = CGPoint(x: borderX, y: borderY)
+        // A little into the patch from that border, over plain page.
+        let tintedPage = CGPoint(x: borderX, y: borderY + (borderY == rectBox.minY ? 8 : -8))
+        // The pen mark painted after the blur: its midpoint must cross the
+        // patch, where it has to stay sharp.
+        let penMid = CGPoint(
+            x: (penMark.points[0].x + penMark.points[1].x) / 2,
+            y: (penMark.points[0].y + penMark.points[1].y) / 2
+        )
+        // Border and page points well clear of the patch (more than two blur
+        // radii from its edge).
+        let outsideRedPage = CGPoint(x: rectBox.minX + 5, y: borderY)
+        let outsidePagePoint = CGPoint(x: rectBox.minX - 40, y: rectBox.maxY + 40)
+        guard patch.contains(borderPage), patch.contains(tintedPage), patch.contains(penMid),
+              !patch.contains(outsideRedPage), board.currentPage.offset == .zero else {
+            report.append(
+                "FAIL: board blur geometry did not overlap (rect=\(rectBox) patch=\(patch) penMid=\(penMid))"
+            )
+            return report
+        }
+
+        func viewRGB(_ image: CGImage, _ page: CGPoint) -> (red: Int, green: Int, blue: Int) {
+            rgb(image, at: view.viewPoint(fromPage: page), scale: scale)
+        }
+        let diffused = viewRGB(rendered, borderPage)
+        let tinted = viewRGB(rendered, tintedPage)
+        let afterSharp = viewRGB(rendered, penMid)
+        let outsideRed = viewRGB(rendered, outsideRedPage)
+        let outsidePage = viewRGB(rendered, outsidePagePoint)
+        // On the border inside the patch: red (g≈59) and page white (255)
+        // mixed — neither pure colour, the content was diffused, not cropped
+        // from the page colour (the old behaviour read exactly 255).
+        let diffusedOk = diffused.green > 70 && diffused.green < 252
+        // Near the border the diffusion tints the plain page too.
+        let tintedOk = tinted.green < 250 && tinted.green > 59
+        // The pen mark painted after the blur reads as pure ink over the patch.
+        let sharpOk = afterSharp.red < 80 && afterSharp.blue > 200
+        // Outside the patch the border and the page are untouched.
+        let outsideOk = outsideRed.red > 150 && outsideRed.green < 120
+            && outsidePage.green > 240
+        let contentOk = diffusedOk && tintedOk && sharpOk && outsideOk
+        report.append(
+            "board blur content diffused g=\(diffused.green) expect 70<g<252, "
+                + "tinted g=\(tinted.green) expect 59<g<250, "
+                + "afterSharp r=\(afterSharp.red) b=\(afterSharp.blue) expect sharp, "
+                + "outside r=\(outsideRed.red) g=\(outsideRed.green) page g=\(outsidePage.green) "
+                + "png=/tmp/stare-board-blur-content.png ok=\(contentOk)"
+        )
+
+        // The board capture composes the page the way captureBoardMarks does —
+        // the page's solid background, the marks, the pan — and its patch must
+        // show the same diffused result the view shows.
+        guard let base = board.currentPage.background.captureBase(
+            width: Int(view.bounds.width * scale),
+            height: Int(view.bounds.height * scale)
+        ) else {
+            report.append("FAIL: board blur capture base failed")
+            return report
+        }
+        guard let capture = MarkCompositor.composite(
+            marks: board.currentPage.session.strokes,
+            over: base,
+            scale: scale,
+            diffusesContent: true,
+            offset: board.currentPage.offset
+        ) else {
+            report.append("FAIL: board blur capture composition failed")
+            return report
+        }
+        let captureDiffused = viewRGB(capture, borderPage)
+        let captureTinted = viewRGB(capture, tintedPage)
+        let captureSharp = viewRGB(capture, penMid)
+        func delta(_ a: (red: Int, green: Int, blue: Int), _ b: (red: Int, green: Int, blue: Int)) -> Int {
+            max(abs(a.red - b.red), max(abs(a.green - b.green), abs(a.blue - b.blue)))
+        }
+        let diffusedDelta = delta(diffused, captureDiffused)
+        let tintedDelta = delta(tinted, captureTinted)
+        let sharpDelta = delta(afterSharp, captureSharp)
+        // The blurred patch must agree almost exactly (same compositor, same
+        // scale); the sharp pen mark's antialiasing may differ a little
+        // between the view's scaled context and the pixel compositor.
+        let captureOk = diffusedDelta <= 6 && tintedDelta <= 6 && sharpDelta <= 12
+        report.append(
+            "board blur capture diffusedDelta=\(diffusedDelta) tintedDelta=\(tintedDelta) "
+                + "sharpDelta=\(sharpDelta) expect<=6/6/12 ok=\(captureOk)"
+        )
+
+        let passed = noFrameSource && contentOk && captureOk
+        report.append("board blur result=\(passed ? "PASS" : "FAIL")")
         return report
     }
 

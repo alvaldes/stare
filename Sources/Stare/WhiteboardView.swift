@@ -37,6 +37,87 @@ class WhiteboardView: OverlayView {
 
     override var panOffset: CGSize { board.currentPage.offset }
 
+    // MARK: - Blur of the board's own content (S1)
+
+    /// A blur mark on the board diffs the board's own content: the page colour
+    /// and the marks painted before it. It never shows the desktop behind the
+    /// board, never reads live frames and never needs Screen Recording — the
+    /// drawing overlay keeps reading the screen through the same tool, decided
+    /// by which surface the mark lives on. The beneath image is composed
+    /// exactly the way the board capture composes the page
+    /// (`MarkCompositor.composite` with `diffusesContent` over the page's
+    /// solid background, marks moved into view space by the pan), so the live
+    /// view and the capture agree by construction, and the blur's crop is
+    /// taken at the mark's place in draw order: marks painted after it are not
+    /// in the image and stay sharp on top.
+    override func blurSource(for stroke: Stroke) -> (image: CGImage, pixelsPerPoint: CGFloat)? {
+        guard let image = boardContentBeneath(stroke) else { return nil }
+        return (image, boardBlurScale)
+    }
+
+    /// View points to image pixels for the beneath image: the board window's
+    /// backing scale, the same scale the page capture composes at.
+    private var boardBlurScale: CGFloat {
+        window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+    }
+
+    /// The board never needs frames for its blur, so it never reports blur
+    /// interest to the frame source (S1: no frames, no Screen Recording).
+    override var hasLiveBlurMarks: Bool { false }
+
+    private struct BeneathKey: Equatable {
+        let strokes: [Stroke]
+        let background: BoardBackground
+        let offset: CGSize
+        let scale: CGFloat
+        let size: CGSize
+    }
+
+    /// Cache of the beneath image: dragging a blur mark repaints per frame,
+    /// and the content beneath it only changes when the page's marks,
+    /// background, pan, scale or size change — all of which are in the key.
+    private var beneathCache: (key: BeneathKey, image: CGImage)?
+
+    /// The page as it is rendered beneath `stroke`: page colour plus every
+    /// committed mark before it in draw order (the mark being dragged sits
+    /// above everything already committed). The pan is applied here the same
+    /// way the capture applies it, so the image covers view space and the
+    /// view's crop lands where the board shows the patch.
+    private func boardContentBeneath(_ stroke: Stroke) -> CGImage? {
+        let committed = session.strokes
+        let beneath: [Stroke]
+        if let active = session.active, active.id == stroke.id {
+            beneath = committed
+        } else if let index = committed.firstIndex(where: { $0.id == stroke.id }) {
+            beneath = Array(committed[..<index])
+        } else {
+            return nil
+        }
+        guard bounds.width >= 1, bounds.height >= 1 else { return nil }
+        let scale = boardBlurScale
+        let key = BeneathKey(
+            strokes: beneath,
+            background: board.currentPage.background,
+            offset: board.currentPage.offset,
+            scale: scale,
+            size: bounds.size
+        )
+        if let cached = beneathCache, cached.key == key { return cached.image }
+        guard let base = board.currentPage.background.captureBase(
+            width: Int(bounds.width * scale),
+            height: Int(bounds.height * scale)
+        ) else { return nil }
+        guard let image = MarkCompositor.composite(
+            marks: beneath,
+            over: base,
+            scale: scale,
+            diffusesContent: true,
+            offset: board.currentPage.offset
+        ) else { return nil }
+        beneathCache = (key, image)
+        return image
+    }
+
     // MARK: - Painting
 
     override func drawBackground(in context: CGContext) {

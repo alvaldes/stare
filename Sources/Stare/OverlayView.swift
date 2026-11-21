@@ -1191,54 +1191,68 @@ class OverlayView: NSView {
         }
     }
 
-    /// T5/S3, live blur: a blur mark shows the real screen content underneath,
-    /// gaussian blurred, from the latest live frame. The frame is in display
-    /// pixels while this view is in points, and `BlurEffect` works in image
-    /// pixels with a bottom-left origin while this view is flipped, so the
-    /// crop rect is converted and the image unmirrored inside the mark's
-    /// rectangle — the same arrangement the capture compositor uses. With no
-    /// frame yet (the first instants of a drag, or Screen Recording denied) a
-    /// neutral translucent fill with a thin border still shows where the mark
-    /// is, and nothing crashes or paints garbage.
+    /// The image a blur mark diffuses, with its pixels per view point. The
+    /// drawing overlay reads the display's latest live frame — the real screen
+    /// pixels under the transparent layer (T5/S3). The whiteboard overrides
+    /// this: its blur diffs the board's own content (S1). Nil draws the
+    /// neutral fallback patch (no frame yet, or Screen Recording denied).
+    func blurSource(for stroke: Stroke) -> (image: CGImage, pixelsPerPoint: CGFloat)? {
+        guard let frame = liveFrameSource?.frame(for: displayID), bounds.width > 0 else { return nil }
+        return (frame, CGFloat(frame.width) / max(bounds.width, 1))
+    }
+
+    /// Live blur: a blur mark shows the content underneath it, gaussian
+    /// blurred, from the image `blurSource` provides. That image covers view
+    /// space while the mark's stored points are page space, so on a panned
+    /// page the crop reads the region the board shows the patch at
+    /// (`pagePoint - offset`) — the same placement the capture compositor
+    /// produces. With no source (the first instants of a drag, or Screen
+    /// Recording denied) a neutral translucent fill with a thin border still
+    /// shows where the mark is, and nothing crashes or paints garbage.
     private func drawBlur(_ stroke: Stroke, in context: CGContext) {
         guard let first = stroke.points.first, let last = stroke.points.last else { return }
         let rect = PathBuilder.normalizedRect(from: first, to: last)
         guard rect.width > 0, rect.height > 0 else { return }
 
-        if let frame = liveFrameSource?.frame(for: displayID), bounds.width > 0 {
-            // Scale derived from the frame, never hardcoded: image pixels per point.
-            let scale = CGFloat(frame.width) / max(bounds.width, 1)
+        // The mark's points are page space; the source image is view space.
+        let viewRect = rect.offsetBy(dx: -panOffset.width, dy: -panOffset.height)
+
+        if let source = blurSource(for: stroke) {
+            let image = source.image
+            let scale = source.pixelsPerPoint
             let pixelRect = CGRect(
-                x: rect.minX * scale,
+                x: viewRect.minX * scale,
                 // Bottom-left pixel origin under a top-left view origin.
-                y: CGFloat(frame.height) - rect.maxY * scale,
-                width: rect.width * scale,
-                height: rect.height * scale
+                y: CGFloat(image.height) - viewRect.maxY * scale,
+                width: viewRect.width * scale,
+                height: viewRect.height * scale
             )
             if let blurred = BlurEffect.crop(
-                frame,
+                image,
                 pixelRect: pixelRect,
                 radius: BlurEffect.defaultRadius * scale
             ) {
                 // The crop may cover less than the full rect when the mark
-                // reaches past the frame: draw it at the intersection, clipped
+                // reaches past the image: draw it at the intersection, clipped
                 // to the mark. The context is flipped for overlay space, so an
                 // image drawn plainly would land upside down; unflip it inside
-                // the rectangle.
+                // the rectangle. The context draws in page space, so the
+                // landed view rect is placed back at its page position.
                 let landed = pixelRect.intersection(
-                    CGRect(x: 0, y: 0, width: frame.width, height: frame.height)
+                    CGRect(x: 0, y: 0, width: image.width, height: image.height)
                 )
-                let viewRect = CGRect(
+                let landedView = CGRect(
                     x: landed.minX / scale,
-                    y: (CGFloat(frame.height) - landed.maxY) / scale,
+                    y: (CGFloat(image.height) - landed.maxY) / scale,
                     width: landed.width / scale,
                     height: landed.height / scale
                 )
+                let landedPage = landedView.offsetBy(dx: panOffset.width, dy: panOffset.height)
                 context.saveGState()
                 context.clip(to: rect)
-                context.translateBy(x: viewRect.minX, y: viewRect.maxY)
+                context.translateBy(x: landedPage.minX, y: landedPage.maxY)
                 context.scaleBy(x: 1, y: -1)
-                context.draw(blurred, in: CGRect(origin: .zero, size: viewRect.size))
+                context.draw(blurred, in: CGRect(origin: .zero, size: landedPage.size))
                 context.restoreGState()
                 return
             }

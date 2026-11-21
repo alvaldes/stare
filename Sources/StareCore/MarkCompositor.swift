@@ -10,23 +10,20 @@ public enum MarkCompositor {
     /// Marks live in overlay space: top-left origin, points. `scale` is image
     /// pixels per point.
     ///
-    /// `blurBase` (T12/S9) is what blur marks crop from instead of the base —
-    /// the board capture passes the live frame there, because a whiteboard's
-    /// base is the solid page colour and a blur mark has to show the real
-    /// pixels the board's view blurs, not the page colour. It is sampled at
-    /// its own scale (a live frame arrives downscaled), and when it is absent
-    /// the drawing overlay's behaviour is unchanged: blur crops the base.
-    ///
     /// `offset` (T12 fix) is the whiteboard page's pan: marks stored in page
     /// space are placed at `pagePoint - offset`, which is where the board's
     /// view shows them (`viewPoint = pagePoint - offset`), so a panned page's
     /// capture is what the board shows. Zero leaves the marks where they were
     /// drawn, exactly as the drawing overlay composes them.
+    ///
+    /// `diffusesContent` (S1) marks the board's capture: its blur marks diff
+    /// the board's own content. False leaves the drawing overlay's behaviour
+    /// untouched: blur crops the base — the real screen pixels.
     public static func composite(
         marks: [Stroke],
         over base: CGImage,
         scale: CGFloat = 1,
-        blurBase: CGImage? = nil,
+        diffusesContent: Bool = false,
         offset: CGSize = .zero
     ) -> CGImage? {
         let width = base.width
@@ -73,7 +70,7 @@ public enum MarkCompositor {
         }
 
         for mark in placed where !mark.tool.isTransient {
-            draw(mark, in: context, base: base, scale: scale, blurBase: blurBase)
+            draw(mark, in: context, base: base, scale: scale, diffusesContent: diffusesContent)
         }
 
         context.restoreGState()
@@ -85,7 +82,7 @@ public enum MarkCompositor {
         in context: CGContext,
         base: CGImage,
         scale: CGFloat,
-        blurBase: CGImage?
+        diffusesContent: Bool
     ) {
         switch stroke.tool {
         case .text:
@@ -101,7 +98,7 @@ public enum MarkCompositor {
             return
         case .blur:
             drawWithRotation(stroke, in: context) { context in
-                drawBlur(stroke, in: context, base: base, scale: scale, blurBase: blurBase)
+                drawBlur(stroke, in: context, base: base, scale: scale, diffusesContent: diffusesContent)
             }
             return
         default:
@@ -129,30 +126,41 @@ public enum MarkCompositor {
         context.restoreGState()
     }
 
-    /// T5/S3: a blur mark is the captured content underneath, blurred, so it
-    /// composites a blurred crop of the base frame instead of stroking a
-    /// rectangle. `BlurEffect` works in image pixels, which share the bitmap
-    /// context's bottom-left origin; the crop is drawn back at the mark's
-    /// rectangle in overlay space, where the context's transform already does
-    /// the scaling and the flip.
+    /// S1: a blur mark is the content underneath it, gaussian blurred, instead
+    /// of stroking a rectangle. `BlurEffect` works in image pixels, which share
+    /// the bitmap context's bottom-left origin; the crop is drawn back at the
+    /// mark's rectangle in overlay space, where the context's transform already
+    /// does the scaling and the flip.
+    ///
+    /// The source behind the patch is decided by which surface the mark lives
+    /// on. On the drawing overlay (`diffusesContent` false) it is the base —
+    /// the real screen pixels, as always. On the board (true) it is what is
+    /// already rendered beneath the mark in draw order: the page colour and
+    /// the marks painted before it, which is exactly the context's content at
+    /// the mark's turn. The snapshot is taken here, mid-composition, so it
+    /// holds all of that and none of the marks painted after it — they stay
+    /// sharp on top of the patch.
     private static func drawBlur(
         _ stroke: Stroke,
         in context: CGContext,
         base: CGImage,
         scale: CGFloat,
-        blurBase: CGImage? = nil
+        diffusesContent: Bool
     ) {
         guard let first = stroke.points.first, let last = stroke.points.last else { return }
         let rect = PathBuilder.normalizedRect(from: first, to: last)
         guard rect.width > 0, rect.height > 0 else { return }
 
-        // With a blur base (the board's live frame), crop from it at its own
-        // scale: the frame is what the board's view blurs, and it arrives
-        // downscaled relative to the display-sized base.
-        let source = blurBase ?? base
-        let sourceScale = blurBase != nil
-            ? scale * CGFloat(source.width) / CGFloat(base.width)
-            : scale
+        let source: CGImage
+        if diffusesContent {
+            // Everything rendered so far — base plus earlier marks — is the
+            // content the patch diffuses.
+            guard let beneath = context.makeImage() else { return }
+            source = beneath
+        } else {
+            source = base
+        }
+        let sourceScale = scale
         let pixelRect = CGRect(
             x: rect.minX * sourceScale,
             y: CGFloat(source.height) - rect.maxY * sourceScale,

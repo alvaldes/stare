@@ -173,46 +173,9 @@ final class MarkCompositorTests: XCTestCase {
         XCTAssertEqual(pixel(result!, x: 60, y: 90).r, pixel(baseImage, x: 60, y: 90).r, "below the rectangle")
     }
 
-    // T12/S9: a whiteboard capture composites blur marks over the live frame
-    // (the pixels the board's view blurs), not over the page colour base.
-    func testBoardBlurBaseShowsRealPixelsInsteadOfThePageColour() {
-        // Blur base: black left half, white right half, boundary at x = 50.
-        let blurBase = CGContext(
-            data: nil,
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: CGColorSpace(name: CGColorSpace.sRGB)!,
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )!
-        blurBase.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1))
-        blurBase.fill(CGRect(x: 0, y: 0, width: 50, height: height))
-        blurBase.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
-        blurBase.fill(CGRect(x: 50, y: 0, width: 50, height: height))
-        let frame = blurBase.makeImage()!
-
-        let mark = Stroke(
-            tool: .blur,
-            ink: .red,
-            points: [CGPoint(x: 35, y: 30), CGPoint(x: 65, y: 70)]
-        )
-
-        let result = MarkCompositor.composite(marks: [mark], over: whiteBase(), blurBase: frame)
-        XCTAssertNotNil(result)
-
-        // The centre of the patch straddles the frame's black/white boundary:
-        // a real blur mixes, the page colour (solid white) would read 255.
-        let centre = pixel(result!, x: 50, y: 50)
-        XCTAssertGreaterThan(centre.r, 40, "the blur must mix in the frame's black half")
-        XCTAssertLessThan(centre.r, 215, "the blur must mix in the frame's white half")
-    }
-
-    // T12/S9: the live frame arrives downscaled (half the display pixels), so
-    // the blur base must be sampled at its own scale, not the base's.
-    func testDownscaledBlurBaseIsSampledAtItsOwnScale() {
-        // Base 200x200 white; frame 100x100 with the boundary at x = 50.
-        let base = CGContext(
+    /// A 200x200 solid white base: a board page's colour at 2x.
+    private func pageBase() -> CGImage {
+        let context = CGContext(
             data: nil,
             width: 200,
             height: 200,
@@ -221,39 +184,121 @@ final class MarkCompositorTests: XCTestCase {
             space: CGColorSpace(name: CGColorSpace.sRGB)!,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         )!
-        base.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
-        base.fill(CGRect(x: 0, y: 0, width: 200, height: 200))
-        let baseImage = base.makeImage()!
+        context.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 200, height: 200))
+        return context.makeImage()!
+    }
 
-        let blurBase = CGContext(
-            data: nil,
-            width: 100,
-            height: 100,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: CGColorSpace(name: CGColorSpace.sRGB)!,
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )!
-        blurBase.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1))
-        blurBase.fill(CGRect(x: 0, y: 0, width: 50, height: 100))
-        blurBase.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
-        blurBase.fill(CGRect(x: 50, y: 0, width: 50, height: 100))
-        let frame = blurBase.makeImage()!
-
-        let mark = Stroke(
+    // S1: a blur mark on the board diffs the board's own content — the page
+    // colour and the marks painted before it. The blur rectangle overlaps the
+    // red rectangle's bottom border: inside the patch the pixels are neither
+    // the pure page colour nor the pure rectangle ink (the content was
+    // diffused), and outside the patch nothing changes.
+    func testBoardBlurDiffusesTheContentBeneathIt() {
+        let rect = Stroke(
+            tool: .rectangle,
+            ink: .red,
+            points: [CGPoint(x: 20, y: 20), CGPoint(x: 80, y: 50)]
+        )
+        let blur = Stroke(
             tool: .blur,
             ink: .red,
-            points: [CGPoint(x: 35, y: 30), CGPoint(x: 65, y: 70)]
+            points: [CGPoint(x: 30, y: 25), CGPoint(x: 70, y: 60)]
         )
 
-        let result = MarkCompositor.composite(marks: [mark], over: baseImage, scale: 2, blurBase: frame)
+        let result = MarkCompositor.composite(
+            marks: [rect, blur],
+            over: pageBase(),
+            scale: 2,
+            diffusesContent: true
+        )
         XCTAssertNotNil(result)
 
-        // In pixels of the result the patch spans 70..130 and the frame's
-        // boundary sits at 100: a real blur mixes both halves there.
-        let centre = pixel(result!, x: 100, y: 100)
-        XCTAssertGreaterThan(centre.r, 40, "the downscaled frame must be sampled at its own scale")
-        XCTAssertLessThan(centre.r, 215, "the downscaled frame must be sampled at its own scale")
+        // Pixel (100,100) sits on the rectangle's bottom border inside the
+        // patch: neither the pure page colour (255) nor the pure rectangle ink
+        // (≈59) — the content was diffused. The old behaviour — blur cropping
+        // the solid page colour, changing nothing — reads exactly 255.
+        let onBorder = pixel(result!, x: 100, y: 100)
+        XCTAssertGreaterThan(onBorder.g, 70, "the blur must mix in the rectangle's ink")
+        XCTAssertLessThan(onBorder.g, 252, "the blur must mix in the page colour")
+
+        // Pixel (130,110) is inside the patch over plain page, close enough to
+        // the border that the diffusion tints it: not the pure page colour.
+        let overPage = pixel(result!, x: 130, y: 110)
+        XCTAssertLessThan(overPage.g, 250, "the diffusion reaches the whole patch")
+        XCTAssertGreaterThan(overPage.g, 59, "the patch is never the pure rectangle ink")
+
+        // Outside the patch the page is untouched.
+        XCTAssertTrue(isReddish(pixel(result!, x: 40, y: 70)), "the border left of the patch is untouched")
+        XCTAssertTrue(isWhitesh(pixel(result!, x: 20, y: 160)), "the page beside the patch is untouched")
+    }
+
+    // S1, draw order: a blur mark applies to what is already rendered beneath
+    // it, and a mark painted after it stays sharp where it overlaps.
+    func testBoardBlurKeepsMarksPaintedAfterItSharp() {
+        let blur = Stroke(
+            tool: .blur,
+            ink: .red,
+            points: [CGPoint(x: 30, y: 25), CGPoint(x: 70, y: 60)]
+        )
+        let rect = Stroke(
+            tool: .rectangle,
+            ink: .red,
+            points: [CGPoint(x: 20, y: 20), CGPoint(x: 80, y: 50)]
+        )
+
+        let result = MarkCompositor.composite(
+            marks: [blur, rect],
+            over: pageBase(),
+            scale: 2,
+            diffusesContent: true
+        )
+        XCTAssertNotNil(result)
+
+        // The same border pixel the diffusion test samples: here the rectangle
+        // is painted after the blur, so it reads as pure ink over the patch.
+        XCTAssertTrue(
+            isReddish(pixel(result!, x: 100, y: 100)),
+            "a mark painted after the blur stays sharp over the patch"
+        )
+        XCTAssertTrue(isWhitesh(pixel(result!, x: 20, y: 160)), "the page beside the patch is untouched")
+    }
+
+    // S1 fix, pan: a blur mark on a panned page diffuses the content where the
+    // board shows it — pagePoint - offset — not at the mark's stored points.
+    func testOffsetBoardBlurDiffusesThePannedContent() {
+        let rect = Stroke(
+            tool: .rectangle,
+            ink: .red,
+            points: [CGPoint(x: 50, y: 40), CGPoint(x: 90, y: 60)]
+        )
+        let blur = Stroke(
+            tool: .blur,
+            ink: .red,
+            points: [CGPoint(x: 45, y: 35), CGPoint(x: 75, y: 65)]
+        )
+
+        // Offset (35, 0): the rectangle shows at view (15,40)-(55,60) and the
+        // patch at view (10,35)-(40,65) — overlapping the rectangle's bottom
+        // border where the board shows both.
+        let result = MarkCompositor.composite(
+            marks: [rect, blur],
+            over: pageBase(),
+            scale: 2,
+            diffusesContent: true,
+            offset: CGSize(width: 35, height: 0)
+        )
+        XCTAssertNotNil(result)
+
+        // View (15,50) → pixel (30,100): on the rectangle's left border inside
+        // the patch — neither the pure page colour nor the pure ink.
+        let onBorder = pixel(result!, x: 30, y: 100)
+        XCTAssertGreaterThan(onBorder.g, 70, "the panned blur must diffuse the content shown beneath it")
+        XCTAssertLessThan(onBorder.g, 252, "the panned blur must diffuse the content shown beneath it")
+
+        // View (55,50) → pixel (110,100): the right border beyond the patch
+        // stays sharp.
+        XCTAssertTrue(isReddish(pixel(result!, x: 110, y: 100)), "the border beyond the patch is untouched")
     }
 
     // T12 fix: the board capture composes page-space marks translated by the
@@ -299,61 +344,6 @@ final class MarkCompositorTests: XCTestCase {
 
         XCTAssertTrue(isReddish(pixel(result!, x: 20, y: 20)), "the unpanned case is unchanged")
         XCTAssertTrue(isWhitesh(pixel(result!, x: 10, y: 10)), "nothing is left behind at 1x")
-    }
-
-    // T12 fix: a blur mark on a panned page must sample the live frame at the
-    // panned (view-space) rectangle, not at the page-space one.
-    func testOffsetBlurSamplesTheFrameAtThePannedLocation() {
-        // Base 200x200 white (scale 2); frame 100x100, black left of x = 50.
-        let base = CGContext(
-            data: nil,
-            width: 200,
-            height: 200,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: CGColorSpace(name: CGColorSpace.sRGB)!,
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )!
-        base.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
-        base.fill(CGRect(x: 0, y: 0, width: 200, height: 200))
-        let baseImage = base.makeImage()!
-
-        let frame = CGContext(
-            data: nil,
-            width: 100,
-            height: 100,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: CGColorSpace(name: CGColorSpace.sRGB)!,
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )!
-        frame.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1))
-        frame.fill(CGRect(x: 0, y: 0, width: 50, height: 100))
-        frame.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
-        frame.fill(CGRect(x: 50, y: 0, width: 50, height: 100))
-        let frameImage = frame.makeImage()!
-
-        let mark = Stroke(
-            tool: .blur,
-            ink: .red,
-            points: [CGPoint(x: 35, y: 30), CGPoint(x: 65, y: 70)]
-        )
-
-        // Offset (35, 0): the view rect is (0,30)-(30,70), well inside the
-        // frame's black half — more than two blur radii (2 × 15) from the
-        // boundary at x = 50. Sampling at the page-space rect would straddle
-        // the boundary and come back much lighter.
-        let result = MarkCompositor.composite(
-            marks: [mark],
-            over: baseImage,
-            scale: 2,
-            blurBase: frameImage,
-            offset: CGSize(width: 35, height: 0)
-        )
-        XCTAssertNotNil(result)
-
-        // The patch centre lands at view point (15,50) → pixel (30,100).
-        XCTAssertLessThan(pixel(result!, x: 30, y: 100).r, 80, "the blur must sample the frame where the board shows the patch")
     }
 
     // T11/S6: a rotated mark renders rotated about its anchor, and the old

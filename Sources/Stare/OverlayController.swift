@@ -55,20 +55,17 @@ final class OverlayController {
         self.liveFrames = liveFrames
         wireEditor()
         // Interest is asked from the canvases, so it is whatever the sessions
-        // actually hold: only capture while the drawing overlay or the
-        // whiteboard is active and at least one display has a visible blur mark.
+        // actually hold: only capture while the drawing overlay is active and
+        // at least one display has a visible blur mark. The board never asks
+        // for frames (S1): its blur diffs the board's own content.
         liveFrames.displaysNeedingFrames = { [weak self] in
-            guard let self else { return [] }
-            let liveCanvases = self.isBoardActive ? self.boardCanvases.values : self.canvases.values
-            guard self.isActive || self.isBoardActive else { return [] }
-            return liveCanvases
+            guard let self, self.isActive else { return [] }
+            return self.canvases.values
                 .filter { $0.view.hasLiveBlurMarks }
                 .map { $0.displayID }
         }
         liveFrames.onFrame = { [weak self] displayID in
-            guard let self else { return }
-            let canvas = self.isBoardActive ? self.boardCanvases[displayID] : self.canvases[displayID]
-            guard self.isActive || self.isBoardActive, let canvas else { return }
+            guard let self, self.isActive, let canvas = self.canvases[displayID] else { return }
             canvas.view.invalidateLiveBlurMarks()
         }
         NotificationCenter.default.addObserver(
@@ -466,12 +463,10 @@ final class OverlayController {
     /// colour at the display's pixel size — never transparent, never a bare
     /// background-coloured image with nothing drawn.
     ///
-    /// A blur mark must show what the board's view blurs (T12/S9): the live
-    /// frame, not the page colour. The frame is captured with Stare's own
-    /// windows excluded, so it is the desktop behind the board; the compositor
-    /// samples it at its own scale, and blur marks alone render over it. When
-    /// Screen Recording is missing there is no frame and the capture composites
-    /// the blur over the page colour, the same fallback the view shows.
+    /// S1: a blur mark here diffs the board's own content — the page colour
+    /// and the marks painted before it — so `diffusesContent` is on and no
+    /// live frame is involved: the board never needs Screen Recording for its
+    /// blur, and the desktop behind the board never shows through a patch.
     private func captureBoardMarks(_ canvas: DisplayCanvas, displayID: CGDirectDisplayID, area: CGRect?) {
         guard let boardView = canvas.boardView else { return }
         let frameSize = canvas.panel.frame.size
@@ -493,11 +488,10 @@ final class OverlayController {
             marks: canvas.view.session.strokes,
             over: base,
             scale: scale,
-            blurBase: liveFrames.frame(for: displayID),
+            diffusesContent: true,
             // The marks are stored in page space; the capture is what the
             // board shows, so the page's pan moves them to view space
-            // (pagePoint - offset), and a blur mark samples the frame at the
-            // panned rectangle.
+            // (pagePoint - offset).
             offset: boardView.board.currentPage.offset
         ) else {
             Diag.log("board capture failed: composition returned nil")
@@ -738,15 +732,9 @@ final class OverlayController {
             canvas.view.onCaptureRequest = { [weak self] area in
                 self?.capture(displayID: displayID, area: area)
             }
-            // Real pixels for the board's blur (T12/S9): the frame is captured
-            // with Stare's own windows excluded, so it is the desktop behind
-            // the board — what a blur mark there is supposed to reveal. Without
-            // Screen Recording no frame ever lands and the neutral fallback
-            // shows, exactly as before. Nothing else on the board needs the
-            // permission.
-            canvas.view.displayID = displayID
-            canvas.view.liveFrameSource = liveFrames
-            canvas.view.onBlurMarksChanged = { [weak self] in self?.liveFrames.wake() }
+            // S1: nothing on the board asks for frames or Screen Recording —
+            // a board canvas never gets a live frame source or a display id;
+            // its blur diffs the board's own content.
             canvas.boardView?.onPageChanged = { [weak self] in
                 self?.syncBoardIndicator(for: displayID)
             }
