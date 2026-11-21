@@ -27,6 +27,11 @@ public struct AppPreferences: Codable, Equatable, Sendable {
     /// Update check schedule and the last successful check.
     public var updates: UpdateSchedulePreference
 
+    /// Whether the first-run guide (T5/S3) has been shown and dismissed. Once
+    /// true the guide never reappears on its own; the menu bar's "Setup
+    /// Guide…" item can still open it by hand without touching this flag.
+    public var hasCompletedOnboarding: Bool
+
     /// The preferences a fresh install gets, matching the look the app ships
     /// today.
     public static let standard = AppPreferences()
@@ -40,7 +45,8 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         hotkeys: HotkeyBindings = .standard,
         capture: CapturePreference = .standard,
         whiteboard: WhiteboardDefaults = .standard,
-        updates: UpdateSchedulePreference = .standard
+        updates: UpdateSchedulePreference = .standard,
+        hasCompletedOnboarding: Bool = false
     ) {
         self.pointer = pointer
         self.toolShortcuts = toolShortcuts
@@ -48,6 +54,7 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         self.capture = capture
         self.whiteboard = whiteboard
         self.updates = updates
+        self.hasCompletedOnboarding = hasCompletedOnboarding
     }
 
     /// Loads preferences from `store`. A corrupt or absent blob falls back to
@@ -58,7 +65,7 @@ public struct AppPreferences: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case pointer, toolShortcuts, hotkeys, capture, whiteboard, updates
+        case pointer, toolShortcuts, hotkeys, capture, whiteboard, updates, hasCompletedOnboarding
     }
 
     /// Lenient decoding: a missing or undecodable field falls back to its
@@ -73,6 +80,7 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         self.capture = (try? container.decode(CapturePreference.self, forKey: .capture)) ?? .standard
         self.whiteboard = (try? container.decode(WhiteboardDefaults.self, forKey: .whiteboard)) ?? .standard
         self.updates = (try? container.decode(UpdateSchedulePreference.self, forKey: .updates)) ?? .standard
+        self.hasCompletedOnboarding = (try? container.decode(Bool.self, forKey: .hasCompletedOnboarding)) ?? false
     }
 
     /// Encodes the preferences as JSON under the versioned key. Legacy keys

@@ -204,6 +204,35 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertEqual(prefs.whiteboard.pagesOnOpen, 3)
         XCTAssertEqual(prefs.updates.schedule, .daily)
     }
+
+    // MARK: Onboarding flag (T5/S3)
+
+    func testHasCompletedOnboardingDefaultsToFalse() {
+        XCTAssertFalse(AppPreferences.standard.hasCompletedOnboarding)
+        XCTAssertFalse(AppPreferences(store: InMemoryPreferenceStore()).hasCompletedOnboarding)
+    }
+
+    func testRoundTripsHasCompletedOnboardingThroughStore() {
+        let store = InMemoryPreferenceStore()
+        var saved = AppPreferences.standard
+        saved.hasCompletedOnboarding = true
+
+        saved.save(to: store)
+        XCTAssertTrue(AppPreferences(store: store).hasCompletedOnboarding)
+    }
+
+    func testBlobPredatingTheOnboardingFlagLoadsFalseAndKeepsTheRest() {
+        let store = InMemoryPreferenceStore()
+        // A blob written before the onboarding guide existed carries no flag;
+        // loading must yield false and keep everything else from the document.
+        store.set(Data(#"{"pointer":{"preset":"dot","size":44},"capture":{"fileNamePrefix":"Shots"}}"#.utf8), forKey: AppPreferences.storageKey)
+
+        let prefs = AppPreferences(store: store)
+        XCTAssertFalse(prefs.hasCompletedOnboarding)
+        XCTAssertEqual(prefs.pointer.preset, .dot)
+        XCTAssertEqual(prefs.pointer.size, 44)
+        XCTAssertEqual(prefs.capture.fileNamePrefix, "Shots")
+    }
 }
 
 private func date(_ year: Int, _ month: Int, _ day: Int, _ hour: Int = 0, _ minute: Int = 0) -> Date {
