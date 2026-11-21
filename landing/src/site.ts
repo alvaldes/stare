@@ -6,6 +6,8 @@ export const site = {
   /** GitHub repository that hosts the source and the release downloads. */
   repo: 'alvaldes/stare',
   minimumMacOS: 'macOS 26',
+  /** Production address of the landing; link previews need absolute URLs. */
+  url: 'https://stare.alvaldes.workers.dev',
 } as const
 
 export const repoUrl = `https://github.com/${site.repo}`

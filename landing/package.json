@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "rm -rf dist && vite build && node scripts/prerender.ts",
+    "build": "rm -rf dist && vite build && node scripts/prerender.ts && node scripts/og.ts",
     "preview": "$npm_execpath run build && vite preview",
     "deploy": "$npm_execpath run build && wrangler deploy",
     "test": "vitest run",
@@ -17,7 +17,10 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.44.0",
+    "@fontsource/schibsted-grotesk": "^5.3.0",
+    "@resvg/resvg-js": "^2.6.2",
     "@tailwindcss/vite": "^4.3.5",
+    "satori": "^0.63.2",
     "tailwindcss": "^4.3.5",
     "typescript": "^7.0.2",
     "vite": "^8.1.4",

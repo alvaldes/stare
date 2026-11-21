@@ -25,11 +25,14 @@ src/components/        server components (hono/jsx)
 src/client/            browser code: demo UI (hono/jsx/dom), download links
 src/demo/              drawing model shared with the client, mirrored from StareCore
 scripts/prerender.ts   turns every route into static HTML with hono/ssg
+scripts/og.ts          renders og.png, the 1200x630 link-preview image
 ```
 
 `pnpm build` runs `vite build` and then `scripts/prerender.ts`. That script
 imports the built Worker and calls `toSSG`, which writes `index.html` next to
-the client assets in `dist/client`.
+the client assets in `dist/client`. Then `scripts/og.ts` renders `og.png` there
+with satori (layout and text, in the landing's font) and resvg (SVG to PNG);
+both are dev dependencies that only run in the build, never in the Worker.
 
 ## Why it costs nothing
 

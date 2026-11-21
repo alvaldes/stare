@@ -33,9 +33,9 @@ S9. CTA principal: descargar la app. Apunta al último GitHub Release; mientras 
 | T20 | Verificar en Safari y Firefox que el iframe muestre el portfolio en oscuro (color-scheme del iframe → prefers-color-scheme); probado solo en Chromium | S6 | — | pendiente | |
 | T10 | Licencia (decisión del usuario) y repo público `alvaldes/stare`; hoy los links dan 404 y "open source" no es cierto aún | S9 | inline | hecho | 13fc329 |
 | T11 | Primer deploy: `pnpm wrangler login` (usuario, interactivo) + `pnpm deploy` | S3–S4 | inline | hecho | version c36f4490 |
-| T12 | Imagen og:image generada en el build para previews en redes | S6 | inline | pendiente | |
-| T13 | Auditoría Lighthouse: performance (blur de auroras en móviles) y accesibilidad | S6 | inline | pendiente | |
-| T14 | Página 404 con el mismo estilo | S6 | inline | pendiente | |
+| T12 | Imagen og:image generada en el build para previews en redes | S6 | inline | hecho | ver L17 |
+| T13 | Auditoría Lighthouse: performance (blur de auroras en móviles) y accesibilidad | S6 | inline | hecho | ver L17 |
+| T14 | Página 404 con el mismo estilo | S6 | inline | hecho | ver L17 |
 | T15 | Demo: sumar text, laser, eraser (T7 de la app) y quizás el editor, cuando la app los tenga | S5 | inline | desbloqueado: la app ya tiene text, laser y eraser | |
 | T16 | Video corto real de la app (dibujar → S → pegar) cuando la captura esté terminada | S7 | — | esperando app | |
 | T17 | Mergear `feat/landing` a `main` | S1 | — | hecho | eabc9f1 |
@@ -80,3 +80,5 @@ L14 (2026-11-20): "MIT, dale" → LICENSE MIT (Angel Valdés) en 13fc329; repo p
 L15 (2026-11-20): "listo" (wrangler login hecho) → `pnpm test` 33/33, `pnpm deploy` publicó la versión c36f4490 en https://stare-landing.stare-landing.workers.dev ; verificado: / 200 text/html con el title correcto, assets 200, ruta desconocida 404. El link de descarga del DMG da 404 hasta que exista un GitHub Release. Plugin cloudflare@cloudflare instalado en Claude Code.
 
 L16 (2026-11-20): "algo mas corto... no voy a pagar por dominios" → opción "vamos con 2.": Worker renombrado a `stare` (6b3f279) y subdominio de la cuenta cambiado por el usuario a `alvaldes`. URL de producción: https://stare.alvaldes.workers.dev (200 verificado). "ya podemos eliminar el que dice stare-landing" → Worker viejo borrado con `wrangler delete` (su URL da 404).
+
+L17 (2026-11-20): "sigamos con la og:image de la landing" → `scripts/og.ts` renderiza `dist/client/og.png` (1200×630) en el build con satori + resvg (devDependencies, nunca en el Worker) y la tipografía Schibsted Grotesk estática (@fontsource, .woff: satori no lee woff2). Meta og:image/og:url/og:type/twitter:card con URL absoluta desde `site.url`. Gotcha: satori usa content-box, así que padding con width 100% ensancha la tarjeta más allá de 1200px; los márgenes van en los hijos. RED→GREEN: `scripts/og.test.ts` (firma PNG + IHDR 1200×630) y `src/prerender.test.ts` (meta tags); 35/35, typecheck limpio.

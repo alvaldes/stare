@@ -27,4 +27,17 @@ describe('static prerender', () => {
     expect(html).toContain('<title>Stare')
     expect(html).toContain('id="try"')
   })
+
+  it('points link previews at the absolute og:image', async () => {
+    const { files, fs } = memoryFs()
+    await toSSG(app, fs, { dir: 'out' })
+    const html = files.get('out/index.html') ?? ''
+
+    expect(html).toContain('<meta property="og:image" content="https://stare.alvaldes.workers.dev/og.png"/>')
+    expect(html).toContain('<meta property="og:image:width" content="1200"/>')
+    expect(html).toContain('<meta property="og:image:height" content="630"/>')
+    expect(html).toContain('<meta property="og:url" content="https://stare.alvaldes.workers.dev/"/>')
+    expect(html).toContain('<meta name="twitter:card" content="summary_large_image"/>')
+    expect(html).toContain('<meta name="twitter:image" content="https://stare.alvaldes.workers.dev/og.png"/>')
+  })
 })
