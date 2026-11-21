@@ -23,14 +23,15 @@ the code requirement.
 Diagnostics: the app writes nothing by default. Launch with `STARE_DIAG=1` to make
 it append to `/tmp/stare.log`. `Stare --selftest` writes
 `/tmp/stare-selftest.txt`, offscreen renders of the palette, the editor chrome and
-the settings form in both system appearances, and a mark-composition PNG.
+the settings form in both system appearances, a mark-composition PNG, and a
+blur-composition check with its measured pixels in the report.
 
 ## Keyboard
 
 | Where | Keys |
 | --- | --- |
 | Anywhere | `⌥⇧A` draw over the screen · `⌥⇧M` pointer highlight · `⌥⇧P` pin or unpin the drawing so clicks pass through |
-| Drawing | `P` pen · `H` highlighter · `A` arrow · `L` line · `R` rectangle · `O` ellipse · `T` text · `C` numbered step · `F` laser · `E` eraser |
+| Drawing | `P` pen · `H` highlighter · `A` arrow · `L` line · `R` rectangle · `O` ellipse · `T` text · `C` numbered step · `F` laser · `B` blur · `E` eraser |
 | Drawing | `1`–`8` inks (red, orange, yellow, green, blue, purple, white, black) · `⌘Z` undo · `⇧⌘Z` redo (across displays) · `Esc` clear and leave |
 | Drawing | hold `⇧` for a straight line with pen/highlighter, or a square/circle with rectangle/ellipse |
 | Drawing | `S` capture the display · `⇧S` drag an area (the rest dims) |

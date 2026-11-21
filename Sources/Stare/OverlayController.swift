@@ -24,6 +24,9 @@ final class OverlayController {
     private var toolbar: ToolbarPanel?
     private var previousApplication: NSRunningApplication?
     private let captureService: ScreenCapturing
+    /// Live screen frames for blur marks (T5/S3). Captures run only while the
+    /// overlay is active and at least one display has a visible blur mark.
+    private let liveFrames: LiveFrameSource
     private let cards = CaptureCardController()
     private let editor = CaptureEditorController()
     private var cancellables: Set<AnyCancellable> = []
@@ -31,9 +34,26 @@ final class OverlayController {
     private var pointerTimer: Timer?
     private(set) var isPointerActive = false
 
-    init(captureService: ScreenCapturing = CaptureService()) {
+    init(
+        captureService: ScreenCapturing = CaptureService(),
+        liveFrames: LiveFrameSource = LiveFrameSource()
+    ) {
         self.captureService = captureService
+        self.liveFrames = liveFrames
         wireEditor()
+        // Interest is asked from the canvases, so it is whatever the sessions
+        // actually hold: only capture while the overlay is active and at least
+        // one display has a visible blur mark.
+        liveFrames.displaysNeedingFrames = { [weak self] in
+            guard let self, self.isActive else { return [] }
+            return self.canvases.values
+                .filter { $0.view.hasLiveBlurMarks }
+                .map { $0.displayID }
+        }
+        liveFrames.onFrame = { [weak self] displayID in
+            guard let self, self.isActive, let canvas = self.canvases[displayID] else { return }
+            canvas.view.invalidateLiveBlurMarks()
+        }
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(screenParametersChanged),
@@ -244,6 +264,7 @@ final class OverlayController {
         hideToolbar()
         clearAll()
         tearDownCanvases()
+        liveFrames.stop()
         removeKeyMonitor()
         if restoringFocus { restoreFrontmostApplication() }
         NSCursor.arrow.set()
@@ -331,6 +352,7 @@ final class OverlayController {
         for canvas in canvases.values { canvas.clear() }
         commitOrder.removeAll()
         redoOrder.removeAll()
+        liveFrames.stop()
     }
 
     /// Command-Z: first the mark being dragged, then the most recent committed
@@ -416,6 +438,12 @@ final class OverlayController {
                 self.commitOrder.removeAll { erased.contains($0.strokeID) }
                 self.redoOrder.removeAll { erased.contains($0.strokeID) }
             }
+            // The live blur path: the view reads its display's latest frame and
+            // reports blur interest changes so the frame source starts and
+            // stops its timer on its own.
+            canvas.view.displayID = displayID
+            canvas.view.liveFrameSource = liveFrames
+            canvas.view.onBlurMarksChanged = { [weak self] in self?.liveFrames.wake() }
             canvases[displayID] = canvas
         }
     }
@@ -423,6 +451,7 @@ final class OverlayController {
     private func tearDownCanvases() {
         for canvas in canvases.values { canvas.panel.orderOut(nil) }
         canvases.removeAll()
+        liveFrames.stop()
     }
 
     private func screenUnderPointer() -> NSScreen? {

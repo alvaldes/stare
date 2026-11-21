@@ -17,6 +17,14 @@ final class OverlayView: NSView {
     var onErase: (([UUID]) -> Void)?
     /// Asks for a capture: nil means the whole display, a rect means that area.
     var onCaptureRequest: ((CGRect?) -> Void)?
+    /// Latest live frames per display, owned by the controller. Blur marks
+    /// paint the real screen content from here; nil in headless renders.
+    weak var liveFrameSource: LiveFrameSource?
+    /// Which display this view draws, so the frame source can be queried.
+    var displayID: CGDirectDisplayID = 0
+    /// Blur marks appear and disappear through several paths (drag, commit,
+    /// undo, erase, clear); the live frame source needs a signal each time.
+    var onBlurMarksChanged: (() -> Void)?
 
     static let textFont = NSFont.systemFont(ofSize: 20, weight: .regular)
     /// The pointer highlight is a thick translucent band with bright edges and a
@@ -130,6 +138,7 @@ final class OverlayView: NSView {
         committedBounds.removeAll()
         finishTextEditing(commit: false)
         stopLaserTimer()
+        noteBlurInterestChanged()
         needsDisplay = true
     }
 
@@ -138,6 +147,7 @@ final class OverlayView: NSView {
     func discardActiveMark() -> Bool {
         guard session.active != nil else { return false }
         session.undo()
+        noteBlurInterestChanged()
         needsDisplay = true
         return true
     }
@@ -148,6 +158,7 @@ final class OverlayView: NSView {
     @discardableResult
     func redoMark(id: UUID) -> Bool {
         guard session.undoneStrokes.last?.id == id, session.redo() else { return false }
+        noteBlurInterestChanged()
         needsDisplay = true
         return true
     }
@@ -157,8 +168,35 @@ final class OverlayView: NSView {
     func removeMark(id: UUID) -> Bool {
         guard session.remove(id: id) else { return false }
         committedBounds.removeValue(forKey: id)
+        noteBlurInterestChanged()
         needsDisplay = true
         return true
+    }
+
+    // MARK: - Live blur
+
+    /// Live frames are only worth capturing while a blur mark is visible on
+    /// this display, committed or being dragged.
+    var hasLiveBlurMarks: Bool {
+        session.active?.tool == .blur || session.strokes.contains { $0.tool == .blur }
+    }
+
+    /// A new live frame arrived: repaint the blur marks only. A frame cannot
+    /// change anything else, so canvases without blur marks never redraw.
+    func invalidateLiveBlurMarks() {
+        guard hasLiveBlurMarks else { return }
+        for stroke in session.strokes where stroke.tool == .blur {
+            setNeedsDisplay(stroke.bounds)
+        }
+        if let active = session.active, active.tool == .blur {
+            setNeedsDisplay(active.bounds)
+        }
+    }
+
+    /// Tells the frame source that blur interest may have changed; this is
+    /// also what stops its timer when the last blur mark disappears.
+    private func noteBlurInterestChanged() {
+        onBlurMarksChanged?()
     }
 
     // MARK: - Mouse
@@ -197,6 +235,7 @@ final class OverlayView: NSView {
 
         session.begin(at: point, tool: state.tool, ink: state.ink)
         if state.tool.isTransient { startLaserTimer() }
+        noteBlurInterestChanged()
         setNeedsDisplay(dirtyRect(around: point, other: nil))
     }
 
@@ -284,6 +323,7 @@ final class OverlayView: NSView {
         Diag.log("commit strokes=\(session.strokes.count)")
         // Full redraw: the first mark also removes the armed frame at the edges.
         needsDisplay = true
+        noteBlurInterestChanged()
     }
 
     // MARK: - Area selection
@@ -334,6 +374,7 @@ final class OverlayView: NSView {
         guard !removed.isEmpty else { return }
         for id in removed { committedBounds.removeValue(forKey: id) }
         onErase?(removed)
+        noteBlurInterestChanged()
         Diag.log("erase count=\(removed.count) remaining=\(session.strokes.count)")
         needsDisplay = true
     }
@@ -746,6 +787,10 @@ final class OverlayView: NSView {
             drawText(stroke)
             return
         }
+        if stroke.tool == .blur {
+            drawBlur(stroke, in: context)
+            return
+        }
         MarkRenderer.draw(
             stroke: stroke,
             in: context,
@@ -754,6 +799,74 @@ final class OverlayView: NSView {
         if stroke.tool == .number {
             drawStepNumber(stroke)
         }
+    }
+
+    /// T5/S3, live blur: a blur mark shows the real screen content underneath,
+    /// gaussian blurred, from the latest live frame. The frame is in display
+    /// pixels while this view is in points, and `BlurEffect` works in image
+    /// pixels with a bottom-left origin while this view is flipped, so the
+    /// crop rect is converted and the image unmirrored inside the mark's
+    /// rectangle — the same arrangement the capture compositor uses. With no
+    /// frame yet (the first instants of a drag, or Screen Recording denied) a
+    /// neutral translucent fill with a thin border still shows where the mark
+    /// is, and nothing crashes or paints garbage.
+    private func drawBlur(_ stroke: Stroke, in context: CGContext) {
+        guard let first = stroke.points.first, let last = stroke.points.last else { return }
+        let rect = PathBuilder.normalizedRect(from: first, to: last)
+        guard rect.width > 0, rect.height > 0 else { return }
+
+        if let frame = liveFrameSource?.frame(for: displayID), bounds.width > 0 {
+            // Scale derived from the frame, never hardcoded: image pixels per point.
+            let scale = CGFloat(frame.width) / max(bounds.width, 1)
+            let pixelRect = CGRect(
+                x: rect.minX * scale,
+                // Bottom-left pixel origin under a top-left view origin.
+                y: CGFloat(frame.height) - rect.maxY * scale,
+                width: rect.width * scale,
+                height: rect.height * scale
+            )
+            if let blurred = BlurEffect.crop(
+                frame,
+                pixelRect: pixelRect,
+                radius: BlurEffect.defaultRadius * scale
+            ) {
+                // The crop may cover less than the full rect when the mark
+                // reaches past the frame: draw it at the intersection, clipped
+                // to the mark. The context is flipped for overlay space, so an
+                // image drawn plainly would land upside down; unflip it inside
+                // the rectangle.
+                let landed = pixelRect.intersection(
+                    CGRect(x: 0, y: 0, width: frame.width, height: frame.height)
+                )
+                let viewRect = CGRect(
+                    x: landed.minX / scale,
+                    y: (CGFloat(frame.height) - landed.maxY) / scale,
+                    width: landed.width / scale,
+                    height: landed.height / scale
+                )
+                context.saveGState()
+                context.clip(to: rect)
+                context.translateBy(x: viewRect.minX, y: viewRect.maxY)
+                context.scaleBy(x: 1, y: -1)
+                context.draw(blurred, in: CGRect(origin: .zero, size: viewRect.size))
+                context.restoreGState()
+                return
+            }
+        }
+
+        // Fallback: no frame yet, or Screen Recording denied.
+        context.saveGState()
+        context.setFillColor(CGColor(gray: 0.5, alpha: 0.3))
+        context.fill(rect)
+        context.setStrokeColor(CGColor(gray: 0, alpha: 0.7))
+        context.setLineWidth(2)
+        context.addRect(rect.insetBy(dx: 1, dy: 1))
+        context.strokePath()
+        context.setStrokeColor(CGColor(gray: 1, alpha: 0.9))
+        context.setLineWidth(1)
+        context.addRect(rect.insetBy(dx: 2, dy: 2))
+        context.strokePath()
+        context.restoreGState()
     }
 
     private func drawText(_ stroke: Stroke) {
