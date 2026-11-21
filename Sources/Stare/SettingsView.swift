@@ -256,19 +256,37 @@ private struct GeneralPane: View {
 
 // MARK: - Pointer Highlight
 
-/// The pointer highlight's appearance settings. Today's renderer draws exactly
-/// two shapes (ring and squircle): Dot, Marker tip and Spotlight arrive with
-/// T7, which first teaches the renderer to draw them — offering them here
-/// before then would show a highlight that lies about its shape.
+/// The pointer highlight's appearance settings (T7/S5). Every control writes
+/// through the one preferences blob, and the preview draws the highlight with
+/// the production renderer (`PointerHighlightRenderer`) at the real chosen
+/// size over a light and a dark background, so what the user configures is
+/// exactly what ⌥⇧M shows.
 private struct MarkerPane: View {
     @ObservedObject var model: PreferencesModel
-    private let presets: [PointerStylePreset] = [.ring, .squircle]
+    /// Representative ink for the preview and the swatch-less case: the real
+    /// highlight follows the active ink while drawing.
+    private let sampleInk: Ink = .red
+
+    /// Where the highlight's colour comes from, as the picker sees it.
+    private enum ColourMode {
+        case followInk, fixed
+    }
 
     var body: some View {
         VStack(spacing: 16) {
             PaneHeader(title: "Pointer Highlight", subtitle: "The highlight that follows the pointer (⌥⇧M).")
 
             SettingsCard(title: "Highlight", symbol: "scope") {
+                SettingRow(
+                    title: "Style",
+                    content: Picker("", selection: $model.pointer.preset) {
+                        ForEach(PointerStylePreset.allCases, id: \.self) { preset in
+                            Text(preset.title).tag(preset)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 180)
+                )
                 SettingRow(
                     title: "Size",
                     content: HStack(spacing: 8) {
@@ -281,20 +299,29 @@ private struct MarkerPane: View {
                     }
                 )
                 SettingRow(
-                    title: "Shape",
-                    content: Picker("", selection: $model.pointer.preset) {
-                        ForEach(presets, id: \.self) { preset in
-                            Text(preset.title).tag(preset)
-                        }
+                    title: "Band width",
+                    detail: bandDetail,
+                    content: HStack(spacing: 8) {
+                        Slider(value: $model.pointer.bandWidth, in: PointerStyle.bandWidthRange)
+                            .disabled(!bandApplies)
+                            .frame(width: 180)
+                        Text("\(Int((model.pointer.bandWidth * 100).rounded())) %")
+                            .font(.callout.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 44, alignment: .trailing)
                     }
-                    .labelsHidden()
-                    .frame(width: 180)
                 )
                 SettingRow(
                     title: "Glow",
-                    detail: "A soft halo outside the highlight's edge.",
-                    content: Toggle("", isOn: glow)
-                        .labelsHidden()
+                    detail: "A soft halo outside the highlight's edge; zero turns it off.",
+                    content: HStack(spacing: 8) {
+                        Slider(value: $model.pointer.glowIntensity, in: PointerStyle.glowRange)
+                            .frame(width: 180)
+                        Text(glowLabel)
+                            .font(.callout.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 44, alignment: .trailing)
+                    }
                 )
                 SettingRow(
                     title: "Fade when idle",
@@ -306,17 +333,108 @@ private struct MarkerPane: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            SettingsCard(title: "Colour", symbol: "paintpalette") {
+                SettingRow(
+                    title: "Colour",
+                    detail: "Either the ink active while drawing, or the highlight's own fixed one.",
+                    content: Picker("", selection: colourMode) {
+                        Text("Follow the current ink").tag(ColourMode.followInk)
+                        Text("Fixed colour").tag(ColourMode.fixed)
+                    }
+                    .pickerStyle(.segmented)
+                )
+                if case .fixed = model.pointer.colorSource {
+                    SettingRow(
+                        title: "Fixed colour",
+                        detail: nil,
+                        content: HStack(spacing: 7) {
+                            ForEach(Ink.allCases) { ink in
+                                swatch(ink)
+                            }
+                        }
+                    )
+                }
+            }
+
+            SettingsCard(title: "Preview", symbol: "eye") {
+                VStack(spacing: 10) {
+                    PointerPreviewView(style: model.pointer, ink: sampleInk)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                    Text("Drawn live by the same renderer the overlay uses, at the real chosen size. "
+                        + "Shown in red; with “Follow the current ink” the highlight takes the active ink while drawing.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
     }
 
-    /// The glow is stored as one number (`glowIntensity`, 0...1); the toggle
-    /// maps off/on to 0/1, so switching it on restores the full intensity the
-    /// renderer has always used.
-    private var glow: Binding<Bool> {
+    /// The band is part of the hollow shapes only: the Dot is filled and the
+    /// Spotlight has no hard edge, so their appearance ignores the thickness
+    /// and the control says so instead of silently doing nothing.
+    private var bandApplies: Bool {
+        switch model.pointer.preset {
+        case .dot, .spotlight: false
+        default: true
+        }
+    }
+
+    private var bandDetail: String {
+        bandApplies
+            ? "Thickness of the band, as a share of the highlight's size."
+            : "The \(model.pointer.preset.title) style has no band; thickness is ignored."
+    }
+
+    /// The glow is a strength (0...1); the label reads it as one: off at
+    /// zero, full at one, a percentage in between.
+    private var glowLabel: String {
+        let intensity = model.pointer.glowIntensity
+        if intensity == 0 { return "Off" }
+        if intensity == PointerStyle.glowRange.upperBound { return "Full" }
+        return "\(Int((intensity * 100).rounded())) %"
+    }
+
+    private var colourMode: Binding<ColourMode> {
         Binding(
-            get: { model.pointer.glowIntensity > 0 },
-            set: { model.pointer.glowIntensity = $0 ? PointerStyle.defaultGlowIntensity : 0 }
+            get: {
+                if case .fixed = model.pointer.colorSource { return .fixed }
+                return .followInk
+            },
+            set: { mode in
+                switch (mode, model.pointer.colorSource) {
+                case (.followInk, _):
+                    model.pointer.colorSource = .ink
+                case (.fixed, .fixed(let ink)):
+                    model.pointer.colorSource = .fixed(ink)
+                case (.fixed, _):
+                    model.pointer.colorSource = .fixed(.red)
+                }
+            }
         )
+    }
+
+    /// One ink as a round swatch; the chosen one carries an accent ring.
+    private func swatch(_ ink: Ink) -> some View {
+        Button {
+            model.pointer.colorSource = .fixed(ink)
+        } label: {
+            Circle()
+                .fill(Color(cgColor: ink.cgColor()))
+                .frame(width: 20, height: 20)
+                .overlay(
+                    Circle().strokeBorder(Color(nsColor: .separatorColor))
+                )
+                .overlay {
+                    if case .fixed(let chosen) = model.pointer.colorSource, chosen == ink {
+                        Circle().strokeBorder(Color(nsColor: .controlAccentColor), lineWidth: 2)
+                            .padding(-3)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(ink.displayName) colour")
     }
 }
 

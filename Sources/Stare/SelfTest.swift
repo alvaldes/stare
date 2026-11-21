@@ -159,6 +159,10 @@ enum SelfTest {
         // and clearly wider than the old fixed 420-pt form.
         report.append(contentsOf: MainActor.assumeIsolated { settingsReport() })
 
+        // Marker styles (T7/S5): every pointer preset rendered in light and
+        // dark through the same preview view the Settings pane uses.
+        report.append(contentsOf: MainActor.assumeIsolated { markerStylesReport() })
+
         // Onboarding (T5/S1–S3): the guide renders in both appearances, its
         // window can become key from an .accessory app, has a real frame and
         // reports the permission state it saw. The finish closure records the
@@ -681,6 +685,82 @@ enum SelfTest {
             lines.append("  ws id=\(number) layer=\(layer) alpha=\(alpha) bounds=\(bounds)")
         }
         return lines
+    }
+
+    // MARK: - Marker styles (T7/S5)
+
+    /// Renders each of the five pointer presets in both system appearances
+    /// through the same preview view the Settings pane shows (one PNG per
+    /// preset per appearance), and checks the preview's own transparent
+    /// bitmap against the pulse report's extent measurement so a render is
+    /// proven to have painted real pixels, not an empty tile.
+    @MainActor
+    private static func markerStylesReport() -> [String] {
+        var report: [String] = []
+        var written = 0
+        var painted = 0
+        let total = PointerStylePreset.allCases.count * 2
+        for preset in PointerStylePreset.allCases {
+            var style = PointerStyle.standard
+            style.preset = preset
+            // The preview is proven to paint its highlight on a transparent
+            // bitmap before any hosting render: the extent must be non-empty
+            // for every preset.
+            let extent = PointerHighlightPreview
+                .cgImage(for: style, ink: .red, scale: 1)
+                .flatMap(opaqueExtentPixels)
+            if let extent, extent.width > 20, extent.height > 20 {
+                painted += 1
+            }
+            for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+                let path = "/tmp/stare-marker-\(preset.rawValue)-\(name).png"
+                if renderMarkerPreview(style: style, appearanceName: appearance, to: path) {
+                    written += 1
+                }
+            }
+        }
+        let passed = written == total && painted == PointerStylePreset.allCases.count
+        report.append(
+            "marker styles result=\(passed ? "PASS" : "FAIL") presets=\(PointerStylePreset.allCases.count) "
+                + "previewPainted=\(painted)/\(PointerStylePreset.allCases.count) pngs=\(written)/\(total) "
+                + "path=/tmp/stare-marker-<preset>-<light|dark>.png"
+        )
+        return report
+    }
+
+    /// Renders one marker preview through the real hosting path: a real
+    /// borderless window, the pattern the settings render uses, because a
+    /// windowless hosting view lays content out shifted.
+    @MainActor
+    private static func renderMarkerPreview(
+        style: StareCore.PointerStyle,
+        appearanceName: NSAppearance.Name,
+        to path: String
+    ) -> Bool {
+        let hosting = NSHostingView(rootView: PointerPreviewView(style: style, ink: .red))
+        hosting.sizingOptions = [.intrinsicContentSize]
+        hosting.appearance = NSAppearance(named: appearanceName)
+        hosting.frame = CGRect(origin: .zero, size: hosting.fittingSize)
+        hosting.layoutSubtreeIfNeeded()
+
+        let window = NSWindow(
+            contentRect: CGRect(origin: .zero, size: hosting.bounds.size),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.appearance = NSAppearance(named: appearanceName)
+        window.contentView = hosting
+        window.orderFrontRegardless()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+        defer { window.orderOut(nil) }
+
+        guard let representation = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else {
+            return false
+        }
+        hosting.cacheDisplay(in: hosting.bounds, to: representation)
+        guard let image = representation.cgImage else { return false }
+        return writePNG(image, to: path)
     }
 
     /// Renders the onboarding guide with a fixed appearance and the real
