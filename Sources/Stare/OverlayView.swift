@@ -19,6 +19,15 @@ class OverlayView: NSView {
     var onRedo: (() -> Void)?
     /// Marks removed by the eraser, so the undo history can drop them too.
     var onErase: (([UUID]) -> Void)?
+    /// A committed transform of an existing mark (move, scale, rotate), so the
+    /// global history records it in real order: one drag is one undo step.
+    var onTransform: ((Stroke) -> Void)?
+    /// A mark deleted with the cursor, so the global history can hand it to
+    /// the owning display's redo stack.
+    var onDelete: ((UUID) -> Void)?
+    /// This view selected a mark: the controller clears the selection on every
+    /// other display, so at most one mark is selected in the whole app.
+    var onSelectionChanged: ((UUID) -> Void)?
     /// Asks for a capture: nil means the whole display, a rect means that area.
     var onCaptureRequest: ((CGRect?) -> Void)?
     /// Latest live frames per display, owned by the controller. Blur marks
@@ -82,11 +91,52 @@ class OverlayView: NSView {
 
     /// Bounds of committed marks, computed once, so a redraw never rebuilds a
     /// path just to decide whether a stroke is visible. Page space, so the
-    /// whiteboard clears it when the presented page changes.
+    /// whiteboard clears it when the presented page changes. Rotated marks
+    /// store their rotated bounds, which is what culling needs.
     var committedBounds: [UUID: CGRect] = [:]
     private var lastDragPoint: CGPoint?
     private var lastStraight = false
     private var lastInputTimestamp: TimeInterval = 0
+
+    // MARK: - Mark selection (T11/S6)
+
+    /// The mark this view has selected, if any. At most one mark is selected
+    /// per app: selecting reports through `onSelectionChanged` so the
+    /// controller clears the selection on every other display.
+    private(set) var selectedMarkID: UUID?
+    /// The drag in progress on the selected mark. Every frame transforms the
+    /// untouched snapshot into a preview; the session is journalled exactly
+    /// once, on mouse up, so one drag is one undo step.
+    private var selectionDrag: SelectionDrag?
+    /// Untouched drag-start snapshot the preview is transformed from.
+    private var selectionOriginal: Stroke?
+    /// The transformed mark drawn live on top during a drag.
+    private var selectionPreview: Stroke?
+
+    /// What a drag on the selected mark does. The handle decides: the body
+    /// moves, a corner resizes uniformly, the knob rotates. The shape never
+    /// changes — that is `MarkTransform`'s contract.
+    private enum SelectionDrag {
+        case move(start: CGPoint)
+        case scale(handle: MarkHandle)
+        case rotate(startAngle: CGFloat)
+    }
+
+    /// Extra reach when grabbing a mark with the cursor, so a click near a
+    /// mark selects instead of missing.
+    static let selectionHitRadius: CGFloat = 10
+
+    /// Gives the selection up: no handles remain and no stale id survives a
+    /// page change or a clear.
+    func clearSelection() {
+        guard selectedMarkID != nil || selectionDrag != nil || selectionOriginal != nil
+            || selectionPreview != nil else { return }
+        selectedMarkID = nil
+        selectionDrag = nil
+        selectionOriginal = nil
+        selectionPreview = nil
+        needsDisplay = true
+    }
 
     init(frame: NSRect, state: EditorState, onEscape: @escaping () -> Void) {
         self.state = state
@@ -135,10 +185,14 @@ class OverlayView: NSView {
         cursorForTool.set()
     }
 
-    /// Each tool shouts what it does: text wants an I-beam, drawing tools want a
-    /// crosshair.
+    /// Each tool shouts what it does: text wants an I-beam, the edit cursor
+    /// wants an arrow, drawing tools want a crosshair.
     private var cursorForTool: NSCursor {
-        state.tool == .text ? .iBeam : .crosshair
+        switch state.tool {
+        case .text: .iBeam
+        case .select: .arrow
+        default: .crosshair
+        }
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -172,6 +226,7 @@ class OverlayView: NSView {
     func clear() {
         session.clear()
         committedBounds.removeAll()
+        clearSelection()
         finishTextEditing(commit: false)
         stopLaserTimer()
         noteBlurInterestChanged()
@@ -190,15 +245,50 @@ class OverlayView: NSView {
         return true
     }
 
-    /// Puts a specific mark back, used by the global redo history. It only takes
-    /// the mark the session undid last, so a global order that drifted cannot
-    /// resurrect the wrong mark.
+    /// Puts back the mark the global history undid on this display. The redo
+    /// journal answers by id, so a transform undone here reapplies too — the
+    /// old guard on `undoneStrokes` could not see transform entries.
     @discardableResult
     func redoMark(id: UUID) -> Bool {
-        guard session.undoneStrokes.last?.id == id, session.redo() else { return false }
+        guard session.canRedo(markWithID: id), session.redo() else { return false }
+        committedBounds.removeValue(forKey: id)
         noteBlurInterestChanged()
         noteSessionChanged()
         needsDisplay = true
+        return true
+    }
+
+    /// Reverses the newest change to the mark with this id, used by the global
+    /// undo history: a draw goes away, a transform restores its geometry. The
+    /// guard keeps the global order and the session's journal from drifting —
+    /// the controller only pops an entry when the session agrees it is next.
+    @discardableResult
+    func undoMark(id: UUID) -> Bool {
+        guard session.canUndo(markWithID: id), session.undo() else { return false }
+        if let selected = selectedMarkID, !session.strokes.contains(where: { $0.id == selected }) {
+            clearSelection()
+        }
+        committedBounds.removeValue(forKey: id)
+        noteBlurInterestChanged()
+        noteSessionChanged()
+        needsDisplay = true
+        return true
+    }
+
+    /// ⌫ with a selection: the mark goes away through `remove(id:)`, so the
+    /// session's redo journal holds it and the global history can restore it.
+    @discardableResult
+    func deleteSelectedMark() -> Bool {
+        guard let id = selectedMarkID,
+              session.strokes.contains(where: { $0.id == id }),
+              session.remove(id: id) else { return false }
+        clearSelection()
+        committedBounds.removeValue(forKey: id)
+        onDelete?(id)
+        noteBlurInterestChanged()
+        noteSessionChanged()
+        needsDisplay = true
+        Diag.log("delete mark id=\(id)")
         return true
     }
 
@@ -222,14 +312,16 @@ class OverlayView: NSView {
     }
 
     /// A new live frame arrived: repaint the blur marks only. A frame cannot
-    /// change anything else, so canvases without blur marks never redraw.
+    /// change anything else, so canvases without blur marks never redraw. The
+    /// invalidation uses the rotated bounding box: a rotated blur patch draws
+    /// outside its unrotated one, and repaintng only `bounds` would tear it.
     func invalidateLiveBlurMarks() {
         guard hasLiveBlurMarks else { return }
         for stroke in session.strokes where stroke.tool == .blur {
-            setNeedsDisplay(stroke.bounds)
+            setNeedsDisplay(stroke.displayBounds)
         }
         if let active = session.active, active.tool == .blur {
-            setNeedsDisplay(active.bounds)
+            setNeedsDisplay(active.displayBounds)
         }
     }
 
@@ -268,6 +360,10 @@ class OverlayView: NSView {
         case .text:
             beginTextEditing(at: point, viewPoint: viewPoint)
             return
+        case .select:
+            finishPendingTextEditing()
+            beginSelection(at: point)
+            return
         default:
             // A mark of another tool must not leave a text editor behind: it
             // would keep its field as a subview and swallow what is underneath.
@@ -287,6 +383,12 @@ class OverlayView: NSView {
             guard let origin = selectionOrigin else { return }
             selectionRect = PathBuilder.normalizedRect(from: origin, to: point)
             needsDisplay = true
+            return
+        }
+
+        // Editing an existing mark: the handle decides, the preview follows.
+        if state.tool == .select, selectionDrag != nil {
+            updateSelectionPreview(at: pagePoint(convert(event.locationInWindow, from: nil)))
             return
         }
 
@@ -350,6 +452,15 @@ class OverlayView: NSView {
             return
         }
 
+        // Editing a mark: the pointer's final position is applied before the
+        // preview is journalled exactly once, so one drag is one undo step,
+        // never one per mouse event.
+        if state.tool == .select {
+            updateSelectionPreview(at: pagePoint(convert(event.locationInWindow, from: nil)))
+            commitSelectionDrag()
+            return
+        }
+
         // Click tools are committed by their own path: numbered steps when
         // placed, text when the editor confirms. Committing here would close the
         // text mark the click just opened.
@@ -390,6 +501,106 @@ class OverlayView: NSView {
         selectionRect = nil
         needsDisplay = true
         Diag.log("area selection cancelled")
+    }
+
+    // MARK: - Editing marks (T11/S6)
+
+    /// A click with the edit cursor: a handle of the already selected mark
+    /// wins, then the topmost mark under the pointer (newest first), then the
+    /// selection is given up. A click that lands on a mark arms its drag right
+    /// away, so select-and-move is one gesture.
+    private func beginSelection(at point: CGPoint) {
+        if let id = selectedMarkID, let selected = session.strokes.first(where: { $0.id == id }) {
+            if let handle = MarkSelection(stroke: selected).handle(at: point) {
+                startSelectionDrag(handle, on: selected, at: point)
+                return
+            }
+        }
+
+        guard let hit = session.strokes.last(where: {
+            $0.isSelectedByCursor(at: point, radius: Self.selectionHitRadius)
+        }) else {
+            clearSelection()
+            return
+        }
+        if selectedMarkID != hit.id {
+            selectedMarkID = hit.id
+            onSelectionChanged?(hit.id)
+        }
+        let handle = MarkSelection(stroke: hit).handle(at: point) ?? .body
+        startSelectionDrag(handle, on: hit, at: point)
+    }
+
+    /// Arms the drag the grabbed handle asks for. The mark's untouched
+    /// snapshot is kept: every preview frame transforms it from scratch, which
+    /// is what makes a drag idempotent.
+    private func startSelectionDrag(_ handle: MarkHandle, on stroke: Stroke, at point: CGPoint) {
+        selectionOriginal = stroke
+        selectionPreview = nil
+        switch handle {
+        case .body:
+            selectionDrag = .move(start: point)
+        case .topLeft, .topRight, .bottomLeft, .bottomRight:
+            selectionDrag = .scale(handle: handle)
+        case .rotation:
+            let anchor = stroke.anchor
+            selectionDrag = .rotate(startAngle: atan2(point.y - anchor.y, point.x - anchor.x))
+        }
+    }
+
+    /// One preview frame from the untouched snapshot.
+    private func updateSelectionPreview(at point: CGPoint) {
+        guard let drag = selectionDrag, let original = selectionOriginal else { return }
+        switch drag {
+        case let .move(start):
+            selectionPreview = MarkTransform.translated(
+                original,
+                by: CGPoint(x: point.x - start.x, y: point.y - start.y)
+            )
+        case let .scale(handle):
+            selectionPreview = MarkTransform.scaled(original, dragging: handle, to: point)
+        case let .rotate(startAngle):
+            let anchor = original.anchor
+            let angle = atan2(point.y - anchor.y, point.x - anchor.x) - startAngle
+            selectionPreview = MarkTransform.rotated(original, by: angle)
+        }
+        needsDisplay = true
+    }
+
+    /// Ends the drag: the preview replaces the committed mark exactly once, so
+    /// the global history sees one transform, not one per mouse event.
+    private func commitSelectionDrag() {
+        defer {
+            selectionDrag = nil
+            selectionOriginal = nil
+            selectionPreview = nil
+            needsDisplay = true
+        }
+        guard let preview = selectionPreview, let original = selectionOriginal,
+              preview != original, session.replace(preview) else {
+            if selectionPreview != nil && session.strokes.first(where: { $0.id == selectedMarkID }) == nil {
+                clearSelection()
+            }
+            return
+        }
+        committedBounds[preview.id] = preview.displayBounds
+        onTransform?(preview)
+        noteBlurInterestChanged()
+        noteSessionChanged()
+        Diag.log("transform \(preview.tool.rawValue) rotation=\(preview.rotation)")
+    }
+
+    /// Applies the mark's rotation about its anchor to a branch that draws its
+    /// own geometry, the same rule the capture compositor uses.
+    private func withMarkRotation(_ stroke: Stroke, in context: CGContext, _ body: () -> Void) {
+        guard stroke.rotation != 0 else {
+            body()
+            return
+        }
+        context.saveGState()
+        context.concatenate(Stroke.rotationTransform(around: stroke.anchor, by: stroke.rotation))
+        body()
+        context.restoreGState()
     }
 
     private func drawSelection(in context: CGContext) {
@@ -593,6 +804,12 @@ class OverlayView: NSView {
                 cancelAreaSelection()
                 return
             }
+            // With a mark selected, Escape first gives the selection up instead
+            // of leaving drawing mode, so one stray click never costs the session.
+            if selectedMarkID != nil {
+                clearSelection()
+                return
+            }
             onEscape?()
             return
         }
@@ -619,6 +836,13 @@ class OverlayView: NSView {
                 return
             }
             super.keyDown(with: event)
+            return
+        }
+
+        // ⌫ / Delete with the cursor: the selected mark goes away through the
+        // session, so the global history sees the deletion like any other edit.
+        if state.tool == .select, event.keyCode == 51 || event.keyCode == 117 {
+            deleteSelectedMark()
             return
         }
 
@@ -816,6 +1040,7 @@ class OverlayView: NSView {
 
         drawDrawingFrame(in: context)
         drawSelection(in: context)
+        drawSelectedMarkChrome(in: context)
         drawHint()
     }
 
@@ -837,8 +1062,11 @@ class OverlayView: NSView {
         }
 
         for stroke in session.strokes where !stroke.tool.isTransient {
+            // The live preview of a transform takes over: the mark is drawn
+            // transformed on top instead of both versions at once.
+            if let preview = selectionPreview, stroke.id == preview.id { continue }
             let box = committedBounds[stroke.id] ?? {
-                let computed = stroke.bounds
+                let computed = stroke.displayBounds
                 committedBounds[stroke.id] = computed
                 return computed
             }()
@@ -848,6 +1076,57 @@ class OverlayView: NSView {
 
         if let active = session.active {
             render(active, in: context)
+        }
+        if let preview = selectionPreview {
+            render(preview, in: context)
+        }
+        context.restoreGState()
+    }
+
+    /// The selection chrome over the selected mark: a dashed box, four corner
+    /// squares and the rotation knob, following the mark as it now looks
+    /// (preview included). View chrome only — it never enters the session, so
+    /// a capture never contains it and `committedBounds` never grows for it.
+    private func drawSelectedMarkChrome(in context: CGContext) {
+        guard state.tool == .select, let id = selectedMarkID else { return }
+        guard let stroke = selectionPreview ?? session.strokes.first(where: { $0.id == id }) else { return }
+
+        let selection = MarkSelection(stroke: stroke)
+        let accent = CGColor(srgbRed: 0.25, green: 0.55, blue: 1, alpha: 1)
+
+        context.saveGState()
+        // Chrome geometry is page space, the same space the marks live in.
+        context.translateBy(x: -panOffset.width, y: -panOffset.height)
+
+        context.saveGState()
+        context.concatenate(
+            Stroke.rotationTransform(around: selection.anchor, by: selection.rotation)
+        )
+        context.setStrokeColor(accent)
+        context.setLineWidth(1.5)
+        context.setLineDash(phase: 0, lengths: [5, 4])
+        context.addRect(selection.unrotatedBounds)
+        context.strokePath()
+        context.restoreGState()
+
+        for (handle, point) in selection.handlePoints(
+            rotationHandleOffset: MarkSelection.defaultRotationHandleOffset
+        ) {
+            if handle == .rotation {
+                context.setFillColor(CGColor(gray: 1, alpha: 1))
+                context.fillEllipse(in: CGRect(x: point.x - 5, y: point.y - 5, width: 10, height: 10))
+                context.setStrokeColor(accent)
+                context.setLineWidth(1.5)
+                context.addEllipse(in: CGRect(x: point.x - 5, y: point.y - 5, width: 10, height: 10))
+                context.strokePath()
+            } else {
+                let square = CGRect(x: point.x - 4, y: point.y - 4, width: 8, height: 8)
+                context.setFillColor(CGColor(gray: 1, alpha: 1))
+                context.fill(square)
+                context.setStrokeColor(accent)
+                context.setLineWidth(1.5)
+                context.stroke(square)
+            }
         }
         context.restoreGState()
     }
@@ -872,11 +1151,11 @@ class OverlayView: NSView {
 
     private func render(_ stroke: Stroke, in context: CGContext, now: Date = Date()) {
         if stroke.tool == .text {
-            drawText(stroke)
+            withMarkRotation(stroke, in: context) { drawText(stroke) }
             return
         }
         if stroke.tool == .blur {
-            drawBlur(stroke, in: context)
+            withMarkRotation(stroke, in: context) { drawBlur(stroke, in: context) }
             return
         }
         MarkRenderer.draw(
@@ -885,7 +1164,7 @@ class OverlayView: NSView {
             opacity: stroke.opacity(at: now, laserLifetime: session.laserLifetime)
         )
         if stroke.tool == .number {
-            drawStepNumber(stroke)
+            withMarkRotation(stroke, in: context) { drawStepNumber(stroke) }
         }
     }
 
@@ -960,18 +1239,32 @@ class OverlayView: NSView {
     private func drawText(_ stroke: Stroke) {
         guard let text = stroke.text, !text.isEmpty, let origin = stroke.points.first else { return }
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: Self.textFont,
+            .font: Self.textFont(for: stroke),
             .foregroundColor: NSColor(cgColor: stroke.ink.cgColor()) ?? .white,
         ]
         (text as NSString).draw(at: origin, withAttributes: attributes)
+    }
+
+    /// The stroke's own `textSize` sets the font size (matching the capture
+    /// compositor's rule): a scaled mark renders at the size its scaled box
+    /// describes, and an unscaled mark measures back out to the editing font.
+    static func textFont(for stroke: Stroke) -> NSFont {
+        let base = OverlayStyle.textSize
+        guard let text = stroke.text, !text.isEmpty,
+              let size = stroke.textSize, size.width > 0
+        else { return textFont }
+        let width = (text as NSString).size(withAttributes: [.font: textFont]).width
+        guard width > 0.001 else { return textFont }
+        return NSFont.systemFont(ofSize: base * size.width / width, weight: .regular)
     }
 
     private func drawStepNumber(_ stroke: Stroke) {
         guard let number = stroke.stepNumber, let center = stroke.points.first else { return }
 
         let text = "\(number)" as NSString
+        // The digit scales with the badge it sits on (advisory A).
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 15, weight: .semibold),
+            .font: NSFont.systemFont(ofSize: 15 * stroke.badgeScale, weight: .semibold),
             .foregroundColor: Self.numberColour(for: stroke.ink),
         ]
         let size = text.size(withAttributes: attributes)

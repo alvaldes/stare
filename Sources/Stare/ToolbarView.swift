@@ -21,10 +21,15 @@ struct ToolbarView: View {
     /// callbacks exist, hidden in the plain overlay and the editor bar.
     var onPreviousPage: (() -> Void)? = nil
     var onNextPage: (() -> Void)? = nil
+    /// The tools the bar offers. Defaults to the full drawing palette; a
+    /// surface where some tools cannot work (the capture editor) offers a
+    /// filtered set, so no dead button is shown and no dead shortcut arms a
+    /// hidden tool.
+    var toolGroups: [[Tool]] = Tool.toolbarGroups
 
     var body: some View {
         HStack(spacing: 4) {
-            ForEach(Array(Tool.toolbarGroups.enumerated()), id: \.offset) { index, group in
+            ForEach(Array(toolGroups.enumerated()), id: \.offset) { index, group in
                 if index > 0 { divider }
                 ForEach(group) { tool in
                     toolButton(tool)

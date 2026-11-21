@@ -137,7 +137,10 @@ struct EditorChrome: View {
                 ToolbarAction(symbolName: "crop", help: "Crop", handler: onCrop),
                 ToolbarAction(symbolName: "doc.on.doc", help: "Copy", handler: onCopy),
                 ToolbarAction(symbolName: "square.and.arrow.down", help: "Save", handler: onSave),
-            ]
+            ],
+            // The editor draws over a static captured image: tools that need a
+            // live session are not offered here (advisory B).
+            toolGroups: Tool.captureEditorGroups
         )
         .padding(.vertical, 6)
     }
@@ -291,7 +294,9 @@ final class CaptureEditorCanvas: NSView {
         }
 
         if let character = characters.first {
-            switch ShortcutRouter.resolve(character) {
+            // Only tools the editor offers resolve here: V and T must not arm
+            // a cursor or a text field this surface cannot serve.
+            switch ShortcutRouter.resolve(character, allowedTools: Tool.captureEditorTools) {
             case .tool(let tool):
                 state?.tool = tool
                 return

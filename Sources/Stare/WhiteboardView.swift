@@ -81,6 +81,9 @@ final class WhiteboardView: OverlayView {
     }
 
     private func loadCurrentPage() {
+        // The presented page changed: nothing of the old page's selection may
+        // survive, or handles would grab at marks that are not on the canvas.
+        clearSelection()
         session = board.currentPage.session
         committedBounds.removeAll()
         needsDisplay = true

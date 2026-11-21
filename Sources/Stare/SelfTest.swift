@@ -182,6 +182,10 @@ enum SelfTest {
         // path over a synthetic screen and measure the pixels.
         report.append(contentsOf: blurRenderReport())
 
+        // Edit cursor (T11/S6): select, move, scale, rotate and delete a mark
+        // through the real view path, with the geometry asserts on the session.
+        report.append(contentsOf: selectReport())
+
         // Click pulse (T7/S3): the pulse curve sampled the way the pointer
         // timer samples it, and the highlight rendered through the real
         // pointer drawing path at rest, peak and settled.
@@ -395,10 +399,18 @@ enum SelfTest {
         }
 
         // Per page render through the real view path, background sampled.
+        // The sample scale is the render's own backing scale, never assumed:
+        // the view's window carries the screen's scale (1x on a non-Retina
+        // main display), and sampling outside the bitmap answers nil.
+        func sampleScale(of image: CGImage?) -> CGFloat {
+            guard let image, view.bounds.width > 0 else { return 2 }
+            return CGFloat(image.width) / max(view.bounds.width, 1)
+        }
         view.selectPreviousPage()
         let page1 = renderView(view, to: "/tmp/stare-board-1.png")
-        let page1Background = page1.map { rgb($0, at: CGPoint(x: 600, y: 100), scale: 2) } ?? (red: -1, green: -1, blue: -1)
-        let page1Mark = page1.map { rgb($0, at: samplePoint(of: mark1), scale: 2) } ?? (red: -1, green: -1, blue: -1)
+        let page1Scale = sampleScale(of: page1)
+        let page1Background = page1.map { rgb($0, at: CGPoint(x: 600, y: 100), scale: page1Scale) } ?? (red: -1, green: -1, blue: -1)
+        let page1Mark = page1.map { rgb($0, at: samplePoint(of: mark1), scale: page1Scale) } ?? (red: -1, green: -1, blue: -1)
         let page1Ok = page1Background.red >= 245 && page1Mark.red >= 180 && page1Mark.green < 120
         report.append(
             "board page=1 png=/tmp/stare-board-1.png background=\(page1Background) expect 255/255/255 "
@@ -407,8 +419,9 @@ enum SelfTest {
 
         view.selectNextPage()
         let page2 = renderView(view, to: "/tmp/stare-board-2.png")
-        let page2Background = page2.map { rgb($0, at: CGPoint(x: 600, y: 100), scale: 2) } ?? (red: -1, green: -1, blue: -1)
-        let page2Mark = page2.map { rgb($0, at: samplePoint(of: mark2), scale: 2) } ?? (red: -1, green: -1, blue: -1)
+        let page2Scale = sampleScale(of: page2)
+        let page2Background = page2.map { rgb($0, at: CGPoint(x: 600, y: 100), scale: page2Scale) } ?? (red: -1, green: -1, blue: -1)
+        let page2Mark = page2.map { rgb($0, at: samplePoint(of: mark2), scale: page2Scale) } ?? (red: -1, green: -1, blue: -1)
         let page2Ok = page2Background.red <= 15 && page2Mark.blue >= 180 && page2Mark.red < 120
         report.append(
             "board page=2 png=/tmp/stare-board-2.png background=\(page2Background) expect 0/0/0 "
@@ -446,13 +459,13 @@ enum SelfTest {
         let probePage = CGPoint(x: (mark1.points.first?.x ?? 0) + 10, y: mark1.points.first?.y ?? 0)
         let beforePan = renderView(view, to: "/tmp/stare-board-pan-before.png")
         let beforePanPoint = view.viewPoint(fromPage: probePage)
-        let beforeHit = beforePan.map { rgb($0, at: beforePanPoint, scale: 2) } ?? (red: -1, green: -1, blue: -1)
+        let beforeHit = beforePan.map { rgb($0, at: beforePanPoint, scale: page1Scale) } ?? (red: -1, green: -1, blue: -1)
         view.pan(byPointerDelta: CGSize(width: 60, height: 40))
         let afterPan = renderView(view, to: "/tmp/stare-board-pan-after.png")
         let storedAfter = board.pages[0].session.strokes.flatMap(\.points)
         let afterPanPoint = view.viewPoint(fromPage: probePage)
-        let afterHit = afterPan.map { rgb($0, at: afterPanPoint, scale: 2) } ?? (red: -1, green: -1, blue: -1)
-        let oldSpotHit = afterPan.map { rgb($0, at: beforePanPoint, scale: 2) } ?? (red: -1, green: -1, blue: -1)
+        let afterHit = afterPan.map { rgb($0, at: afterPanPoint, scale: page1Scale) } ?? (red: -1, green: -1, blue: -1)
+        let oldSpotHit = afterPan.map { rgb($0, at: beforePanPoint, scale: page1Scale) } ?? (red: -1, green: -1, blue: -1)
         let storedUnchanged = storedBefore == storedAfter
         let panOk = beforePan != nil && afterPan != nil
             && beforeHit.red >= 180 && beforeHit.green < 120
@@ -468,6 +481,195 @@ enum SelfTest {
         panel.orderOut(nil)
         let passed = page1Ok && page2Ok && captureOk && panOk && inherited && board.count == 2
         report.append("board result=\(passed ? "PASS" : "FAIL")")
+        return report
+    }
+
+    // MARK: - Select (T11/S6)
+
+    /// The edit cursor end to end through the real view path: draw a rectangle,
+    /// select it, move it, scale it, rotate it, deselect it, delete it. Every
+    /// assert is on the session's geometry — what a capture composes from — and
+    /// the renders go to /tmp for a visual check of the selection chrome.
+    private static func selectReport() -> [String] {
+        var report: [String] = []
+        let size = CGSize(width: 900, height: 600)
+        let state = EditorState()
+        state.tool = .rectangle
+        let view = OverlayView(frame: CGRect(origin: .zero, size: size), state: state, onEscape: {})
+
+        // A real borderless window, the way the board section drives its view:
+        // for a windowless view the event-to-view conversion is ambient and
+        // mirrors y, so coordinates would not be trustworthy. Events carry
+        // window-base coordinates (bottom-left origin); the view fills the
+        // window and is flipped, so view point P is window point (P.x, H-P.y).
+        let window = NSWindow(
+            contentRect: CGRect(origin: .zero, size: size),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = view
+        window.orderFrontRegardless()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        defer { window.orderOut(nil) }
+
+        func send(_ type: NSEvent.EventType, _ point: CGPoint) {
+            guard let event = NSEvent.mouseEvent(
+                with: type,
+                location: CGPoint(x: point.x, y: size.height - point.y),
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 1,
+                clickCount: 1,
+                pressure: 1
+            ) else {
+                report.append("FAIL: select \(type.rawValue) event could not be created")
+                return
+            }
+            switch type {
+            case .leftMouseDown: view.mouseDown(with: event)
+            case .leftMouseDragged: view.mouseDragged(with: event)
+            default: view.mouseUp(with: event)
+            }
+        }
+        func drag(from start: CGPoint, to end: CGPoint) {
+            send(.leftMouseDown, start)
+            send(.leftMouseDragged, CGPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2))
+            send(.leftMouseUp, end)
+        }
+        @discardableResult
+        func key(_ keyCode: UInt16, _ characters: String) -> Bool {
+            guard let event = NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: 0,
+                context: nil,
+                characters: characters,
+                charactersIgnoringModifiers: characters,
+                isARepeat: false,
+                keyCode: keyCode
+            ) else { return false }
+            view.keyDown(with: event)
+            return true
+        }
+
+        // The mark to edit: one rectangle through the real drag path.
+        drag(from: CGPoint(x: 100, y: 100), to: CGPoint(x: 300, y: 200))
+        guard var mark = view.session.strokes.first, mark.tool == .rectangle else {
+            report.append("FAIL: select rectangle was not committed")
+            return report
+        }
+        let originalPoints = mark.points
+        let originalGeometry = PathBuilder.path(for: mark).boundingBoxOfPath
+
+        // Select and move in one gesture: click the body, drag it. The session
+        // keeps exactly one mark, transformed in place — never a second one.
+        state.tool = .select
+        drag(from: CGPoint(x: 200, y: 150), to: CGPoint(x: 350, y: 220))
+        guard let moved = view.session.strokes.first, moved.id == mark.id,
+              view.session.strokes.count == 1 else {
+            report.append("FAIL: the move did not transform the selected mark")
+            return report
+        }
+        let expected = originalPoints.map { CGPoint(x: $0.x + 150, y: $0.y + 70) }
+        let moveOk = moved.points == expected
+        report.append(
+            "select move points=\(moved.points.map { "(\(Int($0.x)),\(Int($0.y)))" }.joined(separator: "→")) "
+                + "expect +150,+70 marks=\(view.session.strokes.count) ok=\(moveOk)"
+        )
+        mark = moved
+
+        // One drag is one undo step: undo restores the drawn geometry, redo
+        // reapplies the move, all through the session's transform journal.
+        let undoRestoresMove = view.undoMark(id: mark.id)
+            && view.session.strokes.first?.points == originalPoints
+            && view.redoMark(id: mark.id)
+            && view.session.strokes.first?.points == moved.points
+        report.append("select move undo-restores redo-reapplies ok=\(undoRestoresMove)")
+
+        _ = renderView(view, to: "/tmp/stare-select-selected.png")
+
+        // Scale from the bottom-right corner handle: exactly 2×, and the shape
+        // keeps its proportions (measured on the geometry, whose box has no
+        // constant padding).
+        let handles = MarkSelection(stroke: mark).handlePoints(
+            rotationHandleOffset: MarkSelection.defaultRotationHandleOffset
+        )
+        guard let draggedHandle = handles[.bottomRight], let anchorHandle = handles[.topLeft] else {
+            report.append("FAIL: selection handles missing")
+            return report
+        }
+        drag(
+            from: draggedHandle,
+            to: CGPoint(x: anchorHandle.x + 2 * (draggedHandle.x - anchorHandle.x),
+                        y: anchorHandle.y + 2 * (draggedHandle.y - anchorHandle.y))
+        )
+        guard let scaled = view.session.strokes.first else {
+            report.append("FAIL: scale did not commit")
+            return report
+        }
+        let scaledGeometry = PathBuilder.path(for: scaled).boundingBoxOfPath
+        let scaleRatioW = scaledGeometry.width / originalGeometry.width
+        let scaleRatioH = scaledGeometry.height / originalGeometry.height
+        let scaleOk = abs(scaleRatioW - 2) < 0.01 && abs(scaleRatioH - 2) < 0.01
+        report.append(
+            "select scale geometry \(String(format: "%.1f", scaledGeometry.width))x\(String(format: "%.1f", scaledGeometry.height)) "
+                + "ratio=\(String(format: "%.3f", scaleRatioW))x\(String(format: "%.3f", scaleRatioH)) expect 2.000x2.000 ok=\(scaleOk)"
+        )
+        mark = scaled
+
+        // Rotate from the knob: a quarter turn about the anchor. The rotated
+        // body is still hit where it now looks, and the old unrotated corner
+        // is empty — the shape never changed, only its orientation.
+        let pivot = mark.anchor
+        let knob = MarkSelection(stroke: mark).handlePoints(
+            rotationHandleOffset: MarkSelection.defaultRotationHandleOffset
+        )[.rotation]!
+        let unrotatedCorner = CGPoint(x: mark.bounds.maxX, y: mark.bounds.maxY)
+        let cornerHitBefore = mark.hitTest(unrotatedCorner, radius: 3)
+        drag(from: knob, to: knob.applying(Stroke.rotationTransform(around: pivot, by: .pi / 2)))
+        guard let rotated = view.session.strokes.first else {
+            report.append("FAIL: rotate did not commit")
+            return report
+        }
+        let quarterTurn = abs(rotated.rotation - .pi / 2) < 0.01
+        let rotatedCorner = unrotatedCorner.applying(
+            Stroke.rotationTransform(around: rotated.anchor, by: rotated.rotation)
+        )
+        let hitOk = cornerHitBefore
+            && rotated.hitTest(rotatedCorner, radius: 3)
+            && !rotated.hitTest(unrotatedCorner, radius: 3)
+        report.append(
+            "select rotate angle=\(String(format: "%.3f", rotated.rotation))rad expect 1.571, "
+                + "rotated corner hit=\(rotated.hitTest(rotatedCorner, radius: 3)) expect true, "
+                + "old corner hit=\(rotated.hitTest(unrotatedCorner, radius: 3)) expect false ok=\(hitOk)"
+        )
+        _ = renderView(view, to: "/tmp/stare-select-rotated.png")
+
+        // ⎋ gives the selection up without leaving drawing mode.
+        var escapeLeftDrawingMode = false
+        view.onEscape = { escapeLeftDrawingMode = true }
+        let escapeOk = key(53, "\u{1B}") && view.selectedMarkID == nil && !escapeLeftDrawingMode
+        report.append(
+            "select escape cleared=\(view.selectedMarkID == nil) stayedInMode=\(!escapeLeftDrawingMode) ok=\(escapeOk)"
+        )
+
+        // Select again and delete with ⌫ through the session.
+        drag(from: rotated.anchor, to: rotated.anchor)
+        let reselected = view.selectedMarkID == rotated.id
+        let deleteKeyEvent = key(51, "\u{7F}") // ⌫
+        let deleteOk = reselected && deleteKeyEvent
+            && view.session.strokes.isEmpty && view.selectedMarkID == nil
+        report.append(
+            "select delete reselected=\(reselected) marks=\(view.session.strokes.count) expect 0 ok=\(deleteOk)"
+        )
+
+        let passed = moveOk && undoRestoresMove && scaleOk && quarterTurn && hitOk && escapeOk && deleteOk
+        report.append("select result=\(passed ? "PASS" : "FAIL")")
         return report
     }
 

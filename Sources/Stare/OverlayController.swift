@@ -21,10 +21,13 @@ final class OverlayController {
     private(set) var isBoardActive = false
     private var boardCanvases: [CGDirectDisplayID: DisplayCanvas] = [:]
     private var boards: [CGDirectDisplayID: WhiteboardPages] = [:]
-    /// Global undo order across displays: Command-Z undoes the last mark on
-    /// whichever display it was drawn, not only on the one under the pointer.
-    private var commitOrder: [(displayID: CGDirectDisplayID, strokeID: UUID)] = []
-    /// Undone marks waiting for Shift-Command-Z, newest last, across displays.
+    /// Global history across displays, in real order: draws and cursor
+    /// transforms interleave exactly as they happened, newest last, so Command-Z
+    /// replays the session backwards no matter which display each change
+    /// happened on. Each entry routes to the owning view's session, which
+    /// decides whether it removes a mark or restores its geometry.
+    private var historyOrder: [(displayID: CGDirectDisplayID, strokeID: UUID)] = []
+    /// Undone entries waiting for Shift-Command-Z, newest last, across displays.
     private var redoOrder: [(displayID: CGDirectDisplayID, strokeID: UUID)] = []
     private var toolbar: ToolbarPanel?
     private var previousApplication: NSRunningApplication?
@@ -80,7 +83,6 @@ final class OverlayController {
         // The armed frame and the numbered badges follow the current ink, so a
         // change has to repaint even when nothing else moved.
         for publisher in [state.$ink.map { _ in () }.eraseToAnyPublisher(),
-                          state.$tool.map { _ in () }.eraseToAnyPublisher(),
                           state.$showArmedFrame.map { _ in () }.eraseToAnyPublisher(),
                           state.$laserLifetime.map { _ in () }.eraseToAnyPublisher(),
                           state.$pointerSize.map { _ in () }.eraseToAnyPublisher(),
@@ -89,6 +91,32 @@ final class OverlayController {
                           state.$pointerFadeWhenIdle.map { _ in () }.eraseToAnyPublisher()] {
             publisher.sink { [weak self] in self?.repaintCanvases() }.store(in: &cancellables)
         }
+        // Leaving the edit cursor gives the selection up: a selection is only
+        // meaningful while the cursor can act on it.
+        state.$tool
+            .sink { [weak self] tool in
+                guard let self else { return }
+                if !tool.isSelection { self.clearAllSelections() }
+                self.repaintCanvases()
+            }
+            .store(in: &cancellables)
+    }
+
+    /// At most one mark is selected in the whole app: this drops every view's
+    /// selection, used when a view selects elsewhere or the tool changes.
+    private func clearAllSelections() {
+        for canvas in canvases.values { canvas.view.clearSelection() }
+        for canvas in boardCanvases.values { canvas.view.clearSelection() }
+    }
+
+    /// The canvases that are live right now: the drawing overlay, or the
+    /// whiteboard while it replaces it. History entries always route here.
+    private var activeCanvases: [CGDirectDisplayID: DisplayCanvas] {
+        isBoardActive ? boardCanvases : canvases
+    }
+
+    private func activeCanvasUnderPointer() -> DisplayCanvas? {
+        isBoardActive ? boardCanvasUnderPointer() : canvasUnderPointer()
     }
 
     private func repaintCanvases() {
@@ -356,7 +384,7 @@ final class OverlayController {
         hideToolbar()
         // The marks stay on their pages, so the undo history cannot resurrect
         // them in a future overlay session: start the history clean.
-        commitOrder.removeAll()
+        historyOrder.removeAll()
         redoOrder.removeAll()
         liveFrames.stop()
         removeKeyMonitor()
@@ -492,37 +520,42 @@ final class OverlayController {
         if isBoardActive {
             for canvas in boardCanvases.values {
                 let ids = Set(canvas.view.session.strokes.map(\.id))
-                commitOrder.removeAll { ids.contains($0.strokeID) }
+                historyOrder.removeAll { ids.contains($0.strokeID) }
                 redoOrder.removeAll { ids.contains($0.strokeID) }
                 canvas.clear()
             }
             return
         }
         for canvas in canvases.values { canvas.clear() }
-        commitOrder.removeAll()
+        historyOrder.removeAll()
         redoOrder.removeAll()
         liveFrames.stop()
     }
 
-    /// Command-Z: first the mark being dragged, then the most recent committed
-    /// mark on any display.
+    /// Command-Z: first the mark being dragged, then the newest entry in the
+    /// global history — a draw or a transform, on whichever display it
+    /// happened. The owning view's session agrees before it acts, so a popped
+    /// entry can never undo a different change than the one it names.
     func undo() {
-        if let canvas = canvasUnderPointer(), canvas.discardActiveMark() { return }
-        while let last = commitOrder.popLast() {
-            if let canvas = canvases[last.displayID], canvas.removeMark(id: last.strokeID) {
+        let canvases = activeCanvases
+        if let canvas = activeCanvasUnderPointer(), canvas.discardActiveMark() { return }
+        while let last = historyOrder.popLast() {
+            if let canvas = canvases[last.displayID], canvas.undoMark(id: last.strokeID) {
                 redoOrder.append(last)
-                Diag.log("undo display=\(last.displayID) remaining=\(commitOrder.count)")
+                Diag.log("undo display=\(last.displayID) remaining=\(historyOrder.count)")
                 return
             }
         }
         Diag.log("undo empty")
     }
 
-    /// Shift-Command-Z: puts back the mark undoed last, on the display it came from.
+    /// Shift-Command-Z: puts back the newest undone change, on the display it
+    /// came from — a removed mark or a transform, whichever it was.
     func redo() {
+        let canvases = activeCanvases
         while let last = redoOrder.popLast() {
             if let canvas = canvases[last.displayID], canvas.redoMark(id: last.strokeID) {
-                commitOrder.append(last)
+                historyOrder.append(last)
                 Diag.log("redo display=\(last.displayID) remaining=\(redoOrder.count)")
                 return
             }
@@ -584,21 +617,9 @@ final class OverlayController {
             ) else { continue }
 
             let displayID = canvas.displayID
-            canvas.view.onCommit = { [weak self] stroke in
-                guard let self else { return }
-                commitOrder.append((displayID, stroke.id))
-                redoOrder.removeAll()
-            }
-            canvas.view.onUndo = { [weak self] in self?.undo() }
-            canvas.view.onRedo = { [weak self] in self?.redo() }
+            wireHistoryAndSelection(canvas.view, displayID: displayID)
             canvas.view.onCaptureRequest = { [weak self] area in
                 self?.capture(displayID: displayID, area: area)
-            }
-            canvas.view.onErase = { [weak self] ids in
-                guard let self else { return }
-                let erased = Set(ids)
-                self.commitOrder.removeAll { erased.contains($0.strokeID) }
-                self.redoOrder.removeAll { erased.contains($0.strokeID) }
             }
             // The live blur path: the view reads its display's latest frame and
             // reports blur interest changes so the frame source starts and
@@ -607,6 +628,47 @@ final class OverlayController {
             canvas.view.liveFrameSource = liveFrames
             canvas.view.onBlurMarksChanged = { [weak self] in self?.liveFrames.wake() }
             canvases[displayID] = canvas
+        }
+    }
+
+    /// One wiring for the global history and the single-selection rule, shared
+    /// by the overlay and the board canvases: both draw marks, both transform
+    /// them, and both report against the same cross-display history.
+    private func wireHistoryAndSelection(_ view: OverlayView, displayID: CGDirectDisplayID) {
+        view.onCommit = { [weak self] stroke in
+            guard let self else { return }
+            historyOrder.append((displayID, stroke.id))
+            redoOrder.removeAll()
+        }
+        view.onTransform = { [weak self] stroke in
+            guard let self else { return }
+            // A transform is a history entry like a draw, in real order; the
+            // session forked its own redo journal, so the global one forks too.
+            historyOrder.append((displayID, stroke.id))
+            redoOrder.removeAll()
+        }
+        view.onDelete = { [weak self] id in
+            guard let self else { return }
+            // Deleting is its own undo: the mark's entries leave the history
+            // and it waits for redo, exactly like a Command-Z left it.
+            historyOrder.removeAll { $0.strokeID == id }
+            redoOrder.removeAll { $0.strokeID == id }
+            redoOrder.append((displayID, id))
+        }
+        view.onErase = { [weak self] ids in
+            guard let self else { return }
+            let erased = Set(ids)
+            historyOrder.removeAll { erased.contains($0.strokeID) }
+            redoOrder.removeAll { erased.contains($0.strokeID) }
+        }
+        view.onUndo = { [weak self] in self?.undo() }
+        view.onRedo = { [weak self] in self?.redo() }
+        view.onSelectionChanged = { [weak self] id in
+            guard let self else { return }
+            // One selection per app: every other display gives its own up.
+            for canvas in self.activeCanvases.values where canvas.displayID != displayID {
+                canvas.view.clearSelection()
+            }
         }
     }
 
@@ -635,21 +697,9 @@ final class OverlayController {
                     board: board(for: displayID)
                   ) else { continue }
 
-            canvas.view.onCommit = { [weak self] stroke in
-                guard let self else { return }
-                commitOrder.append((displayID, stroke.id))
-                redoOrder.removeAll()
-            }
-            canvas.view.onUndo = { [weak self] in self?.undo() }
-            canvas.view.onRedo = { [weak self] in self?.redo() }
+            wireHistoryAndSelection(canvas.view, displayID: displayID)
             canvas.view.onCaptureRequest = { [weak self] area in
                 self?.capture(displayID: displayID, area: area)
-            }
-            canvas.view.onErase = { [weak self] ids in
-                guard let self else { return }
-                let erased = Set(ids)
-                self.commitOrder.removeAll { erased.contains($0.strokeID) }
-                self.redoOrder.removeAll { erased.contains($0.strokeID) }
             }
             canvas.view.onBlurMarksChanged = nil
             // The board covers the screen, so a blur mark cannot show the
@@ -686,7 +736,7 @@ final class OverlayController {
     private func clearCurrentBoardPage() {
         guard let canvas = boardCanvasUnderPointer() else { return }
         let ids = Set(canvas.view.session.strokes.map(\.id))
-        commitOrder.removeAll { ids.contains($0.strokeID) }
+        historyOrder.removeAll { ids.contains($0.strokeID) }
         redoOrder.removeAll { ids.contains($0.strokeID) }
         canvas.clear()
     }
@@ -779,6 +829,6 @@ final class DisplayCanvas {
 
     func clear() { view.clear() }
     func discardActiveMark() -> Bool { view.discardActiveMark() }
-    func removeMark(id: UUID) -> Bool { view.removeMark(id: id) }
     func redoMark(id: UUID) -> Bool { view.redoMark(id: id) }
+    func undoMark(id: UUID) -> Bool { view.undoMark(id: id) }
 }
