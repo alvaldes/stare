@@ -205,6 +205,69 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertEqual(prefs.updates.schedule, .daily)
     }
 
+    // MARK: General preferences (T6 slice 1/S4)
+
+    func testStandardCarriesGeneralPreferences() {
+        XCTAssertEqual(AppPreferences.standard.general, GeneralPreferences.standard)
+    }
+
+    func testRoundTripsGeneralPreferencesThroughStore() {
+        let store = InMemoryPreferenceStore()
+        var saved = AppPreferences.standard
+        saved.general.showArmedFrame = false
+        saved.general.scope = .active
+        saved.general.palettePlacement = .fixed
+        saved.general.laserLifetime = .five
+
+        saved.save(to: store)
+        XCTAssertEqual(AppPreferences(store: store), saved)
+    }
+
+    func testBlobPredatingGeneralLoadsStandardGeneralAndKeepsTheRest() {
+        let store = InMemoryPreferenceStore()
+        store.set(Data(#"{"pointer":{"preset":"dot","size":44}}"#.utf8), forKey: AppPreferences.storageKey)
+
+        let prefs = AppPreferences(store: store)
+        XCTAssertEqual(prefs.general, GeneralPreferences.standard)
+        XCTAssertEqual(prefs.pointer.preset, .dot)
+        XCTAssertEqual(prefs.pointer.size, 44)
+    }
+
+    func testMigrationFromLegacyGeneralKeysProducesMigratedGeneralPreferences() {
+        let store = InMemoryPreferenceStore()
+        store.set(false, forKey: "showArmedFrame")
+        store.set("active", forKey: "overlayScope")
+        store.set("fixed", forKey: "palettePlacement")
+        store.set(5.0, forKey: "laserLifetime")
+
+        let prefs = AppPreferences(store: store)
+        XCTAssertFalse(prefs.general.showArmedFrame)
+        XCTAssertEqual(prefs.general.scope, .active)
+        XCTAssertEqual(prefs.general.palettePlacement, .fixed)
+        XCTAssertEqual(prefs.general.laserLifetime, .five)
+        XCTAssertEqual(prefs.pointer, PointerStyle.standard)
+    }
+
+    func testLegacyGeneralKeysStayUntouchedAfterFollowUpSave() {
+        let store = InMemoryPreferenceStore()
+        store.set(false, forKey: "showArmedFrame")
+        store.set("active", forKey: "overlayScope")
+        store.set("fixed", forKey: "palettePlacement")
+        store.set(5.0, forKey: "laserLifetime")
+
+        let prefs = AppPreferences(store: store)
+        prefs.save(to: store)
+
+        XCTAssertNotNil(store.data(forKey: AppPreferences.storageKey))
+        XCTAssertFalse(store.bool(forKey: "showArmedFrame", default: true))
+        XCTAssertEqual(store.string(forKey: "overlayScope"), "active")
+        XCTAssertEqual(store.string(forKey: "palettePlacement"), "fixed")
+        XCTAssertEqual(store.double(forKey: "laserLifetime", default: -1), 5)
+
+        // The saved blob must now win over the (stale) legacy keys.
+        XCTAssertEqual(AppPreferences(store: store), prefs)
+    }
+
     // MARK: Onboarding flag (T5/S3)
 
     func testHasCompletedOnboardingDefaultsToFalse() {

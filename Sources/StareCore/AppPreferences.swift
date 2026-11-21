@@ -12,6 +12,11 @@ public struct AppPreferences: Codable, Equatable, Sendable {
     /// Style of the pointer highlight (⌥⇧M).
     public var pointer: PointerStyle
 
+    /// The armed frame, overlay scope, palette placement and laser lifetime
+    /// (T6 slice 1/S4). These used to be lone UserDefaults keys; they now
+    /// ride in the same versioned blob as everything else.
+    public var general: GeneralPreferences
+
     /// Per-tool keyboard shortcuts; the router reads this map.
     public var toolShortcuts: ToolShortcutMap
 
@@ -36,11 +41,12 @@ public struct AppPreferences: Codable, Equatable, Sendable {
     /// today.
     public static let standard = AppPreferences()
 
-    /// Creates preferences with the given pointer style, tool shortcuts,
-    /// hotkeys, capture, whiteboard and update settings; each unset parameter
-    /// takes its shipped default.
+    /// Creates preferences with the given pointer style, general settings,
+    /// tool shortcuts, hotkeys, capture, whiteboard and update settings; each
+    /// unset parameter takes its shipped default.
     public init(
         pointer: PointerStyle = .standard,
+        general: GeneralPreferences = .standard,
         toolShortcuts: ToolShortcutMap = .standard,
         hotkeys: HotkeyBindings = .standard,
         capture: CapturePreference = .standard,
@@ -49,6 +55,7 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         hasCompletedOnboarding: Bool = false
     ) {
         self.pointer = pointer
+        self.general = general
         self.toolShortcuts = toolShortcuts
         self.hotkeys = hotkeys
         self.capture = capture
@@ -58,23 +65,26 @@ public struct AppPreferences: Codable, Equatable, Sendable {
     }
 
     /// Loads preferences from `store`. A corrupt or absent blob falls back to
-    /// `standard`, plus migration from the legacy pointer keys when they are
-    /// present. Legacy keys are only read, never deleted or rewritten.
+    /// `standard`, plus migration from the legacy pointer keys and the legacy
+    /// general keys (`showArmedFrame`, `overlayScope`, `palettePlacement`,
+    /// `laserLifetime`) when they are present. Legacy keys are only read,
+    /// never deleted or rewritten.
     public init(store: PreferenceStore) {
         self = AppPreferences.load(from: store)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case pointer, toolShortcuts, hotkeys, capture, whiteboard, updates, hasCompletedOnboarding
+        case pointer, general, toolShortcuts, hotkeys, capture, whiteboard, updates, hasCompletedOnboarding
     }
 
     /// Lenient decoding: a missing or undecodable field falls back to its
     /// `standard` instead of failing the whole document, and blobs written
-    /// before the shortcut or capture/whiteboard/update fields existed load
-    /// complete defaults for them.
+    /// before the shortcut, capture/whiteboard/update or general fields
+    /// existed load complete defaults for them.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.pointer = (try? container.decode(PointerStyle.self, forKey: .pointer)) ?? .standard
+        self.general = (try? container.decode(GeneralPreferences.self, forKey: .general)) ?? .standard
         self.toolShortcuts = (try? container.decode(ToolShortcutMap.self, forKey: .toolShortcuts)) ?? .standard
         self.hotkeys = (try? container.decode(HotkeyBindings.self, forKey: .hotkeys)) ?? .standard
         self.capture = (try? container.decode(CapturePreference.self, forKey: .capture)) ?? .standard
@@ -98,8 +108,10 @@ public struct AppPreferences: Codable, Equatable, Sendable {
             // Corrupt blob: fall through to legacy migration or `standard`;
             // the next save overwrites it with a valid document.
         }
-        if let pointer = PreferencesMigration.migratedPointerStyle(in: store) {
-            return AppPreferences(pointer: pointer)
+        let pointer = PreferencesMigration.migratedPointerStyle(in: store)
+        let general = PreferencesMigration.migratedGeneralPreferences(in: store)
+        if pointer != nil || general != nil {
+            return AppPreferences(pointer: pointer ?? .standard, general: general ?? .standard)
         }
         return .standard
     }
@@ -179,5 +191,45 @@ public enum PreferencesMigration {
             style.fadeWhenIdle = store.bool(forKey: legacyFadeKey, default: true)
         }
         return style
+    }
+
+    /// Legacy key holding whether the armed frame is drawn.
+    public static let legacyFrameKey = "showArmedFrame"
+    /// Legacy key holding `"all"` or `"active"`.
+    public static let legacyScopeKey = "overlayScope"
+    /// Legacy key holding `"cursor"`, `"frontWindow"` or `"fixed"`.
+    public static let legacyPlacementKey = "palettePlacement"
+    /// Legacy key holding the laser lifetime in seconds.
+    public static let legacyLifetimeKey = "laserLifetime"
+
+    /// Builds the general preferences the legacy keys describe, or nil when
+    /// none of them is stored. A missing legacy key keeps today's default, an
+    /// unknown string maps to the field's default like today's renderer —
+    /// anything but `"active"` draws everywhere, anything but
+    /// `"frontWindow"`/`"fixed"` opens the palette at the pointer — and the
+    /// legacy keys are never deleted or rewritten.
+    public static func migratedGeneralPreferences(in store: PreferenceStore) -> GeneralPreferences? {
+        let hasFrame = store.object(forKey: legacyFrameKey) != nil
+        let hasScope = store.object(forKey: legacyScopeKey) != nil
+        let hasPlacement = store.object(forKey: legacyPlacementKey) != nil
+        let hasLifetime = store.object(forKey: legacyLifetimeKey) != nil
+        guard hasFrame || hasScope || hasPlacement || hasLifetime else { return nil }
+
+        var general = GeneralPreferences.standard
+        if hasFrame {
+            general.showArmedFrame = store.bool(forKey: legacyFrameKey, default: true)
+        }
+        if hasScope {
+            general.scope = store.string(forKey: legacyScopeKey).flatMap(OverlayScope.init(rawValue:)) ?? .all
+        }
+        if hasPlacement {
+            general.palettePlacement = store.string(forKey: legacyPlacementKey).flatMap(PalettePlacement.init(rawValue:)) ?? .cursor
+        }
+        if hasLifetime {
+            general.laserLifetime = LaserLifetime(
+                rawValue: store.double(forKey: legacyLifetimeKey, default: GeneralPreferences.standard.laserLifetime.rawValue)
+            ) ?? .twoPointFive
+        }
+        return general
     }
 }
