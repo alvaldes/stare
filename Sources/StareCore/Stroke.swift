@@ -43,7 +43,7 @@ public struct Stroke: Identifiable, Equatable, Sendable {
         switch tool {
         case .highlighter: 18
         case .number: 2
-        case .text, .eraser: 0
+        case .text, .eraser, .blur: 0
         case .pen, .arrow, .line, .rectangle, .ellipse, .laser: 3
         }
     }
@@ -81,6 +81,11 @@ public struct Stroke: Identifiable, Equatable, Sendable {
             return bounds.insetBy(dx: -radius, dy: -radius).contains(point)
         case .eraser:
             return false
+        case .blur:
+            // The blur mark is an area, not an outline: a point inside the
+            // rectangle spanned by its endpoints touches the mark.
+            guard let first = points.first, let last = points.last else { return false }
+            return PathBuilder.normalizedRect(from: first, to: last).contains(point)
         case .pen, .highlighter, .arrow, .line, .rectangle, .ellipse, .laser:
             let outline = PathBuilder.path(for: self).copy(
                 strokingWithWidth: max(lineWidth, 2) + radius * 2,

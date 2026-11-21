@@ -131,6 +131,32 @@ final class PathBuilderTests: XCTestCase {
         XCTAssertEqual(rect.width, 70, accuracy: 0.001)
     }
 
+    // T5/S3: blur spans the dragged rectangle, like the other area tools.
+    func testBlurPathSpansTheDraggedRectangle() {
+        let stroke = Stroke(
+            tool: .blur,
+            ink: .red,
+            points: [CGPoint(x: 15, y: 25), CGPoint(x: 95, y: 75)]
+        )
+        let box = PathBuilder.path(for: stroke).boundingBoxOfPath
+
+        XCTAssertEqual(box, CGRect(x: 15, y: 25, width: 80, height: 50))
+    }
+
+    // T5/S3: the eraser removes a blur by touching its rectangle.
+    func testBlurHitTestCoversTheRectangleInterior() {
+        let stroke = Stroke(
+            tool: .blur,
+            ink: .red,
+            points: [CGPoint(x: 20, y: 20), CGPoint(x: 80, y: 60)]
+        )
+
+        XCTAssertTrue(stroke.hitTest(CGPoint(x: 50, y: 40), radius: 2), "inside the blurred rectangle")
+        XCTAssertTrue(stroke.hitTest(CGPoint(x: 20, y: 20), radius: 2), "on the rectangle corner")
+        XCTAssertFalse(stroke.hitTest(CGPoint(x: 10, y: 10), radius: 2), "outside the rectangle")
+        XCTAssertFalse(stroke.hitTest(CGPoint(x: 90, y: 40), radius: 2), "beyond the right edge")
+    }
+
     func testBadgeIsCenteredOnTheClick() {
         let click = CGPoint(x: 50, y: 50)
         let box = PathBuilder.badgePath(centeredAt: click).boundingBoxOfPath

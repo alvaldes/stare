@@ -79,6 +79,23 @@ final class ToolAndInkTests: XCTestCase {
         XCTAssertEqual(ToolShortcut.tool(for: "e"), .eraser)
     }
 
+    func testBlurResolvesFromBAndDescribesItself() {
+        XCTAssertEqual(Tool.blur.shortcut, "B")
+        XCTAssertEqual(Tool.blur.displayName, "Blur")
+        XCTAssertEqual(Tool.blur.symbolName, "camera.filters")
+        XCTAssertEqual(ToolShortcut.tool(for: "b"), .blur)
+        XCTAssertEqual(ToolShortcut.tool(for: "B"), .blur)
+    }
+
+    // T5/S3: blur is an area tool drawn by dragging a rectangle.
+    func testBlurIsAnEndpointsOnlyDragTool() {
+        XCTAssertTrue(Tool.blur.usesEndpointsOnly, "blur spans the dragged rectangle")
+        XCTAssertFalse(Tool.blur.isClickTool)
+        XCTAssertFalse(Tool.blur.isTransient)
+        XCTAssertFalse(Tool.blur.isEraser)
+        XCTAssertFalse(Tool.blur.commitsImmediately)
+    }
+
     func testShapeToolsKeepOnlyEndpoints() {
         for tool in Tool.allCases where [.line, .arrow, .rectangle, .ellipse].contains(tool) {
             XCTAssertTrue(tool.usesEndpointsOnly, "\(tool) is defined by its endpoints")

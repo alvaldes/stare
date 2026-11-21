@@ -14,6 +14,7 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
     case number
     case laser
     case eraser
+    case blur
 
     public var id: String { rawValue }
 
@@ -30,6 +31,7 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
         case .number: "C"
         case .laser: "F"
         case .eraser: "E"
+        case .blur: "B"
         }
     }
 
@@ -45,6 +47,7 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
         case .number: "Numbered step"
         case .laser: "Laser pointer"
         case .eraser: "Eraser"
+        case .blur: "Blur"
         }
     }
 
@@ -60,6 +63,7 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
         case .number: "1.circle"
         case .laser: "sparkles"
         case .eraser: "eraser"
+        case .blur: "camera.filters"
         }
     }
 
@@ -67,7 +71,7 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
     /// samples carry no meaning for these tools.
     public var usesEndpointsOnly: Bool {
         switch self {
-        case .line, .arrow, .rectangle, .ellipse: true
+        case .line, .arrow, .rectangle, .ellipse, .blur: true
         case .pen, .highlighter, .text, .number, .laser, .eraser: false
         }
     }
@@ -76,7 +80,7 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
     public var isClickTool: Bool {
         switch self {
         case .number, .text: true
-        case .pen, .highlighter, .arrow, .line, .rectangle, .ellipse, .laser, .eraser: false
+        case .pen, .highlighter, .arrow, .line, .rectangle, .ellipse, .laser, .eraser, .blur: false
         }
     }
 

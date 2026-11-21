@@ -131,6 +131,48 @@ final class MarkCompositorTests: XCTestCase {
         XCTAssertGreaterThan(painted, 0, "glyphs have to be visible where the text mark sits")
     }
 
+    // T5/S3: a blur mark shows the pixels underneath blurred, and only inside
+    // its rectangle.
+    func testBlurMarkBlursPixelsInsideItsRectangleOnly() {
+        // Black left half, white right half, so the boundary at x = 50 is
+        // somewhere no mark would paint.
+        let base = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        base.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1))
+        base.fill(CGRect(x: 0, y: 0, width: 50, height: height))
+        base.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+        base.fill(CGRect(x: 50, y: 0, width: 50, height: height))
+        let baseImage = base.makeImage()!
+
+        let mark = Stroke(
+            tool: .blur,
+            ink: .red,
+            points: [CGPoint(x: 35, y: 30), CGPoint(x: 65, y: 70)]
+        )
+
+        let result = MarkCompositor.composite(marks: [mark], over: baseImage)
+        XCTAssertNotNil(result)
+
+        // The centre of the blurred rectangle straddles the black/white
+        // boundary: a real blur lands strictly between the two extremes.
+        let centre = pixel(result!, x: 50, y: 50)
+        XCTAssertGreaterThan(centre.r, 40, "the blur must mix in the white half")
+        XCTAssertLessThan(centre.r, 215, "the blur must mix in the black half")
+
+        // Outside the rectangle the capture is untouched.
+        XCTAssertEqual(pixel(result!, x: 10, y: 50).r, pixel(baseImage, x: 10, y: 50).r, "left of the rectangle")
+        XCTAssertEqual(pixel(result!, x: 90, y: 50).r, pixel(baseImage, x: 90, y: 50).r, "right of the rectangle")
+        XCTAssertEqual(pixel(result!, x: 40, y: 10).r, pixel(baseImage, x: 40, y: 10).r, "above the rectangle")
+        XCTAssertEqual(pixel(result!, x: 60, y: 90).r, pixel(baseImage, x: 60, y: 90).r, "below the rectangle")
+    }
+
     func testZeroSizedImageIsRejected() {
         let empty = CGContext(
             data: nil,

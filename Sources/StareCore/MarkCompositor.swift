@@ -40,14 +40,19 @@ public enum MarkCompositor {
         context.setLineJoin(.round)
 
         for mark in marks where !mark.tool.isTransient {
-            draw(mark, in: context)
+            draw(mark, in: context, base: base, scale: scale)
         }
 
         context.restoreGState()
         return context.makeImage()
     }
 
-    private static func draw(_ stroke: Stroke, in context: CGContext) {
+    private static func draw(
+        _ stroke: Stroke,
+        in context: CGContext,
+        base: CGImage,
+        scale: CGFloat
+    ) {
         switch stroke.tool {
         case .text:
             drawText(stroke, in: context)
@@ -56,9 +61,49 @@ public enum MarkCompositor {
             MarkRenderer.draw(stroke: stroke, in: context)
             drawStepNumber(stroke, in: context)
             return
+        case .blur:
+            drawBlur(stroke, in: context, base: base, scale: scale)
+            return
         default:
             MarkRenderer.draw(stroke: stroke, in: context)
         }
+    }
+
+    /// T5/S3: a blur mark is the captured content underneath, blurred, so it
+    /// composites a blurred crop of the base frame instead of stroking a
+    /// rectangle. `BlurEffect` works in image pixels, which share the bitmap
+    /// context's bottom-left origin; the crop is drawn back at the mark's
+    /// rectangle in overlay space, where the context's transform already does
+    /// the scaling and the flip.
+    private static func drawBlur(
+        _ stroke: Stroke,
+        in context: CGContext,
+        base: CGImage,
+        scale: CGFloat
+    ) {
+        guard let first = stroke.points.first, let last = stroke.points.last else { return }
+        let rect = PathBuilder.normalizedRect(from: first, to: last)
+        guard rect.width > 0, rect.height > 0 else { return }
+
+        let pixelRect = CGRect(
+            x: rect.minX * scale,
+            y: CGFloat(base.height) - rect.maxY * scale,
+            width: rect.width * scale,
+            height: rect.height * scale
+        )
+        guard let blurred = BlurEffect.crop(
+            base,
+            pixelRect: pixelRect,
+            radius: BlurEffect.defaultRadius * scale
+        ) else { return }
+
+        // The context is flipped for overlay space, so an image drawn plainly
+        // would land upside down; unflip it inside the rectangle.
+        context.saveGState()
+        context.translateBy(x: rect.minX, y: rect.maxY)
+        context.scaleBy(x: 1, y: -1)
+        context.draw(blurred, in: CGRect(origin: .zero, size: rect.size))
+        context.restoreGState()
     }
 
     private static func drawText(_ stroke: Stroke, in context: CGContext) {
