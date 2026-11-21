@@ -25,6 +25,10 @@ class OverlayView: NSView {
     /// A mark deleted with the cursor, so the global history can hand it to
     /// the owning display's redo stack.
     var onDelete: ((UUID) -> Void)?
+    /// Escape with nothing selected: clears this layer's marks (the whiteboard's
+    /// current page) and stays in drawing mode. The controller routes it so the
+    /// display's entries also leave the global history.
+    var onClearMarks: (() -> Void)?
     /// This view selected a mark: the controller clears the selection on every
     /// other display, so at most one mark is selected in the whole app.
     var onSelectionChanged: ((UUID) -> Void)?
@@ -370,11 +374,26 @@ class OverlayView: NSView {
             finishPendingTextEditing()
         }
 
-        session.begin(at: point, tool: state.tool, ink: state.ink)
+        let placed = session.begin(at: point, tool: state.tool, ink: state.ink)
         if state.tool.isTransient { startLaserTimer() }
         noteBlurInterestChanged()
         noteSessionChanged()
-        setNeedsDisplay(dirtyRect(around: viewPoint, other: nil))
+        if state.tool.commitsImmediately {
+            // A numbered step commits inside `begin`, so `mouseUp` never runs
+            // for it. The badge is wider than the small drag dirty band: it has
+            // to be invalidated at its own display bounds here, or only the
+            // band around the click point repaints and the badge shows as a
+            // clipped square without its digit until the next full redraw.
+            committedBounds[placed.id] = placed.displayBounds
+            setNeedsDisplay(viewRect(fromPage: placed.displayBounds))
+            // And the commit has to reach the global history exactly once,
+            // through the same report a drag-committed mark makes at mouse up
+            // (mouseUp never runs for a click tool, so this cannot double):
+            // one ⌘Z removes exactly this badge and ⇧⌘Z brings it back.
+            onCommit?(placed)
+        } else {
+            setNeedsDisplay(dirtyRect(around: viewPoint, other: nil))
+        }
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -805,12 +824,16 @@ class OverlayView: NSView {
                 return
             }
             // With a mark selected, Escape first gives the selection up instead
-            // of leaving drawing mode, so one stray click never costs the session.
+            // of clearing, so one stray click never costs the session.
             if selectedMarkID != nil {
                 clearSelection()
                 return
             }
-            onEscape?()
+            // The drawing hint promises "esc to clear": clear this layer's
+            // marks and keep drawing — the hint stays up and the next stroke
+            // can be drawn right away. Leaving drawing mode stays on ⌥⇧A and
+            // the Done button, never on Escape.
+            onClearMarks?()
             return
         }
 

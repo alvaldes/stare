@@ -10,7 +10,9 @@ import StareCore
 /// conventions), so panning and display changes never move existing marks.
 /// Every session change flows into `board` through the sink the base class
 /// calls, so the board stays authoritative without write-back sync.
-final class WhiteboardView: OverlayView {
+/// Not `final` so the self test can record the dirty rects the board's own
+/// click path invalidates.
+class WhiteboardView: OverlayView {
     /// The pages of this display; owned by the controller so they survive
     /// closing the board.
     let board: WhiteboardPages
@@ -44,7 +46,7 @@ final class WhiteboardView: OverlayView {
 
     override func showIntroHint() {
         showHint(
-            "Whiteboard · ⌘← ⌘→ pages · ⌘⌫ delete · ⌥← ⌥→ move · ⌘0 recentre · ⌘B background · space-drag pan · esc to leave",
+            "Whiteboard · ⌘← ⌘→ pages · ⌘⌫ delete · ⌥← ⌥→ move · ⌘0 recentre · ⌘B background · space-drag pan · esc clear page",
             seconds: 3.2
         )
     }

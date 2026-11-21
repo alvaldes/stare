@@ -119,6 +119,13 @@ final class OverlayController {
         isBoardActive ? boardCanvases : canvases
     }
 
+    /// The drawing layers the controller owns right now, exposed for
+    /// `--selftest`: it has to drive the real views through the real
+    /// ⌘Z/⇧⌘Z routing, which a StareCore unit test cannot reach.
+    var selfTestViews: [OverlayView] {
+        activeCanvases.values.map(\.view)
+    }
+
     private func activeCanvasUnderPointer() -> DisplayCanvas? {
         isBoardActive ? boardCanvasUnderPointer() : canvasUnderPointer()
     }
@@ -672,6 +679,18 @@ final class OverlayController {
             historyOrder.removeAll { $0.strokeID == id }
             redoOrder.removeAll { $0.strokeID == id }
             redoOrder.append((displayID, id))
+        }
+        view.onClearMarks = { [weak self, weak view] in
+            guard let self, let view else { return }
+            // Escape with nothing selected: this display's marks (the current
+            // whiteboard page in board mode) are cleared and drawing keeps
+            // going there. The display's entries leave the global history, so
+            // undo and redo cannot resurrect what Escape just erased — the
+            // same rule an erase follows.
+            let ids = Set(view.session.strokes.map(\.id))
+            historyOrder.removeAll { ids.contains($0.strokeID) }
+            redoOrder.removeAll { ids.contains($0.strokeID) }
+            view.clear()
         }
         view.onErase = { [weak self] ids in
             guard let self else { return }

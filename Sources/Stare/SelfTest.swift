@@ -190,6 +190,23 @@ enum SelfTest {
         // through the real view path, with the geometry asserts on the session.
         report.append(contentsOf: selectReport())
 
+        // Numbered badge placement (owner report): a click with the number tool
+        // must paint the whole round badge with its digit immediately, exactly
+        // like a committed mark, in drawing mode and on the whiteboard.
+        report.append(contentsOf: numberBadgeReport())
+
+        // Numbered badge undo (owner-approved follow-up): the click-committed
+        // mark has to reach the controller's global history exactly once, the
+        // same way a drag-committed mark does — one ⌘Z removes exactly that
+        // badge, ⇧⌘Z brings the same mark back, and the sequence neither gains
+        // nor loses a number.
+        report.append(contentsOf: numberUndoReport())
+
+        // Escape (owner report): the drawing hint promises "esc to clear", so
+        // with nothing selected Escape must clear the layer's marks and keep
+        // drawing mode up — never leave it by way of the exit path.
+        report.append(contentsOf: escapeReport())
+
         // Click pulse (T7/S3): the pulse curve sampled the way the pointer
         // timer samples it, and the highlight rendered through the real
         // pointer drawing path at rest, peak and settled.
@@ -889,6 +906,471 @@ enum SelfTest {
 
         let passed = moveOk && undoRestoresMove && scaleOk && quarterTurn && hitOk && escapeOk && deleteOk
         report.append("select result=\(passed ? "PASS" : "FAIL")")
+        return report
+    }
+
+    // MARK: - Numbered badge placement
+
+    /// The dirty-rect recording both the overlay and the board probes share.
+    private protocol InvalidationsRecording: OverlayView {
+        func resetInvalidations()
+        var recordedInvalidations: [NSRect] { get }
+    }
+
+    /// Records the dirty rects the view asks AppKit to repaint, so the self
+    /// test can replay an NSView's real incremental painting regime.
+    private final class RecordingOverlayView: OverlayView, InvalidationsRecording {
+        private(set) var recordedInvalidations: [NSRect] = []
+
+        func resetInvalidations() { recordedInvalidations.removeAll() }
+
+        override func setNeedsDisplay(_ invalidRect: NSRect) {
+            recordedInvalidations.append(invalidRect)
+            super.setNeedsDisplay(invalidRect)
+        }
+    }
+
+    /// A numbered step commits inside `session.begin`, so `mouseUp` never runs
+    /// for it and the badge must be invalidated at its full size on mouse-down.
+    /// The rule pinned here: the pixels the app paints for the placed mark (only
+    /// the rects the view itself invalidated, over the pre-click pixels — the
+    /// real regime AppKit repaints with) must equal the pixels of the same
+    /// stroke repainted as a committed mark. A badge invalidated as the small
+    /// drag band around the click point fails both: the rim pixels outside the
+    /// band are never painted and the digit is clipped away.
+    private static func numberBadgeReport() -> [String] {
+        var report: [String] = []
+        let size = CGSize(width: 900, height: 600)
+
+        func overlayRender(_ view: NSView) -> CGImage? {
+            guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
+            view.cacheDisplay(in: view.bounds, to: rep)
+            return rep.cgImage
+        }
+
+        /// The incremental painting regime: repaint exactly `rect` with the
+        /// view's fresh render, blended over the previous pixels. Rects the
+        /// view never marks keep whatever was on screen before — there is no
+        /// full repaint to rescue a forgotten region.
+        func flush(_ context: CGContext, with image: CGImage, rect: CGRect, scale: CGFloat) {
+            context.saveGState()
+            // Overlay space is top-left origin; the bitmap context is bottom-left.
+            context.clip(to: CGRect(
+                x: rect.minX * scale,
+                y: (size.height - rect.maxY) * scale,
+                width: rect.width * scale,
+                height: rect.height * scale
+            ))
+            context.draw(image, in: CGRect(x: 0, y: 0, width: size.width * scale, height: size.height * scale))
+            context.restoreGState()
+        }
+
+        /// Places one numbered badge at `centre` through the real mouse-down
+        /// path, then repaints only the rects the view itself invalidated over
+        /// a baseline of the pre-click pixels. Returns the flushed screen
+        /// pixels and the full committed repaint's pixels at the badge rim,
+        /// the fill beside the digit and a `digitVisible` scan, so the flushed
+        /// screen can be asserted equal to what a committed mark renders.
+        func placementCheck(
+            view: InvalidationsRecording, window: NSWindow, centre: CGPoint
+        ) -> (
+            rects: Int, flushedRim: (Int, Int, Int), flushedFill: (Int, Int, Int), digitVisible: Bool,
+            committedRim: (Int, Int, Int), committedFill: (Int, Int, Int), parityOk: Bool
+        )? {
+            view.resetInvalidations()
+            // The pixels before the click, with the session still empty.
+            guard let baseline = overlayRender(view) else { return nil }
+            guard let down = NSEvent.mouseEvent(
+                with: .leftMouseDown,
+                location: CGPoint(x: centre.x, y: size.height - centre.y),
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 1,
+                clickCount: 1,
+                pressure: 1
+            ) else { return nil }
+            view.mouseDown(with: down)
+            guard let mark = view.session.strokes.last, mark.tool == .number else { return nil }
+            guard let first = mark.points.first else { return nil }
+
+            let renderScale = CGFloat(baseline.width) / max(view.bounds.width, 1)
+            guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+                  let screen = CGContext(
+                    data: nil,
+                    width: Int(size.width * renderScale),
+                    height: Int(size.height * renderScale),
+                    bitsPerComponent: 8,
+                    bytesPerRow: 0,
+                    space: space,
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                  ) else { return nil }
+            // The pixels before the click: the page surface with the empty
+            // overlay already drawn on it.
+            screen.draw(baseline, in: CGRect(x: 0, y: 0, width: size.width * renderScale, height: size.height * renderScale))
+
+            let recorded = view.recordedInvalidations.filter { !$0.isEmpty && $0.intersects(view.bounds) }
+            guard let fresh = overlayRender(view) else { return nil }
+            for rect in recorded {
+                flush(screen, with: fresh, rect: rect, scale: renderScale)
+            }
+            guard let screenImage = screen.makeImage(),
+                  let committed = overlayRender(view) else { return nil }
+
+            let rim = CGPoint(x: first.x, y: first.y - 10)
+            let fill = CGPoint(x: first.x + 8, y: first.y)
+            let flushedRim = rgb(screenImage, at: rim, scale: renderScale)
+            let flushedFill = rgb(screenImage, at: fill, scale: renderScale)
+            let committedRim = rgb(committed, at: rim, scale: renderScale)
+            let committedFill = rgb(committed, at: fill, scale: renderScale)
+            var digitVisible = false
+            let digitRangeX = stride(from: -6.0, through: 6.0, by: 2)
+            let digitRangeY = stride(from: -9.0, through: 9.0, by: 2)
+            for dx in digitRangeX {
+                for dy in digitRangeY {
+                    let point = CGPoint(x: first.x + dx, y: first.y + dy)
+                    let pixel = rgb(screenImage, at: point, scale: renderScale)
+                    if pixel.0 > 230 && pixel.1 > 230 && pixel.2 > 230 { digitVisible = true }
+                }
+            }
+            // Same stroke, painted the way the app paints a placed mark and
+            // repainted as a committed mark: the pixels must agree.
+            func close(_ a: (Int, Int, Int), _ b: (Int, Int, Int)) -> Bool {
+                abs(a.0 - b.0) <= 10 && abs(a.1 - b.1) <= 10 && abs(a.2 - b.2) <= 10
+            }
+            let parityOk = close(flushedRim, committedRim) && close(flushedFill, committedFill)
+            return (
+                rects: recorded.count, flushedRim: flushedRim, flushedFill: flushedFill,
+                digitVisible: digitVisible, committedRim: committedRim, committedFill: committedFill,
+                parityOk: parityOk
+            )
+        }
+
+        func borderlessWindow(_ view: NSView) -> NSWindow {
+            let window = NSWindow(
+                contentRect: CGRect(origin: .zero, size: size),
+                styleMask: [.borderless],
+                backing: .buffered,
+                defer: false
+            )
+            window.contentView = view
+            window.orderFrontRegardless()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            return window
+        }
+
+        // Drawing mode: the badge on the transparent overlay.
+        let state = EditorState()
+        state.tool = .number
+        state.ink = .red
+        let overlay = RecordingOverlayView(frame: CGRect(origin: .zero, size: size), state: state, onEscape: {})
+        let overlayWindow = borderlessWindow(overlay)
+        defer { overlayWindow.orderOut(nil) }
+
+        if let check = placementCheck(view: overlay, window: overlayWindow, centre: CGPoint(x: 450, y: 300)) {
+            let rimOk = check.flushedRim.0 >= 200 && check.flushedRim.1 < 150
+            let fillOk = check.flushedFill.0 >= 200 && check.flushedFill.1 < 150
+            let ok = check.rects > 0 && rimOk && fillOk && check.digitVisible && check.parityOk
+            report.append(
+                "number overlay rects=\(check.rects) rim=\(check.flushedRim) expect red, "
+                    + "fill=\(check.flushedFill) expect red, digit=\(check.digitVisible) expect true, "
+                    + "committed rim=\(check.committedRim) fill=\(check.committedFill) parity=\(check.parityOk) "
+                    + "png=/tmp/stare-number-overlay.png ok=\(ok)"
+            )
+        } else {
+            report.append("FAIL: number overlay badge was not committed")
+            return report
+        }
+        _ = overlayRender(overlay).map { writePNG($0, to: "/tmp/stare-number-overlay.png") }
+
+        // The whiteboard: same click path over the page's own background.
+        let boardState = EditorState()
+        boardState.tool = .number
+        boardState.ink = .blue
+        let board = WhiteboardPages()
+        let boardView = RecordingBoardView(frame: CGRect(origin: .zero, size: size), state: boardState, board: board, onEscape: {})
+        let boardWindow = borderlessWindow(boardView)
+        defer { boardWindow.orderOut(nil) }
+
+        if let check = placementCheck(view: boardView, window: boardWindow, centre: CGPoint(x: 300, y: 300)) {
+            let rimOk = check.flushedRim.2 >= 180 && check.flushedRim.0 < 120
+            let fillOk = check.flushedFill.2 >= 180 && check.flushedFill.0 < 120
+            let ok = check.rects > 0 && rimOk && fillOk && check.digitVisible && check.parityOk
+            report.append(
+                "number board rects=\(check.rects) rim=\(check.flushedRim) expect blue, "
+                    + "fill=\(check.flushedFill) expect blue, digit=\(check.digitVisible) expect true, "
+                    + "committed rim=\(check.committedRim) fill=\(check.committedFill) parity=\(check.parityOk) "
+                    + "png=/tmp/stare-number-board.png ok=\(ok)"
+            )
+        } else {
+            report.append("FAIL: number board badge was not committed")
+            return report
+        }
+        _ = overlayRender(boardView).map { writePNG($0, to: "/tmp/stare-number-board.png") }
+
+        let passed = report.allSatisfy { !$0.contains("ok=false") && !$0.contains("FAIL") }
+        report.append("number result=\(passed ? "PASS" : "FAIL")")
+        return report
+    }
+
+    /// The whiteboard flavour of the recording view: the incremental-painting
+    /// probe has to run through the board's own click path too, where the same
+    /// mouse-down code lays the badge over the page background.
+    private final class RecordingBoardView: WhiteboardView, InvalidationsRecording {
+        private(set) var recordedInvalidations: [NSRect] = []
+
+        func resetInvalidations() { recordedInvalidations.removeAll() }
+
+        override func setNeedsDisplay(_ invalidRect: NSRect) {
+            recordedInvalidations.append(invalidRect)
+            super.setNeedsDisplay(invalidRect)
+        }
+    }
+
+    // MARK: - Escape clears and stays
+
+    /// Escape through the real key path in a real borderless window: with a
+    /// mark selected it still gives the selection up first; with nothing
+    /// selected it clears the layer's marks and stays in drawing mode (the
+    /// exit path stays silent — leaving stays on ⌥⇧A / Done). The whiteboard
+    /// flavour clears the current page and the board stays open.
+    private static func escapeReport() -> [String] {
+        var report: [String] = []
+        let size = CGSize(width: 900, height: 600)
+
+        func borderlessWindow(_ view: NSView) -> NSWindow {
+            let window = NSWindow(
+                contentRect: CGRect(origin: .zero, size: size),
+                styleMask: [.borderless],
+                backing: .buffered,
+                defer: false
+            )
+            window.contentView = view
+            window.orderFrontRegardless()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            return window
+        }
+        func mouseEvent(_ type: NSEvent.EventType, at point: CGPoint, window: NSWindow) -> NSEvent? {
+            NSEvent.mouseEvent(
+                with: type,
+                location: CGPoint(x: point.x, y: size.height - point.y),
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 1,
+                clickCount: 1,
+                pressure: 1
+            )
+        }
+        func drag(_ view: OverlayView, window: NSWindow, from start: CGPoint, to end: CGPoint) {
+            view.mouseDown(with: mouseEvent(.leftMouseDown, at: start, window: window)!)
+            view.mouseDragged(with: mouseEvent(.leftMouseDragged, at: end, window: window)!)
+            view.mouseUp(with: mouseEvent(.leftMouseUp, at: end, window: window)!)
+        }
+        @discardableResult
+        func key(_ view: NSView, _ keyCode: UInt16, _ characters: String, modifiers: NSEvent.ModifierFlags = []) -> Bool {
+            guard let event = NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: modifiers,
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: 0,
+                context: nil,
+                characters: characters,
+                charactersIgnoringModifiers: characters,
+                isARepeat: false,
+                keyCode: keyCode
+            ) else { return false }
+            view.keyDown(with: event)
+            return true
+        }
+
+        // The overlay: drawing mode is a plain view in a real window.
+        let state = EditorState()
+        state.tool = .pen
+        state.ink = .red
+        let view = OverlayView(frame: CGRect(origin: .zero, size: size), state: state, onEscape: {})
+        let window = borderlessWindow(view)
+        defer { window.orderOut(nil) }
+
+        var exitCalls = 0
+        var clearCalls = 0
+        view.onEscape = { exitCalls += 1 }
+        // The controller's real routing: drop the display's marks and keep
+        // the layer up.
+        view.onClearMarks = { clearCalls += 1; view.clear() }
+
+        drag(view, window: window, from: CGPoint(x: 100, y: 100), to: CGPoint(x: 300, y: 140))
+        guard view.session.strokes.count == 1 else {
+            report.append("FAIL: escape pen mark was not committed")
+            return report
+        }
+
+        // Escape with nothing selected: the hint's promise — the marks clear
+        // and drawing mode stays up; the exit path never fires.
+        key(view, 53, "\u{1B}")
+        let cleared = view.session.strokes.isEmpty && clearCalls == 1
+        let stayedInDrawing = exitCalls == 0
+        report.append(
+            "escape cleared=\(cleared) stayedInDrawing=\(stayedInDrawing) "
+                + "marks=\(view.session.strokes.count) expect 0 exits=\(exitCalls) expect 0 ok=\(cleared && stayedInDrawing)"
+        )
+
+        // A new stroke can be drawn immediately after the clear.
+        drag(view, window: window, from: CGPoint(x: 400, y: 200), to: CGPoint(x: 500, y: 240))
+        let keepsDrawing = view.session.strokes.count == 1
+        report.append("escape keeps-drawing marks=\(view.session.strokes.count) expect 1 ok=\(keepsDrawing)")
+
+        // With a mark selected, Escape still clears the selection first.
+        state.tool = .select
+        drag(view, window: window, from: CGPoint(x: 450, y: 220), to: CGPoint(x: 450, y: 220))
+        let reselected = view.selectedMarkID != nil
+        key(view, 53, "\u{1B}")
+        let selectionFirst = reselected && view.selectedMarkID == nil
+            && view.session.strokes.count == 1 && clearCalls == 1 && exitCalls == 0
+        report.append(
+            "escape selection-first deselected=\(view.selectedMarkID == nil) marks=\(view.session.strokes.count) expect 1 "
+                + "clears=\(clearCalls) expect 1 ok=\(selectionFirst)"
+        )
+
+        // The whiteboard: Escape clears the current page and the board stays open.
+        let boardState = EditorState()
+        boardState.tool = .pen
+        boardState.ink = .blue
+        let board = WhiteboardPages()
+        let boardView = WhiteboardView(frame: CGRect(origin: .zero, size: size), state: boardState, board: board, onEscape: {})
+        let boardWindow = borderlessWindow(boardView)
+        defer { boardWindow.orderOut(nil) }
+
+        var boardExitCalls = 0
+        var boardClearCalls = 0
+        boardView.onEscape = { boardExitCalls += 1 }
+        boardView.onClearMarks = { boardClearCalls += 1; boardView.clear() }
+        drag(boardView, window: boardWindow, from: CGPoint(x: 150, y: 150), to: CGPoint(x: 350, y: 190))
+        guard board.pages[0].session.strokes.count == 1 else {
+            report.append("FAIL: escape board mark was not committed")
+            return report
+        }
+        key(boardView, 53, "\u{1B}")
+        let boardCleared = board.pages[0].session.strokes.isEmpty && boardClearCalls == 1
+        let boardStayedOpen = boardExitCalls == 0 && board.count == 1
+        report.append(
+            "escape board cleared=\(boardCleared) stayedOpen=\(boardStayedOpen) "
+                + "marks=\(board.pages[0].session.strokes.count) expect 0 exits=\(boardExitCalls) expect 0 ok=\(boardCleared && boardStayedOpen)"
+        )
+
+        let passed = cleared && stayedInDrawing && keepsDrawing && selectionFirst
+            && boardCleared && boardStayedOpen
+        report.append("escape result=\(passed ? "PASS" : "FAIL")")
+        return report
+    }
+
+    // MARK: - Number undo (global history)
+
+    /// A numbered step commits inside `DrawingSession.begin`, so `mouseUp`
+    /// never runs for it. The rule pinned here: the placement still reaches
+    /// the controller's global history exactly once, the same way a
+    /// drag-committed mark does — one ⌘Z removes exactly that badge, ⇧⌘Z
+    /// brings the same mark back, and the sequence neither gains nor loses a
+    /// number. Driven through the real controller canvases and their history.
+    private static func numberUndoReport() -> [String] {
+        var report: [String] = []
+        let controller = OverlayController(captureService: CaptureService())
+        controller.activate()
+        defer {
+            if controller.isBoardActive { controller.toggleBoard() }
+            controller.deactivate(restoringFocus: false)
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+
+        controller.state.tool = .number
+
+        /// One real click through the view's own mouse-down path; returns the
+        /// placed badge.
+        func place(on view: OverlayView, at point: CGPoint) -> Stroke? {
+            guard let window = view.window else { return nil }
+            let height = view.bounds.height
+            guard let down = NSEvent.mouseEvent(
+                with: .leftMouseDown,
+                location: CGPoint(x: point.x, y: height - point.y),
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 1,
+                clickCount: 1,
+                pressure: 1
+            ) else { return nil }
+            view.mouseDown(with: down)
+            return view.session.strokes.last
+        }
+
+        // Drawing mode: place, undo through the controller, redo through it.
+        guard let view = controller.selfTestViews.first else {
+            report.append("FAIL: number undo no drawing canvas")
+            return report
+        }
+        guard let placed = place(on: view, at: CGPoint(x: 320, y: 320)),
+              placed.stepNumber == 1, view.session.strokes.count == 1 else {
+            report.append("FAIL: number undo badge was not placed")
+            return report
+        }
+        controller.undo()
+        let removed = view.session.strokes.isEmpty && view.session.stepCount == 0
+        controller.redo()
+        guard let restored = view.session.strokes.first else {
+            report.append("FAIL: number undo redo restored nothing")
+            return report
+        }
+        // The same mark comes back — which only counts when the undo really
+        // removed it — with its number, and the sequence moves on to 2.
+        let restoredOk = removed && restored.id == placed.id && restored.stepNumber == 1
+            && view.session.stepCount == 1 && view.session.nextStepNumber == 2
+        // The sequence keeps running without a gap: the next badge takes
+        // number 2, and undoing it hands the number back while badge 1 stays.
+        guard let second = place(on: view, at: CGPoint(x: 520, y: 320)), second.stepNumber == 2 else {
+            report.append("FAIL: number undo next badge did not take number 2")
+            return report
+        }
+        controller.undo()
+        let keepsSequence = view.session.strokes.count == 1
+            && view.session.strokes.first?.stepNumber == 1
+            && view.session.nextStepNumber == 2
+        report.append(
+            "number undo removed=\(removed) restored=\(restoredOk) keep=\(keepsSequence) "
+                + "marks=\(view.session.strokes.count) expect 1 ok=\(removed && restoredOk && keepsSequence)"
+        )
+        let overlayOk = removed && restoredOk && keepsSequence
+
+        // The whiteboard: the same controller path over the board's canvases,
+        // and the page's own session (what captures compose from) stays in step.
+        controller.toggleBoard()
+        guard let boardView = controller.selfTestViews.first as? WhiteboardView else {
+            report.append("FAIL: number undo no board canvas")
+            return report
+        }
+        guard let boardPlaced = place(on: boardView, at: CGPoint(x: 400, y: 400)),
+              boardPlaced.stepNumber == 1 else {
+            report.append("FAIL: number undo board badge was not placed")
+            return report
+        }
+        controller.undo()
+        let boardRemoved = boardView.session.strokes.isEmpty
+            && boardView.board.currentPage.session.strokes.isEmpty
+        controller.redo()
+        let boardRestoredMark = boardView.session.strokes.first
+        let boardRestored = boardRemoved && boardRestoredMark?.id == boardPlaced.id
+            && boardRestoredMark?.stepNumber == 1
+            && boardView.board.currentPage.session.strokes.first?.id == boardPlaced.id
+        report.append(
+            "number undo board removed=\(boardRemoved) restored=\(boardRestored) "
+                + "marks=\(boardView.session.strokes.count) expect 1 ok=\(boardRemoved && boardRestored)"
+        )
+
+        let passed = overlayOk && boardRemoved && boardRestored
+        report.append("number undo result=\(passed ? "PASS" : "FAIL")")
         return report
     }
 
