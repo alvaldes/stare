@@ -70,6 +70,16 @@ Stare without this step.
 Stare asks for **Screen Recording** once (System Settings → Privacy & Security →
 Screen Recording), and updates keep the grant.
 
+**First run.** The first time Stare starts, a setup guide shows the app icon
+and one line about what Stare does, then the permission it needs — Screen
+Recording — and why. Its button opens System Settings right at the Screen
+Recording pane, so you only have to flip the switch. When you come back, Stare
+notices the grant on its own, enables **Continue**, and Continue opens
+Settings. If macOS granted the permission but the running session cannot see
+it yet, the guide offers a **Restart Stare** button. Closing the guide without
+granting still marks it as seen — it never reopens by itself — and you can
+reopen it any time from the menu bar with **Setup Guide…**.
+
 ## Every tool is one key away
 
 | Keys | What they do |
@@ -96,7 +106,28 @@ Screen Recording), and updates keep the grant.
 | Capture card | Hover keeps it on screen · click opens the editor · drag it into another app |
 | Editor | Same tools and inks · `⌘Z` undo · `⇧⌘Z` redo · `Esc` cancels a crop, then closes |
 
+All of these — the four global shortcuts and each tool's key — can be
+rebound in Settings.
+
 </details>
+
+## Settings
+
+Every preference Stare has lives in its Settings window (**Settings…** in the
+menu bar): a resizable window with a sidebar of sections, where every change
+applies immediately. The sections:
+
+- **General** — the drawing frame, which displays to draw on, where the palette opens, how long the laser lasts, launch at login, and update checks.
+- **Tools** — the ink drawing starts with, a shortcut for each tool, and the palette's position reset.
+- **Shortcuts** — the four global shortcuts (`⌥⇧A`, `⌥⇧M`, `⌥⇧P`, `⌥⇧W`) with a key recorder and conflict checks.
+- **Pointer Highlight** — the style of the `⌥⇧M` highlight: five presets (Ring, Squircle, Dot, Marker tip, Spotlight), size, band width, glow, colour and idle fade, with a live preview drawn by the same renderer the overlay uses.
+- **Capture** — where captures go (the clipboard or a folder), the file format for folder saves, and the file-name prefix.
+- **Whiteboard** — the background and how many pages a new board opens with.
+- **Permissions** — the live Screen Recording status, with a link to System Settings.
+- **About** — the version and one line about the app.
+
+All preferences persist together in one stored document, so an existing
+install keeps the pointer settings it already had.
 
 ## Questions
 

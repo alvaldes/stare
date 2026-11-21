@@ -29,11 +29,30 @@ the Homebrew cask's `version` and `sha256` in
 
 Diagnostics: the app writes nothing by default. Launch with `STARE_DIAG=1` to make
 it append to `/tmp/stare.log`. `Stare --selftest` writes
-`/tmp/stare-selftest.txt`, offscreen renders of the palette, the editor chrome and
-the settings form in both system appearances, a mark-composition PNG, a
+`/tmp/stare-selftest.txt`, offscreen renders of the palette, the editor chrome
+and every Settings pane in both system appearances, a mark-composition PNG, a
 blur-composition check with its measured pixels, pointer-pulse renders with
 their measured extents, and the front-window display mapping with the window
 frame and display frames it used.
+
+Its checked sections each end in one `result=` line, expected `PASS`:
+`select`, `board`, `blur` and `pointer pulse` for the drawing and capture
+core; `settings panes … areas=8` and `settings window` for the settings shell
+(every pane rendered in light and dark; the window visible, resizable and
+wider than the old fixed 420-pt form); `tools pane` (a tool-shortcut rebind
+as the overlay's router sees it, with conflict and unsupported-key refusals
+leaving the map unchanged); `hotkeys pane` (the four default global hotkeys
+registered through the real Carbon path, a rebound key re-registered, a
+modifier-less key refused while the previous binding stays); `general pane`
+(the update due-check runs without contacting the release feed when not due);
+`capture pane` (a folder-destination capture lands as a correctly named,
+decodable file through the real delivery tail, and the clipboard path writes
+nothing); `whiteboard pane` (a fresh board opens with the persisted
+background and page count); `marker styles … presets=5` (all five pointer
+presets drawn through the Settings preview, with painted-pixel checks); and
+`onboarding` (the guide's window can become key from the accessory app, and
+any close marks the guide as seen). The scratch directories the capture and
+whiteboard sections create are removed before the report returns.
 
 ## Signing and the Screen Recording grant
 
@@ -63,9 +82,11 @@ Sources/Stare/            AppKit and SwiftUI
   CaptureService          ScreenCaptureKit, permission, own windows excluded
   CaptureCard             the corner card with drag-out
   CaptureEditor           editor window, canvas, crop, copy, save
-  SettingsView/Controller every preference in one window
+  OnboardingWindow/View   the first-run guide and its handoff to Settings
+  SettingsView/Controller the settings window: a sidebar of areas, panes of cards
+  PreferencesModel        the one persisted preferences blob, saved whole on every change
   GlobalHotkey            Carbon hotkeys, no Accessibility permission
-  EditorState             preferences and current tool/ink
+  EditorState             current tool/ink and mirrors, written through PreferencesModel
   SelfTest Diag           development verification and optional tracing
 ```
 
@@ -112,5 +133,6 @@ Sources/Stare/            AppKit and SwiftUI
 ## History
 
 Every spec, task and user correction is logged in [`odd/tasks/`](../odd/tasks/):
-`core-overlay-capture.md` (v0.1), `v0.2.md` and `landing.md`. Release notes are
-in [CHANGELOG.md](../CHANGELOG.md).
+`core-overlay-capture.md` (v0.1), `v0.2.md`, `landing.md` and
+`onboarding-settings.md`. Release notes are in
+[CHANGELOG.md](../CHANGELOG.md).
