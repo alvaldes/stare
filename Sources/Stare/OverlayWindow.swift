@@ -9,7 +9,10 @@ final class OverlayWindow: NSWindow {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
-    init(screen: NSScreen) {
+    /// `opaqueBoard` builds the whiteboard layer (T6): same proven key and
+    /// click configuration, but an opaque window since the board itself covers
+    /// the screen instead of drawing over the desktop.
+    init(screen: NSScreen, opaqueBoard: Bool = false) {
         super.init(
             contentRect: screen.frame,
             styleMask: [.borderless],
@@ -26,8 +29,8 @@ final class OverlayWindow: NSWindow {
             .stationary,
             .ignoresCycle,
         ]
-        isOpaque = false
-        backgroundColor = .clear
+        isOpaque = opaqueBoard
+        backgroundColor = opaqueBoard ? .black : .clear
         hasShadow = false
         hidesOnDeactivate = false
         isReleasedWhenClosed = false

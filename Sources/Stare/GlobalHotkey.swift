@@ -92,7 +92,8 @@ final class GlobalHotkey {
     }
 }
 
-/// The two system-wide shortcuts: drawing and the pointer highlight.
+/// The system-wide shortcuts: drawing, the pointer highlight, pinning and the
+/// whiteboard.
 enum HotkeyDefaults {
     static let keyCode = UInt32(kVK_ANSI_A)
     static let carbonModifiers = UInt32(optionKey | shiftKey)
@@ -103,4 +104,9 @@ enum HotkeyDefaults {
 
     static let pinKeyCode = UInt32(kVK_ANSI_P)
     static let pinDisplayName = "⌥⇧P"
+
+    /// T6: the whiteboard replaces the transparent overlay with an opaque,
+    /// permission-free board, so it gets its own global shortcut.
+    static let whiteboardKeyCode = UInt32(kVK_ANSI_W)
+    static let whiteboardDisplayName = "⌥⇧W"
 }

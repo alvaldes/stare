@@ -9,6 +9,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let onClear: () -> Void
     private let onPointerToggle: () -> Void
     private let onPinToggle: () -> Void
+    private let onBoardToggle: () -> Void
     private let onOpenSettings: () -> Void
     /// Asked when the menu opens, so a checkmark never shows a stale pin state.
     private let isPinned: () -> Bool
@@ -20,6 +21,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         onClear: @escaping () -> Void,
         onPointerToggle: @escaping () -> Void,
         onPinToggle: @escaping () -> Void,
+        onBoardToggle: @escaping () -> Void,
         onOpenSettings: @escaping () -> Void,
         isPinned: @escaping () -> Bool
     ) {
@@ -27,6 +29,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         self.onClear = onClear
         self.onPointerToggle = onPointerToggle
         self.onPinToggle = onPinToggle
+        self.onBoardToggle = onBoardToggle
         self.onOpenSettings = onOpenSettings
         self.isPinned = isPinned
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -47,6 +50,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         pinItem.action = #selector(togglePin)
         pinItem.target = self
         menu.addItem(pinItem)
+
+        menu.addItem(menuItem(title: "Whiteboard  \(HotkeyDefaults.whiteboardDisplayName)", action: #selector(toggleBoard)))
 
         menu.addItem(menuItem(title: "Clear Drawing", action: #selector(clear)))
         menu.addItem(.separator())
@@ -151,6 +156,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     @objc private func clear() { onClear() }
     @objc private func togglePointer() { onPointerToggle() }
     @objc private func togglePin() { onPinToggle() }
+    @objc private func toggleBoard() { onBoardToggle() }
     @objc private func openSettings() { onOpenSettings() }
     @objc private func quit() { NSApp.terminate(nil) }
 }

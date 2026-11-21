@@ -51,6 +51,8 @@ final class EditorState: ObservableObject {
     @Published var laserLifetime: TimeInterval {
         didSet { UserDefaults.standard.set(laserLifetime, forKey: Self.laserLifetimeKey) }
     }
+    /// Whiteboard pages indicator for the toolbar: nil hides the page controls.
+    @Published var whiteboardPage: (current: Int, total: Int)? = nil
 
     init() {
         let defaults = UserDefaults.standard

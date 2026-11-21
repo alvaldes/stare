@@ -16,6 +16,11 @@ final class OverlayController {
     }
 
     private var canvases: [CGDirectDisplayID: DisplayCanvas] = [:]
+    /// Whiteboard mode (T6): one opaque board canvas per display, with the
+    /// pages kept per display for the whole app session.
+    private(set) var isBoardActive = false
+    private var boardCanvases: [CGDirectDisplayID: DisplayCanvas] = [:]
+    private var boards: [CGDirectDisplayID: WhiteboardPages] = [:]
     /// Global undo order across displays: Command-Z undoes the last mark on
     /// whichever display it was drawn, not only on the one under the pointer.
     private var commitOrder: [(displayID: CGDirectDisplayID, strokeID: UUID)] = []
@@ -120,11 +125,16 @@ final class OverlayController {
     }
 
     private func wireEditor() {
-        // The editor is a normal window: opening it while the overlay is still
-        // armed would leave the transparent layer above it, eating every click.
+        // The editor is a normal window: opening it while a layer is still
+        // armed would leave it above, eating every click.
         cards.onOpen = { [weak self] image in
-            self?.deactivate(restoringFocus: false)
-            self?.editor.open(image: image)
+            guard let self else { return }
+            if self.isBoardActive {
+                self.closeBoard(restoringFocus: false)
+            } else {
+                self.deactivate(restoringFocus: false)
+            }
+            self.editor.open(image: image)
         }
     }
 
@@ -219,6 +229,7 @@ final class OverlayController {
 
     func activate() {
         guard !isActive, !NSScreen.screens.isEmpty else { return }
+        if isBoardActive { closeBoard() }
         if isPointerActive { stopPointerMode() }
         isActive = true
 
@@ -271,6 +282,71 @@ final class OverlayController {
         Diag.log("deactivate")
     }
 
+    // MARK: - Whiteboard
+
+    func toggleBoard() {
+        if isBoardActive { closeBoard() } else { openBoard() }
+    }
+
+    /// T6: an opaque board that covers the screen. Opening it needs no Screen
+    /// Recording permission; it replaces the drawing overlay, clearing the
+    /// marks the same way leaving drawing mode always has (esc = clear and
+    /// leave). The pages stay in memory for the whole session.
+    private func openBoard() {
+        guard !isBoardActive, !NSScreen.screens.isEmpty else { return }
+        if isActive { deactivate() }
+        if isPointerActive { stopPointerMode() }
+        isBoardActive = true
+
+        rememberFrontmostApplication()
+        NSApp.activate(ignoringOtherApps: true)
+
+        buildBoardCanvases()
+        for canvas in boardCanvases.values {
+            canvas.view.syncPreferences()
+            canvas.panel.orderFrontRegardless()
+            canvas.panel.makeFirstResponder(canvas.view)
+            canvas.view.showIntroHint()
+        }
+        boardCanvasUnderPointer()?.panel.makeKey()
+        syncBoardIndicator()
+        NSCursor.crosshair.set()
+        showToolbar()
+        installKeyMonitor()
+        Diag.log("board open displays=\(boardCanvases.count)")
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isBoardActive else { return }
+            for canvas in self.boardCanvases.values { canvas.panel.orderFrontRegardless() }
+            self.toolbar?.orderFrontRegardless()
+            self.boardCanvasUnderPointer()?.panel.makeKey()
+        }
+    }
+
+    /// Closing the board returns to the previous behaviour: the transparent
+    /// overlay behaves exactly as it did before this feature. Pages stay in
+    /// memory for the session and are not persisted to disk.
+    private func closeBoard(restoringFocus: Bool = true) {
+        guard isBoardActive else { return }
+        isBoardActive = false
+        state.whiteboardPage = nil
+        for canvas in boardCanvases.values {
+            canvas.boardView?.storeBoardState()
+            canvas.panel.orderOut(nil)
+        }
+        boardCanvases.removeAll()
+        hideToolbar()
+        // The marks stay on their pages, so the undo history cannot resurrect
+        // them in a future overlay session: start the history clean.
+        commitOrder.removeAll()
+        redoOrder.removeAll()
+        liveFrames.stop()
+        removeKeyMonitor()
+        if restoringFocus { restoreFrontmostApplication() }
+        NSCursor.arrow.set()
+        Diag.log("board close pages kept=\(boards.count)")
+    }
+
     private func rememberFrontmostApplication() {
         guard let application = NSWorkspace.shared.frontmostApplication,
               application.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
@@ -287,7 +363,16 @@ final class OverlayController {
     /// Capture, recompose the marks at pixel resolution, and put the result on
     /// the pasteboard. Nothing of Stare's interface ends up in the image: the
     /// capture filter excludes our own windows and the marks are redrawn.
+    /// While the whiteboard is open the base is the page's own solid background
+    /// at display pixel size — the desktop is hidden behind the board, the
+    /// result must never be transparent or black by accident, and no Screen
+    /// Recording permission is needed.
     func capture(displayID: CGDirectDisplayID, area: CGRect?) {
+        if isBoardActive, let canvas = boardCanvases[displayID] {
+            captureBoardMarks(canvas, displayID: displayID, area: area)
+            return
+        }
+
         guard let canvas = canvases[displayID] else { return }
 
         // Never interrupt a session with a system prompt: the permission is asked
@@ -311,33 +396,70 @@ final class OverlayController {
                 return
             }
 
-            let result: CGImage
-            if let area {
-                let pixelRect = CoordinateMapping.toPixels(area, scale: scale).integral
-                result = composed.cropping(to: pixelRect) ?? composed
-            } else {
-                result = composed
-            }
-
-            let representation = NSBitmapImageRep(cgImage: result)
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            // Both types: some apps take PNG, others only TIFF.
-            pasteboard.declareTypes([.png, .tiff], owner: nil)
-            if let png = representation.representation(using: .png, properties: [:]) {
-                pasteboard.setData(png, forType: .png)
-            }
-            if let tiff = representation.tiffRepresentation {
-                pasteboard.setData(tiff, forType: .tiff)
-            }
-            Diag.log("capture copied \(result.width)x\(result.height) marks=\(canvas.view.session.strokes.count)")
-            cards.show(result, on: screen(for: displayID))
+            deliver(composed, area: area, canvas: canvas, displayID: displayID)
         } catch CaptureError.permissionDenied {
             canvas.view.showHint("Screen Recording permission needed · System Settings → Privacy", seconds: 3.5)
             Diag.log("capture denied by the system")
         } catch {
             Diag.log("capture failed: \(error)")
         }
+    }
+
+    /// Whiteboard capture: marks over a solid image of the page's background
+    /// colour at the display's pixel size.
+    private func captureBoardMarks(_ canvas: DisplayCanvas, displayID: CGDirectDisplayID, area: CGRect?) {
+        guard let boardView = canvas.boardView else { return }
+        let frameSize = canvas.panel.frame.size
+        var pixelSize = frameSize
+        // Retina captures need the pixel mode, not `CGDisplayPixelsWide`.
+        if let mode = CGDisplayCopyDisplayMode(displayID) {
+            pixelSize = CGSize(width: mode.pixelWidth, height: mode.pixelHeight)
+        }
+        let scale = pixelSize.width / max(frameSize.width, 1)
+
+        guard let base = boardView.board.currentPage.background.captureBase(
+            width: Int(pixelSize.width),
+            height: Int(pixelSize.height)
+        ) else {
+            Diag.log("board capture failed: background base image")
+            return
+        }
+        guard let composed = MarkCompositor.composite(
+            marks: canvas.view.session.strokes,
+            over: base,
+            scale: scale
+        ) else {
+            Diag.log("board capture failed: composition returned nil")
+            return
+        }
+        deliver(composed, area: area, canvas: canvas, displayID: displayID)
+    }
+
+    /// The shared capture tail: crop to the requested area, copy to the
+    /// pasteboard, and put the corner card up.
+    private func deliver(_ composed: CGImage, area: CGRect?, canvas: DisplayCanvas, displayID: CGDirectDisplayID) {
+        let scale = CGFloat(composed.width) / max(canvas.panel.frame.width, 1)
+        let result: CGImage
+        if let area {
+            let pixelRect = CoordinateMapping.toPixels(area, scale: scale).integral
+            result = composed.cropping(to: pixelRect) ?? composed
+        } else {
+            result = composed
+        }
+
+        let representation = NSBitmapImageRep(cgImage: result)
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        // Both types: some apps take PNG, others only TIFF.
+        pasteboard.declareTypes([.png, .tiff], owner: nil)
+        if let png = representation.representation(using: .png, properties: [:]) {
+            pasteboard.setData(png, forType: .png)
+        }
+        if let tiff = representation.tiffRepresentation {
+            pasteboard.setData(tiff, forType: .tiff)
+        }
+        Diag.log("capture copied \(result.width)x\(result.height) marks=\(canvas.view.session.strokes.count)")
+        cards.show(result, on: screen(for: displayID))
     }
 
     private func screen(for displayID: CGDirectDisplayID) -> NSScreen? {
@@ -349,6 +471,15 @@ final class OverlayController {
     }
 
     func clearAll() {
+        if isBoardActive {
+            for canvas in boardCanvases.values {
+                let ids = Set(canvas.view.session.strokes.map(\.id))
+                commitOrder.removeAll { ids.contains($0.strokeID) }
+                redoOrder.removeAll { ids.contains($0.strokeID) }
+                canvas.clear()
+            }
+            return
+        }
         for canvas in canvases.values { canvas.clear() }
         commitOrder.removeAll()
         redoOrder.removeAll()
@@ -384,7 +515,18 @@ final class OverlayController {
     // MARK: - Canvases
 
     @objc private func screenParametersChanged() {
-        guard isActive else { return }
+        guard isActive || isBoardActive else { return }
+        if isBoardActive {
+            for canvas in boardCanvases.values { canvas.panel.orderOut(nil) }
+            boardCanvases.removeAll()
+            buildBoardCanvases()
+            for canvas in boardCanvases.values {
+                canvas.panel.orderFrontRegardless()
+                canvas.panel.makeFirstResponder(canvas.view)
+            }
+            boardCanvasUnderPointer()?.panel.makeKey()
+            return
+        }
         tearDownCanvases()
         buildCanvases()
         for canvas in canvases.values {
@@ -397,10 +539,12 @@ final class OverlayController {
     /// Windows no longer join every Space, so a Space switch is what brings the
     /// drawing layer back over the new Space.
     @objc private func activeSpaceChanged() {
-        guard isActive else { return }
-        for canvas in canvases.values { canvas.panel.orderFrontRegardless() }
+        guard isActive || isBoardActive else { return }
+        for canvas in (isBoardActive ? boardCanvases : canvases).values {
+            canvas.panel.orderFrontRegardless()
+        }
         toolbar?.orderFrontRegardless()
-        canvasUnderPointer()?.panel.makeKey()
+        (isBoardActive ? boardCanvasUnderPointer() : canvasUnderPointer())?.panel.makeKey()
         NSCursor.crosshair.set()
     }
 
@@ -454,6 +598,81 @@ final class OverlayController {
         liveFrames.stop()
     }
 
+    // MARK: - Board canvases
+
+    private func board(for displayID: CGDirectDisplayID) -> WhiteboardPages {
+        if let existing = boards[displayID] { return existing }
+        let fresh = WhiteboardPages()
+        boards[displayID] = fresh
+        return fresh
+    }
+
+    private func buildBoardCanvases() {
+        for screen in NSScreen.screens {
+            guard let displayID = DisplayCanvas.displayID(of: screen),
+                  let canvas = DisplayCanvas(
+                    screen: screen,
+                    state: state,
+                    onEscape: { [weak self] in self?.closeBoard() },
+                    board: board(for: displayID)
+                  ) else { continue }
+
+            canvas.view.onCommit = { [weak self] stroke in
+                guard let self else { return }
+                commitOrder.append((displayID, stroke.id))
+                redoOrder.removeAll()
+            }
+            canvas.view.onUndo = { [weak self] in self?.undo() }
+            canvas.view.onRedo = { [weak self] in self?.redo() }
+            canvas.view.onCaptureRequest = { [weak self] area in
+                self?.capture(displayID: displayID, area: area)
+            }
+            canvas.view.onErase = { [weak self] ids in
+                guard let self else { return }
+                let erased = Set(ids)
+                self.commitOrder.removeAll { erased.contains($0.strokeID) }
+                self.redoOrder.removeAll { erased.contains($0.strokeID) }
+            }
+            canvas.view.onBlurMarksChanged = nil
+            // The board covers the screen, so a blur mark cannot show the
+            // desktop: no live frames are fed here and the neutral fallback
+            // shows where the mark is.
+            canvas.boardView?.onPageChanged = { [weak self] in
+                self?.syncBoardIndicator(for: displayID)
+            }
+            boardCanvases[displayID] = canvas
+        }
+    }
+
+    /// The toolbar's ‹ › indicator follows the display the pointer is on, since
+    /// each display has its own pages.
+    private func syncBoardIndicator(for displayID: CGDirectDisplayID? = nil) {
+        let id = displayID ?? boardCanvasUnderPointer()?.displayID ?? boardCanvases.keys.first
+        guard let id, let board = boards[id] else {
+            state.whiteboardPage = nil
+            return
+        }
+        state.whiteboardPage = (current: board.currentIndex + 1, total: board.count)
+    }
+
+    private func boardCanvasUnderPointer() -> DisplayCanvas? {
+        let location = NSEvent.mouseLocation
+        if let canvas = boardCanvases.values.first(where: { $0.panel.frame.contains(location) }) {
+            return canvas
+        }
+        return boardCanvases.values.first
+    }
+
+    /// The toolbar's clear only erases the page under the pointer: the other
+    /// pages and their marks stay untouched.
+    private func clearCurrentBoardPage() {
+        guard let canvas = boardCanvasUnderPointer() else { return }
+        let ids = Set(canvas.view.session.strokes.map(\.id))
+        commitOrder.removeAll { ids.contains($0.strokeID) }
+        redoOrder.removeAll { ids.contains($0.strokeID) }
+        canvas.clear()
+    }
+
     private func screenUnderPointer() -> NSScreen? {
         let location = NSEvent.mouseLocation
         return NSScreen.screens.first { $0.frame.contains(location) }
@@ -470,37 +689,71 @@ final class OverlayController {
     // MARK: - Toolbar
 
     private func showToolbar() {
-        let toolbar = toolbar ?? ToolbarPanel(
-            state: state,
-            onUndo: { [weak self] in self?.undo() },
-            onClear: { [weak self] in self?.clearAll() },
-            onDone: { [weak self] in self?.deactivate() }
-        )
+        // The board's palette carries the page controls and Done closes the
+        // board, so the panel is rebuilt when the mode changes.
+        let mode = isBoardActive ? "board" : "draw"
+        if toolbarMode != mode {
+            toolbar?.orderOut(nil)
+            toolbar = nil
+            toolbarMode = mode
+        }
+        let toolbar = toolbar ?? (isBoardActive
+            ? ToolbarPanel(
+                state: state,
+                onUndo: { [weak self] in self?.undo() },
+                onClear: { [weak self] in self?.clearCurrentBoardPage() },
+                onDone: { [weak self] in self?.closeBoard() },
+                onPreviousPage: { [weak self] in
+                    self?.boardCanvasUnderPointer()?.boardView?.selectPreviousPage()
+                },
+                onNextPage: { [weak self] in
+                    self?.boardCanvasUnderPointer()?.boardView?.selectNextPage()
+                }
+            )
+            : ToolbarPanel(
+                state: state,
+                onUndo: { [weak self] in self?.undo() },
+                onClear: { [weak self] in self?.clearAll() },
+                onDone: { [weak self] in self?.deactivate() }
+            ))
         self.toolbar = toolbar
         toolbar.positionNearPointerDisplay(placement: state.palettePlacement)
         toolbar.orderFrontRegardless()
     }
+
+    private var toolbarMode: String?
 
     private func hideToolbar() {
         toolbar?.orderOut(nil)
     }
 }
 
-/// One display's overlay panel and its marks.
+/// One display's overlay or whiteboard panel and its marks.
 final class DisplayCanvas {
     let displayID: CGDirectDisplayID
     let panel: OverlayWindow
     let view: OverlayView
 
-    init?(screen: NSScreen, state: EditorState, onEscape: @escaping () -> Void) {
+    init?(screen: NSScreen, state: EditorState, onEscape: @escaping () -> Void, board: WhiteboardPages? = nil) {
         let key = NSDeviceDescriptionKey("NSScreenNumber")
         guard let number = screen.deviceDescription[key] as? NSNumber else { return nil }
 
         displayID = CGDirectDisplayID(number.uint32Value)
-        panel = OverlayWindow(screen: screen)
-        view = OverlayView(frame: CGRect(origin: .zero, size: screen.frame.size), state: state, onEscape: onEscape)
+        panel = OverlayWindow(screen: screen, opaqueBoard: board != nil)
+        view = board.map {
+            WhiteboardView(frame: CGRect(origin: .zero, size: screen.frame.size), state: state, board: $0, onEscape: onEscape)
+        } ?? OverlayView(frame: CGRect(origin: .zero, size: screen.frame.size), state: state, onEscape: onEscape)
         panel.contentView = view
     }
+
+    static func displayID(of screen: NSScreen) -> CGDirectDisplayID? {
+        let key = NSDeviceDescriptionKey("NSScreenNumber")
+        guard let number = screen.deviceDescription[key] as? NSNumber else { return nil }
+        return CGDirectDisplayID(number.uint32Value)
+    }
+
+    /// The whiteboard view, nil on the plain overlay.
+    var boardView: WhiteboardView? { view as? WhiteboardView }
 
     var isEmpty: Bool { view.isEmpty }
 

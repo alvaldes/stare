@@ -16,6 +16,10 @@ struct ToolbarView: View {
     let onClear: () -> Void
     let onDone: () -> Void
     var extraActions: [ToolbarAction] = []
+    /// Whiteboard page controls (T6): shown while the board is open and the
+    /// callbacks exist, hidden in the plain overlay and the editor bar.
+    var onPreviousPage: (() -> Void)? = nil
+    var onNextPage: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 4) {
@@ -34,6 +38,16 @@ struct ToolbarView: View {
                 ForEach(extraActions) { action in
                     iconButton(action.symbolName, help: action.help, action: action.handler)
                 }
+            }
+
+            if let page = state.whiteboardPage, let previous = onPreviousPage, let next = onNextPage {
+                divider
+                iconButton("chevron.left", help: "Previous page (⌘←)", action: previous)
+                Text("\(page.current)/\(page.total)")
+                    .font(.system(size: 12, weight: .medium).monospacedDigit())
+                    .foregroundStyle(Color.secondary)
+                    .frame(minWidth: 26)
+                iconButton("chevron.right", help: "Next page (⌘→)", action: next)
             }
 
             divider

@@ -4,13 +4,14 @@ Native macOS menu bar app for drawing over the live screen, capturing the screen
 with those marks, and pasting the result anywhere. macOS 26, Swift, no Electron,
 no account, no subscription.
 
-Press `⌥⇧A` to draw, `S` to capture, `Esc` to clear and leave.
+Press `⌥⇧A` to draw over the screen, `⌥⇧W` for the whiteboard, `S` to capture,
+`Esc` to clear and leave.
 
 ## Build and run
 
 ```sh
 swift build                 # compile
-swift test                  # 58 unit tests, no GUI needed
+swift test                  # 82 unit tests, no GUI needed
 Scripts/bundle.sh           # release build -> build/Stare.app
 Scripts/bundle.sh release install   # also copies to /Applications
 ```
@@ -30,11 +31,15 @@ blur-composition check with its measured pixels in the report.
 
 | Where | Keys |
 | --- | --- |
-| Anywhere | `⌥⇧A` draw over the screen · `⌥⇧M` pointer highlight · `⌥⇧P` pin or unpin the drawing so clicks pass through |
+| Anywhere | `⌥⇧A` draw over the screen · `⌥⇧W` whiteboard · `⌥⇧M` pointer highlight · `⌥⇧P` pin or unpin the drawing so clicks pass through |
 | Drawing | `P` pen · `H` highlighter · `A` arrow · `L` line · `R` rectangle · `O` ellipse · `T` text · `C` numbered step · `F` laser · `B` blur · `E` eraser |
 | Drawing | `1`–`8` inks (red, orange, yellow, green, blue, purple, white, black) · `⌘Z` undo · `⇧⌘Z` redo (across displays) · `Esc` clear and leave |
 | Drawing | hold `⇧` for a straight line with pen/highlighter, or a square/circle with rectangle/ellipse |
 | Drawing | `S` capture the display · `⇧S` drag an area (the rest dims) |
+| Whiteboard | `‹` `›` buttons in the palette, or `⌘←` `⌘→` — going past the last page creates one inheriting its background, `‹` at page 1 stays put |
+| Whiteboard | `⌘B` flips the current page between white and black; inks are never remapped, so a mark colour that vanishes against the background is your call |
+| Whiteboard | hold space and drag, or middle-drag, to pan the endless canvas; marks keep their position when the display changes |
+| Whiteboard | `S` capture composes the marks over the page's own background colour, no Screen Recording permission needed · `Esc` closes the board and keeps the pages for the session |
 | Capture card | hover keeps it alive · click opens the editor · drag it into another app |
 | Editor | same tools and inks · `⌘Z` undo · `⇧⌘Z` redo · `Esc` cancels a crop, then closes |
 
@@ -45,6 +50,7 @@ Sources/StareCore/        no AppKit: geometry, session, shortcuts, compositing
   Tool Ink Stroke         the model: instruments, inks, one mark
   PathBuilder             freehand smoothing, arrow heads, shapes, badges
   DrawingSession          begin/extend/commit, undo, erase, transient pruning
+  WhiteboardPages         per-display pages: marks, background, pan offset
   MarkRenderer            draws marks into any CGContext
   MarkCompositor          recomposes marks over a captured frame at pixel scale
   CoordinateMapping       AppKit <-> overlay <-> capture pixels
@@ -53,6 +59,7 @@ Sources/StareCore/        no AppKit: geometry, session, shortcuts, compositing
 Sources/Stare/            AppKit and SwiftUI
   OverlayController       one window per display, the two modes, capture, undo order
   OverlayWindow/View      the transparent drawing layer and its input
+  WhiteboardView          the opaque board: pages, background colour, pan
   ToolbarPanel/View       the floating palette (also the editor's bar)
   CaptureService          ScreenCaptureKit, permission, own windows excluded
   CaptureCard             the corner card with drag-out

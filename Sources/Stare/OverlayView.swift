@@ -3,10 +3,14 @@ import StareCore
 
 /// Draws one display's marks and turns mouse and keyboard input into a
 /// `DrawingSession`. Coordinates are top-left origin, local to the display.
-final class OverlayView: NSView {
+/// The whiteboard subclass swaps the coordinate origin for the page's pan
+/// offset through the `panOffset` hook and paints its own background, so both
+/// layers share one input path.
+class OverlayView: NSView {
     let state: EditorState
-    private(set) var session = DrawingSession()
+    var session = DrawingSession()
     var onEscape: (() -> Void)?
+    /// Reports a committed mark so the controller can undo across displays.
     /// Reports a committed mark so the controller can undo across displays.
     var onCommit: ((Stroke) -> Void)?
     /// Command-Z is global: the controller owns the undo history.
@@ -25,6 +29,34 @@ final class OverlayView: NSView {
     /// Blur marks appear and disappear through several paths (drag, commit,
     /// undo, erase, clear); the live frame source needs a signal each time.
     var onBlurMarksChanged: (() -> Void)?
+    /// The whiteboard bridge: every session mutation is handed to the board so
+    /// its pages stay authoritative. Nil in the plain overlay.
+    var boardSink: ((DrawingSession) -> Void)?
+
+    /// Page-space hook: view space minus this offset equals page space, so
+    /// stroke points stored in page space keep their position on screen. Zero
+    /// in the plain overlay, the current page's offset on the whiteboard.
+    var panOffset: CGSize { .zero }
+
+    /// Converts a view point into page space, the space stroke points live in.
+    func pagePoint(_ viewPoint: CGPoint) -> CGPoint {
+        CGPoint(x: viewPoint.x + panOffset.width, y: viewPoint.y + panOffset.height)
+    }
+
+    /// Converts a page-space point back into view space.
+    func viewPoint(fromPage point: CGPoint) -> CGPoint {
+        CGPoint(x: point.x - panOffset.width, y: point.y - panOffset.height)
+    }
+
+    /// Converts a page-space rect into view space, for dirty rectangles.
+    func viewRect(fromPage rect: CGRect) -> CGRect {
+        rect.offsetBy(dx: -panOffset.width, dy: -panOffset.height)
+    }
+
+    /// Notifies the whiteboard bridge that the session changed.
+    func noteSessionChanged() {
+        boardSink?(session)
+    }
 
     static let textFont = NSFont.systemFont(ofSize: 20, weight: .regular)
     /// The pointer highlight is a thick translucent band with bright edges and a
@@ -46,8 +78,9 @@ final class OverlayView: NSView {
     }
 
     /// Bounds of committed marks, computed once, so a redraw never rebuilds a
-    /// path just to decide whether a stroke is visible.
-    private var committedBounds: [UUID: CGRect] = [:]
+    /// path just to decide whether a stroke is visible. Page space, so the
+    /// whiteboard clears it when the presented page changes.
+    var committedBounds: [UUID: CGRect] = [:]
     private var lastDragPoint: CGPoint?
     private var lastStraight = false
     private var lastInputTimestamp: TimeInterval = 0
@@ -139,6 +172,7 @@ final class OverlayView: NSView {
         finishTextEditing(commit: false)
         stopLaserTimer()
         noteBlurInterestChanged()
+        noteSessionChanged()
         needsDisplay = true
     }
 
@@ -148,6 +182,7 @@ final class OverlayView: NSView {
         guard session.active != nil else { return false }
         session.undo()
         noteBlurInterestChanged()
+        noteSessionChanged()
         needsDisplay = true
         return true
     }
@@ -159,6 +194,7 @@ final class OverlayView: NSView {
     func redoMark(id: UUID) -> Bool {
         guard session.undoneStrokes.last?.id == id, session.redo() else { return false }
         noteBlurInterestChanged()
+        noteSessionChanged()
         needsDisplay = true
         return true
     }
@@ -169,6 +205,7 @@ final class OverlayView: NSView {
         guard session.remove(id: id) else { return false }
         committedBounds.removeValue(forKey: id)
         noteBlurInterestChanged()
+        noteSessionChanged()
         needsDisplay = true
         return true
     }
@@ -206,15 +243,16 @@ final class OverlayView: NSView {
         // apply to the display being drawn on.
         window?.makeKey()
         window?.makeFirstResponder(self)
-        let point = convert(event.locationInWindow, from: nil)
+        let viewPoint = convert(event.locationInWindow, from: nil)
+        let point = pagePoint(viewPoint)
         lastDragPoint = point
         lastStraight = false
         lastInputTimestamp = event.timestamp
         Diag.log("mouseDown \(Int(point.x)),\(Int(point.y)) tool=\(state.tool.rawValue)")
 
         if isSelectingArea {
-            selectionOrigin = point
-            selectionRect = CGRect(origin: point, size: .zero)
+            selectionOrigin = viewPoint
+            selectionRect = CGRect(origin: viewPoint, size: .zero)
             needsDisplay = true
             return
         }
@@ -225,7 +263,7 @@ final class OverlayView: NSView {
             erase(at: point)
             return
         case .text:
-            beginTextEditing(at: point)
+            beginTextEditing(at: point, viewPoint: viewPoint)
             return
         default:
             // A mark of another tool must not leave a text editor behind: it
@@ -236,7 +274,8 @@ final class OverlayView: NSView {
         session.begin(at: point, tool: state.tool, ink: state.ink)
         if state.tool.isTransient { startLaserTimer() }
         noteBlurInterestChanged()
-        setNeedsDisplay(dirtyRect(around: point, other: nil))
+        noteSessionChanged()
+        setNeedsDisplay(dirtyRect(around: viewPoint, other: nil))
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -249,13 +288,15 @@ final class OverlayView: NSView {
         }
 
         if state.tool == .eraser {
-            lastDragPoint = convert(event.locationInWindow, from: nil)
+            let viewPoint = convert(event.locationInWindow, from: nil)
+            lastDragPoint = pagePoint(viewPoint)
             erase(at: lastDragPoint ?? .zero)
             return
         }
 
         let shift = event.modifierFlags.contains(.shift)
-        let point = adjusted(convert(event.locationInWindow, from: nil), shift: shift)
+        let viewPoint = convert(event.locationInWindow, from: nil)
+        let point = adjusted(pagePoint(viewPoint), shift: shift)
         let straight = straightConstraint(shift)
         let previousPoint = lastDragPoint
         // A shape or a line is defined by its endpoints, so its whole preview
@@ -268,12 +309,13 @@ final class OverlayView: NSView {
         session.extend(to: point, straight: straight)
 
         if let previousShapeBounds, let currentShapeBounds = session.active?.bounds {
-            setNeedsDisplay(previousShapeBounds.union(currentShapeBounds).insetBy(dx: -4, dy: -4))
+            let union = previousShapeBounds.union(currentShapeBounds).insetBy(dx: -4, dy: -4)
+            setNeedsDisplay(viewRect(fromPage: union))
         } else if state.tool.usesEndpointsOnly || straight != lastStraight {
             lastStraight = straight
             needsDisplay = true
         } else {
-            setNeedsDisplay(dirtyRect(around: point, other: previousPoint))
+            setNeedsDisplay(dirtyRect(around: viewPoint, other: previousPoint.map(viewPoint(fromPage:))))
         }
     }
 
@@ -311,7 +353,8 @@ final class OverlayView: NSView {
         guard !state.tool.isClickTool else { return }
 
         let shift = event.modifierFlags.contains(.shift)
-        let point = adjusted(convert(event.locationInWindow, from: nil), shift: shift)
+        let viewPoint = convert(event.locationInWindow, from: nil)
+        let point = adjusted(pagePoint(viewPoint), shift: shift)
         session.extend(to: point, straight: straightConstraint(shift))
         session.commit()
         if let committed = session.strokes.last {
@@ -324,6 +367,7 @@ final class OverlayView: NSView {
         // Full redraw: the first mark also removes the armed frame at the edges.
         needsDisplay = true
         noteBlurInterestChanged()
+        noteSessionChanged()
     }
 
     // MARK: - Area selection
@@ -375,17 +419,18 @@ final class OverlayView: NSView {
         for id in removed { committedBounds.removeValue(forKey: id) }
         onErase?(removed)
         noteBlurInterestChanged()
+        noteSessionChanged()
         Diag.log("erase count=\(removed.count) remaining=\(session.strokes.count)")
         needsDisplay = true
     }
 
     // MARK: - Text
 
-    private func beginTextEditing(at point: CGPoint) {
+    private func beginTextEditing(at pagePoint: CGPoint, viewPoint: CGPoint) {
         finishTextEditing(commit: true)
-        session.begin(at: point, tool: .text, ink: state.ink)
+        session.begin(at: pagePoint, tool: .text, ink: state.ink)
 
-        let field = NSTextField(frame: CGRect(x: point.x, y: point.y, width: 320, height: 30))
+        let field = NSTextField(frame: CGRect(x: viewPoint.x, y: viewPoint.y, width: 320, height: 30))
         field.isBezeled = false
         field.drawsBackground = false
         field.focusRingType = .none
@@ -439,6 +484,7 @@ final class OverlayView: NSView {
 
         window?.makeFirstResponder(self)
         needsDisplay = true
+        noteSessionChanged()
         Diag.log("text editing finished commit=\(commit) strokes=\(session.strokes.count)")
     }
 
@@ -449,7 +495,9 @@ final class OverlayView: NSView {
         laserTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             guard let self else { return }
             let now = Date()
-            _ = self.session.pruneTransient(now: now)
+            if self.session.pruneTransient(now: now) {
+                self.noteSessionChanged()
+            }
             self.needsDisplay = true
             if !self.session.strokes.contains(where: { $0.tool.isTransient }) {
                 self.stopLaserTimer()
@@ -540,12 +588,14 @@ final class OverlayView: NSView {
                         onRedo()
                     } else {
                         session.redo()
+                        noteSessionChanged()
                         needsDisplay = true
                     }
                 } else if let onUndo {
                     onUndo()
                 } else {
                     session.undo()
+                    noteSessionChanged()
                     needsDisplay = true
                 }
                 return
@@ -738,6 +788,28 @@ final class OverlayView: NSView {
             return
         }
 
+        drawBackground(in: context)
+        drawMarks(in: context, dirty: dirtyRect)
+
+        notePaintLatency()
+
+        drawDrawingFrame(in: context)
+        drawSelection(in: context)
+        drawHint()
+    }
+
+    /// The layer under the marks. Empty in the transparent overlay; the
+    /// whiteboard paints the current page's solid background here.
+    func drawBackground(in context: CGContext) {}
+
+    /// Every mark on the layer, in page space, translated by the pan offset.
+    /// `dirtyRect` is in view space; the context is shifted so page-space
+    /// points land where the user sees them, which is what makes panning and
+    /// display changes never move stored marks.
+    func drawMarks(in context: CGContext, dirty dirtyRect: NSRect) {
+        let pageDirty = dirtyRect.offsetBy(dx: panOffset.width, dy: panOffset.height)
+        context.saveGState()
+        context.translateBy(x: -panOffset.width, y: -panOffset.height)
         let now = Date()
         for stroke in session.strokes where stroke.tool.isTransient {
             render(stroke, in: context, now: now)
@@ -749,24 +821,19 @@ final class OverlayView: NSView {
                 committedBounds[stroke.id] = computed
                 return computed
             }()
-            guard box.intersects(dirtyRect) else { continue }
+            guard box.intersects(pageDirty) else { continue }
             render(stroke, in: context)
         }
 
         if let active = session.active {
             render(active, in: context)
         }
-
-        notePaintLatency()
-
-        drawDrawingFrame(in: context)
-        drawSelection(in: context)
-        drawHint()
+        context.restoreGState()
     }
 
     /// A thin frame in the current ink marks every armed display for the whole
     /// drawing session, so it is always clear which screens will take a mark.
-    private func drawDrawingFrame(in context: CGContext) {
+    func drawDrawingFrame(in context: CGContext) {
         guard state.showArmedFrame else { return }
         let rect = bounds.insetBy(dx: 3, dy: 3)
         context.setStrokeColor(state.ink.cgColor(alpha: 0.45))

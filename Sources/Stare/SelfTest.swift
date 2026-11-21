@@ -134,6 +134,10 @@ enum SelfTest {
         report.append("pin off=\(controller.interactiveCanvasCount) pinned=\(controller.isPinned)")
         controller.deactivate(restoringFocus: false)
 
+        // Whiteboard (T6/S3): pages, background colour and pan through the real
+        // board canvas and its view.
+        report.append(contentsOf: boardReport())
+
         // Palette in both system appearances: the same view must read on a light
         // and on a dark system, which a screenshot of one theme cannot prove.
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
@@ -181,6 +185,157 @@ enum SelfTest {
         let key = NSDeviceDescriptionKey("NSScreenNumber")
         guard let number = screen.deviceDescription[key] as? NSNumber else { return nil }
         return CGDirectDisplayID(number.uint32Value)
+    }
+
+    // MARK: - Whiteboard (T6)
+
+    /// Renders a view through its own draw path and writes it to a PNG.
+    private static func renderView(_ view: NSView, to path: String) -> CGImage? {
+        guard let representation = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
+        view.cacheDisplay(in: view.bounds, to: representation)
+        guard let image = representation.cgImage else { return nil }
+        return writePNG(image, to: path) ? image : nil
+    }
+
+    /// Opens the board through its real canvas, draws a mark on page 1, moves
+    /// to page 2 (which inherits the background and is flipped black with the
+    /// \u{2318}B-equivalent toggle), draws a different mark and switches back.
+    /// Reports per page the mark count and the rendered background colour
+    /// sampled through the real view render, the capture composition over the
+    /// page's own solid background, and the pan check: an existing mark's
+    /// on-screen position shifts by the offset while its stored points do not
+    /// change.
+    private static func boardReport() -> [String] {
+        var report: [String] = []
+        guard let screen = NSScreen.screens.first else {
+            report.append("FAIL: board no screens")
+            return report
+        }
+        let state = EditorState()
+        let board = WhiteboardPages()
+        guard let canvas = DisplayCanvas(screen: screen, state: state, onEscape: {}, board: board),
+              let view = canvas.boardView else {
+            report.append("FAIL: board canvas could not be created")
+            return report
+        }
+
+        let panel = canvas.panel
+        panel.orderFrontRegardless()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        report.append("board panel visible=\(panel.isVisible) opaque=\(panel.isOpaque) isKey=\(panel.isKeyWindow)")
+
+        // Page 1: one red pen mark through the panel's own event path.
+        state.tool = .pen
+        state.ink = .red
+        sendDrag(to: panel, from: CGPoint(x: 150, y: 150), to: CGPoint(x: 350, y: 150))
+        guard let mark1 = board.pages[0].session.strokes.first else {
+            report.append("FAIL: board page 1 mark was not committed")
+            panel.orderOut(nil)
+            return report
+        }
+        report.append("board page=1 marks=\(board.pages[0].session.strokes.count) background=\(board.pages[0].background.rawValue)")
+
+        // › past the last page creates page 2 inheriting the background; the
+        // \u{2318}B toggle (togglePageBackground) flips page 2 to black while
+        // page 1 stays white.
+        view.selectNextPage()
+        let inherited = board.currentPage.background == board.pages[0].background
+        view.togglePageBackground()
+        state.ink = .blue
+        sendDrag(to: panel, from: CGPoint(x: 200, y: 400), to: CGPoint(x: 400, y: 400))
+        guard let mark2 = board.pages[1].session.strokes.first else {
+            report.append("FAIL: board page 2 mark was not committed")
+            panel.orderOut(nil)
+            return report
+        }
+        report.append(
+            "board page=2 created=\(board.count == 2) inherited=\(inherited) "
+                + "marks=\(board.pages[1].session.strokes.count) background=\(board.pages[1].background.rawValue)"
+        )
+
+        // Sample points derived from the stored marks, never hardcoded: events
+        // sent to the panel land at window y measured from the bottom, so the
+        // view point of a mark is read back through the view's own conversion.
+        func samplePoint(of stroke: Stroke) -> CGPoint {
+            guard let first = stroke.points.first, let last = stroke.points.last else { return .zero }
+            return view.viewPoint(fromPage: CGPoint(x: (first.x + last.x) / 2, y: (first.y + last.y) / 2))
+        }
+
+        // Per page render through the real view path, background sampled.
+        view.selectPreviousPage()
+        let page1 = renderView(view, to: "/tmp/stare-board-1.png")
+        let page1Background = page1.map { rgb($0, at: CGPoint(x: 600, y: 100), scale: 2) } ?? (red: -1, green: -1, blue: -1)
+        let page1Mark = page1.map { rgb($0, at: samplePoint(of: mark1), scale: 2) } ?? (red: -1, green: -1, blue: -1)
+        let page1Ok = page1Background.red >= 245 && page1Mark.red >= 180 && page1Mark.green < 120
+        report.append(
+            "board page=1 png=/tmp/stare-board-1.png background=\(page1Background) expect 255/255/255 "
+                + "mark@\(samplePoint(of: mark1))=\(page1Mark) expect red ok=\(page1Ok)"
+        )
+
+        view.selectNextPage()
+        let page2 = renderView(view, to: "/tmp/stare-board-2.png")
+        let page2Background = page2.map { rgb($0, at: CGPoint(x: 600, y: 100), scale: 2) } ?? (red: -1, green: -1, blue: -1)
+        let page2Mark = page2.map { rgb($0, at: samplePoint(of: mark2), scale: 2) } ?? (red: -1, green: -1, blue: -1)
+        let page2Ok = page2Background.red <= 15 && page2Mark.blue >= 180 && page2Mark.red < 120
+        report.append(
+            "board page=2 png=/tmp/stare-board-2.png background=\(page2Background) expect 0/0/0 "
+                + "mark@\(samplePoint(of: mark2))=\(page2Mark) expect blue ok=\(page2Ok)"
+        )
+
+        // Capture path: marks composed over the page's own solid background at
+        // the display's pixel size — never transparent, never a bare
+        // background-coloured image with nothing drawn.
+        let pixelSize = CGSize(
+            width: screen.frame.size.width * screen.backingScaleFactor,
+            height: screen.frame.size.height * screen.backingScaleFactor
+        )
+        let captureImage = board.pages[1].background.captureBase(
+            width: Int(pixelSize.width),
+            height: Int(pixelSize.height)
+        ).flatMap { base in
+            MarkCompositor.composite(marks: board.pages[1].session.strokes, over: base, scale: screen.backingScaleFactor)
+        }
+        let captureMid = CGPoint(
+            x: ((mark2.points.first?.x ?? 0) + (mark2.points.last?.x ?? 0)) / 2,
+            y: ((mark2.points.first?.y ?? 0) + (mark2.points.last?.y ?? 0)) / 2
+        )
+        let captureSamplePoint = CGPoint(x: captureMid.x * screen.backingScaleFactor, y: captureMid.y * screen.backingScaleFactor)
+        let captureSample = captureImage.map { rgb($0, at: captureSamplePoint, scale: 1) } ?? (red: -1, green: -1, blue: -1)
+        let captureOk = captureImage != nil && captureImage?.width == Int(pixelSize.width) && captureSample.blue >= 180
+        report.append("board capture composed=\(captureImage != nil) size=\(captureImage.map { "\($0.width)x\($0.height)" } ?? "nil") mark@\(captureSamplePoint)=\(captureSample) expect blue ok=\(captureOk)")
+
+        // Pan check: an existing mark moves on screen by the offset while its
+        // stored points never change. One page point P is sampled before and
+        // after the pan: before, it renders at P itself; after, at P shifted
+        // by the negative of the offset, and its old screen spot is empty.
+        view.selectPreviousPage()
+        let storedBefore = board.pages[0].session.strokes.flatMap(\.points)
+        let probePage = CGPoint(x: (mark1.points.first?.x ?? 0) + 10, y: mark1.points.first?.y ?? 0)
+        let beforePan = renderView(view, to: "/tmp/stare-board-pan-before.png")
+        let beforePanPoint = view.viewPoint(fromPage: probePage)
+        let beforeHit = beforePan.map { rgb($0, at: beforePanPoint, scale: 2) } ?? (red: -1, green: -1, blue: -1)
+        view.pan(byPointerDelta: CGSize(width: 60, height: 40))
+        let afterPan = renderView(view, to: "/tmp/stare-board-pan-after.png")
+        let storedAfter = board.pages[0].session.strokes.flatMap(\.points)
+        let afterPanPoint = view.viewPoint(fromPage: probePage)
+        let afterHit = afterPan.map { rgb($0, at: afterPanPoint, scale: 2) } ?? (red: -1, green: -1, blue: -1)
+        let oldSpotHit = afterPan.map { rgb($0, at: beforePanPoint, scale: 2) } ?? (red: -1, green: -1, blue: -1)
+        let storedUnchanged = storedBefore == storedAfter
+        let panOk = beforePan != nil && afterPan != nil
+            && beforeHit.red >= 180 && beforeHit.green < 120
+            && oldSpotHit.red >= 245
+            && afterHit.red >= 180 && afterHit.green < 120
+            && storedUnchanged
+        report.append(
+            "board pan offset=\(board.pages[0].offset) probe page=\(probePage) before@\(beforePanPoint)=\(beforeHit) expect red, "
+                + "after old spot@\(beforePanPoint)=\(oldSpotHit) expect white, after shifted@\(afterPanPoint)=\(afterHit) expect red, "
+                + "stored-unchanged=\(storedUnchanged) ok=\(panOk)"
+        )
+
+        panel.orderOut(nil)
+        let passed = page1Ok && page2Ok && captureOk && panOk && inherited && board.count == 2
+        report.append("board result=\(passed ? "PASS" : "FAIL")")
+        return report
     }
 
     /// What the window server itself believes is on screen for this process.

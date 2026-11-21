@@ -30,14 +30,18 @@ final class ToolbarPanel: NSPanel {
         state: EditorState,
         onUndo: @escaping () -> Void,
         onClear: @escaping () -> Void,
-        onDone: @escaping () -> Void
+        onDone: @escaping () -> Void,
+        onPreviousPage: (() -> Void)? = nil,
+        onNextPage: (() -> Void)? = nil
     ) {
         let hosting = ToolbarHostingView(
             rootView: ToolbarView(
                 state: state,
                 onUndo: onUndo,
                 onClear: onClear,
-                onDone: onDone
+                onDone: onDone,
+                onPreviousPage: onPreviousPage,
+                onNextPage: onNextPage
             )
         )
         hosting.sizingOptions = [.intrinsicContentSize]
