@@ -1,5 +1,55 @@
-import { DemoScreen } from './DemoScreen'
+import { SCREEN_HEIGHT, SCREEN_WIDTH } from '../demo/model'
+import { BROWSER_VIEWPORT, DemoScreen, PORTFOLIO_HOST, PORTFOLIO_URL } from './DemoScreen'
+import { CreatorNote } from './CreatorNote'
 import { Kbd } from './ui'
+
+/** The portfolio lays out at a laptop width, then scales down to fit. */
+export const PAGE_WIDTH = 1280
+const PAGE_HEIGHT = Math.round((PAGE_WIDTH * BROWSER_VIEWPORT.height) / BROWSER_VIEWPORT.width)
+
+const pct = (value: number, of: number) => `${((value / of) * 100).toFixed(4)}%`
+
+/**
+ * The creator's portfolio, live, always in its dark theme, kept as light as
+ * that allows:
+ * - sandbox="allow-scripts" and nothing else: the site's theme script may run,
+ *   but there are no cookies, storage, forms or popups.
+ * - color-scheme: dark on the iframe makes the page see
+ *   prefers-color-scheme: dark; with no saved preference (no storage in the
+ *   sandbox) its theme script picks dark. Verified in Chromium.
+ * - Lazy-loaded, no referrer, and inert so it never takes the pointer or
+ *   keyboard from the drawing layer above it.
+ * client/browser.ts scales it to the window; until then it shows top-left.
+ */
+function LivePage() {
+  const v = BROWSER_VIEWPORT
+  return (
+    <div
+      class="pointer-events-none absolute overflow-hidden"
+      style={{
+        left: pct(v.x, SCREEN_WIDTH),
+        top: pct(v.y, SCREEN_HEIGHT),
+        width: pct(v.width, SCREEN_WIDTH),
+        height: pct(v.height, SCREEN_HEIGHT),
+        borderRadius: `0 0 ${pct(v.radius, v.width)} ${pct(v.radius, v.width)} / 0 0 ${pct(v.radius, v.height)} ${pct(v.radius, v.height)}`,
+      }}
+    >
+      <iframe
+        id="demo-page"
+        src={PORTFOLIO_URL}
+        title={`${PORTFOLIO_HOST}, shown inside the pretend Safari window`}
+        loading="lazy"
+        sandbox="allow-scripts"
+        referrerpolicy="no-referrer"
+        tabindex={-1}
+        inert
+        width={PAGE_WIDTH}
+        height={PAGE_HEIGHT}
+        class="block origin-top-left border-0 bg-graphite scheme-dark"
+      />
+    </div>
+  )
+}
 
 /**
  * The try-it section. The server renders the screen and an empty layer; the
@@ -7,7 +57,7 @@ import { Kbd } from './ui'
  */
 export function Demo() {
   return (
-    <section id="try" aria-labelledby="try-title" class="mx-auto max-w-[1240px] scroll-mt-20 px-4 pt-6 pb-24 md:px-8">
+    <section id="try" aria-labelledby="try-title" class="relative mx-auto max-w-[1240px] scroll-mt-20 px-4 pt-14 pb-24 md:px-8">
       <div data-reveal class="mb-8 max-w-[38rem]">
         <h2 id="try-title" class="text-[clamp(1.75rem,3.2vw,2.5rem)] leading-[1.1] font-bold tracking-[-0.02em]">
           Try it on this pretend Mac
@@ -21,6 +71,7 @@ export function Demo() {
       <div id="demo" tabindex={-1} class="group/demo relative outline-none">
         <div class="relative aspect-[5/3] overflow-hidden rounded-[clamp(10px,1.6vw,18px)] bg-graphite shadow-window ring-1 ring-graphite/10">
           <DemoScreen />
+          <LivePage />
           <canvas
             id="demo-ink"
             aria-label="Drawing surface. Use the toolbar or keyboard shortcuts to mark up the screen."
@@ -36,6 +87,8 @@ export function Demo() {
           <p class="mt-4 text-muted">The demo needs JavaScript. Everything else on this page works without it.</p>
         </noscript>
       </div>
+
+      <CreatorNote />
 
       <ul class="mt-6 flex flex-wrap [@media(hover:none)]:hidden gap-x-6 gap-y-3 text-[14px] text-muted" aria-label="Demo shortcuts">
         <li>

@@ -1,16 +1,15 @@
-import { INKS, TOOLS } from '../demo/model'
 import { releasesUrl, repoUrl, site } from '../site'
 import { Aurora } from './Backdrop'
 import { HeroScene } from './HeroScene'
 import { DownloadButton, Kbd, Logo } from './ui'
 
-const container = 'mx-auto max-w-[1240px] px-4 md:px-8'
-const sectionTitle = 'text-[clamp(1.75rem,3.2vw,2.5rem)] leading-[1.1] font-bold tracking-[-0.02em]'
+export const container = 'mx-auto max-w-[1240px] px-4 md:px-8'
+export const sectionTitle = 'text-[clamp(1.75rem,3.2vw,2.5rem)] leading-[1.1] font-bold tracking-[-0.02em]'
 
 export function Nav() {
   return (
     // Same container as the page content, so the pill's edges line up with it.
-    <header class={`${container} sticky top-3 z-30`}>
+    <header class={`${container} sticky top-3 z-50`}>
       <nav
         aria-label="Main"
         class="flex h-14 items-center gap-6 rounded-full border border-white/70 bg-paper/55 pr-2 pl-5 shadow-glass backdrop-blur-xl backdrop-saturate-150"
@@ -47,7 +46,7 @@ const headline = ['Draw', 'on', 'your', 'screen,', 'then', 'paste', 'it', 'anywh
 
 export function Hero() {
   return (
-    <section class={`${container} relative flex items-center gap-10 pt-14 pb-12 md:pt-20 md:pb-16`}>
+    <section class={`${container} relative flex items-center gap-10 pt-14 pb-12 md:pt-20 md:pb-24`}>
       <div class="min-w-0 flex-1">
       <h1
         aria-label={headline.join(' ')}
@@ -73,7 +72,9 @@ export function Hero() {
           Try it in your browser
         </a>
       </div>
-      <p class="mt-5 text-[14px] text-muted">Requires {site.minimumMacOS} or later.</p>
+      <p class="mt-5 text-[14px] text-muted motion-safe:animate-blur-in" style={{ animationDelay: "900ms" }}>
+        Requires {site.minimumMacOS} or later.
+      </p>
       </div>
 
       <HeroScene />
@@ -102,170 +103,14 @@ export function Hero() {
   )
 }
 
-const steps = [
-  {
-    title: 'Press ⌥⇧A',
-    body: 'A clear sheet covers every display, even full-screen apps. The app underneath keeps focus, so you can keep working.',
-  },
-  {
-    title: 'Mark it up',
-    body: 'Pen, highlighter, arrows, lines, boxes, ellipses and numbered steps, in eight inks. Each tool is a single key.',
-  },
-  {
-    title: 'Press S, then paste',
-    body: 'Stare captures the screen with your marks and drops it on a card in the corner. Copy it, save it or drag it out.',
-  },
+// Each claim is backed elsewhere: menu bar app (LSUIElement), no sign-in
+// anywhere in the app, captures stay local (see FAQ), source on GitHub.
+const guarantees = [
+  { label: 'Lives in the menu bar', icon: 'M3 5.5h18M6.5 3v2.5M17.5 3v2.5M4.5 5.5h15v14h-15z' },
+  { label: 'No account to create', icon: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4.5 20.5c1.3-3.6 4.1-5.5 7.5-5.5s6.2 1.9 7.5 5.5' },
+  { label: 'Captures stay on your Mac', icon: 'M6.5 10V7.5a5.5 5.5 0 0 1 11 0V10M5 10h14v10.5H5zM12 14v3' },
+  { label: 'Open source', icon: 'M8.5 7.5L4 12l4.5 4.5M15.5 7.5L20 12l-4.5 4.5M13.5 5l-3 14' },
 ]
-
-export function Steps() {
-  return (
-    <section aria-labelledby="how-title" class={`${container} py-20 md:py-28`}>
-      <h2 id="how-title" data-reveal class={sectionTitle}>
-        How it works
-      </h2>
-      <ol class="mt-10 grid gap-10 md:grid-cols-3 md:gap-8">
-        {steps.map((step, i) => (
-          <li data-reveal style={{ '--delay': `${i * 140}ms` }} class="relative pt-6">
-            <span aria-hidden="true" class="rule-draw absolute inset-x-0 top-0 h-0.5 bg-graphite" />
-            <span
-              aria-hidden="true"
-              class="grid size-[26px] place-items-center rounded-full bg-ink-red font-mac text-[14px] font-semibold text-white shadow-[0_1px_4px_rgb(0_0_0/0.18)]"
-            >
-              {i + 1}
-            </span>
-            <h3 class="mt-5 text-[20px] font-bold tracking-tight">{step.title}</h3>
-            <p class="mt-2 max-w-[34ch] leading-relaxed text-muted">{step.body}</p>
-          </li>
-        ))}
-      </ol>
-    </section>
-  )
-}
-
-const actions = [
-  { keys: '⌥⇧A', what: 'Start drawing over any app' },
-  { keys: 'S', what: 'Capture the whole screen with your marks' },
-  { keys: '⇧S', what: 'Capture an area you select' },
-  { keys: '⌘Z', what: 'Undo the last mark' },
-  { keys: 'Esc', what: 'Clear every mark and stop drawing' },
-]
-
-export function Shortcuts() {
-  return (
-    <section id="shortcuts" aria-labelledby="shortcuts-title" class="relative scroll-mt-20 overflow-hidden bg-paper">
-      <div aria-hidden="true" class="bg-dots pointer-events-none absolute inset-0 opacity-70" />
-      <div class={`${container} relative py-20 md:py-28`}>
-        <div data-reveal>
-          <h2 id="shortcuts-title" class={sectionTitle}>
-            Every tool is one key away
-          </h2>
-          <p class="mt-3 max-w-[36rem] text-[17px] leading-relaxed text-muted">
-            While you draw, single keys switch tools and inks. Go ahead and press one: the list below answers.
-          </p>
-        </div>
-
-        <div class="mt-12 grid gap-12 md:grid-cols-[1.1fr_1fr_1.3fr] md:gap-10">
-          <ShortcutList title="Tools" delay={0} rows={TOOLS.map((t) => ({ keys: t.key, what: t.name }))} />
-          <div data-reveal style={{ '--delay': '120ms' }}>
-            <h3 class="border-b border-rule pb-3 text-[15px] font-semibold">Inks</h3>
-            <ul class="mt-1">
-              {INKS.map((ink) => (
-                <li data-key={ink.key} class="-mx-2 flex items-center gap-3 rounded-md border-b border-rule/60 px-2 py-2.5 text-[15px]">
-                  <Kbd>{ink.key}</Kbd>
-                  <span
-                    aria-hidden="true"
-                    class="size-3.5 rounded-full ring-1 ring-graphite/15"
-                    style={{ backgroundColor: ink.hex }}
-                  />
-                  {ink.name}
-                </li>
-              ))}
-            </ul>
-          </div>
-          <ShortcutList title="Actions" delay={240} rows={actions} />
-        </div>
-      </div>
-    </section>
-  )
-}
-
-function ShortcutList({ title, rows, delay }: { title: string; rows: { keys: string; what: string }[]; delay: number }) {
-  return (
-    <div data-reveal style={{ '--delay': `${delay}ms` }}>
-      <h3 class="border-b border-rule pb-3 text-[15px] font-semibold">{title}</h3>
-      <dl class="mt-1">
-        {rows.map((row) => (
-          <div data-key={row.keys} class="-mx-2 flex items-center gap-3 rounded-md border-b border-rule/60 px-2 py-2.5 text-[15px]">
-            <dt class="w-12 shrink-0">
-              <Kbd>{row.keys}</Kbd>
-            </dt>
-            <dd>{row.what}</dd>
-          </div>
-        ))}
-      </dl>
-    </div>
-  )
-}
-
-const principles = [
-  {
-    title: 'Lives in the menu bar',
-    body: 'No Dock icon and no windows. Stare stays out of sight until you press ⌥⇧A.',
-    icon: 'M4 6.5h16M7 3.5v3M17 3.5v3M5.5 6.5h13v12h-13z',
-  },
-  {
-    title: 'Never steals focus',
-    body: 'Draw over Safari and keep scrolling in Safari. The app you are marking up stays in charge.',
-    icon: 'M12 5c5 0 8.5 4.5 9 7-.5 2.5-4 7-9 7s-8.5-4.5-9-7c.5-2.5 4-7 9-7zM12 9.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5z',
-  },
-  {
-    title: 'Every display, every Space',
-    body: 'The drawing sheet covers all your displays, including apps in full screen.',
-    icon: 'M3 5h11v8H3zM10 11h11v8H10z',
-  },
-  {
-    title: 'Asks only for what it needs',
-    body: 'Drawing works without any permission. Capturing needs Screen Recording, which macOS asks you to allow once.',
-    icon: 'M12 3.5l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9v-5l7-3zM9 12l2 2 4-4',
-  },
-]
-
-export function Principles() {
-  return (
-    <section aria-labelledby="principles-title" class={`${container} py-20 md:py-28`}>
-      <h2 id="principles-title" data-reveal class={`${sectionTitle} max-w-[18ch]`}>
-        Out of your way until you need it
-      </h2>
-      <div class="mt-12 grid gap-4 sm:grid-cols-2">
-        {principles.map((item, i) => (
-          <div
-            data-reveal
-            data-spotlight
-            style={{ '--delay': `${(i % 2) * 120}ms` }}
-            class="spotlight group relative overflow-hidden rounded-2xl border border-white/80 bg-paper/60 p-7 shadow-glass backdrop-blur-sm transition-[border-color] hover:border-aurora-blue/50"
-          >
-            <svg
-              aria-hidden="true"
-              viewBox="0 0 24 24"
-              width="26"
-              height="26"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.7"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              class="text-graphite/70 transition-transform duration-300 group-hover:-translate-y-0.5 group-hover:text-ink-blue"
-            >
-              <path d={item.icon} />
-            </svg>
-            <h3 class="mt-5 text-[18px] font-bold tracking-tight">{item.title}</h3>
-            <p class="mt-2 max-w-[42ch] leading-relaxed text-muted">{item.body}</p>
-          </div>
-        ))}
-      </div>
-    </section>
-  )
-}
 
 export function Download() {
   return (
@@ -302,6 +147,18 @@ export function Download() {
           </a>
         </div>
         <p data-download-version class="relative mt-5 text-[14px] text-paper/60" />
+
+        {/* What you can count on, said where the install decision happens. */}
+        <ul aria-label="What to expect" class="relative mt-12 grid gap-x-8 gap-y-4 border-t border-paper/15 pt-8 text-[15px] text-paper/80 sm:grid-cols-2 lg:grid-cols-4">
+          {guarantees.map((item) => (
+            <li class="flex items-center gap-3">
+              <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" class="shrink-0 text-ink-sky" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d={item.icon} />
+              </svg>
+              {item.label}
+            </li>
+          ))}
+        </ul>
       </div>
     </section>
   )

@@ -48,11 +48,16 @@ Workers Paid features) without changing this section first.
 ## Deploy
 
 ```sh
-pnpm wrangler login   # once
-pnpm deploy           # build, prerender, upload
+pnpm wrangler login   # once, opens the browser
+pnpm wrangler whoami  # check which account you are on
+pnpm run deploy       # build, prerender, upload
 ```
 
-The Worker is named `stare-landing` (see `wrangler.jsonc`).
+Use `pnpm run deploy`, not `pnpm deploy`: `deploy` is also a built-in pnpm
+command (it copies a workspace package to a folder) and wins over the script.
+
+The Worker is named `stare-landing` (see `wrangler.jsonc`). The first deploy
+prints its address, `https://stare-landing.<your-subdomain>.workers.dev`.
 
 ## Keeping the demo faithful
 
