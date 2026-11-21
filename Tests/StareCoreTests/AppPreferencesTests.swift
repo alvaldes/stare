@@ -2,6 +2,14 @@ import Foundation
 import XCTest
 @testable import StareCore
 
+
+fileprivate extension Result {
+    /// True when the result is a success.
+    var isOk: Bool { if case .success = self { return true }; return false }
+    /// The failure payload, if the result failed.
+    var failureValue: Failure? { if case .failure(let error) = self { return error }; return nil }
+}
+
 final class AppPreferencesTests: XCTestCase {
     // MARK: Round trip
 
@@ -109,5 +117,39 @@ final class AppPreferencesTests: XCTestCase {
     func testNoKeysAndNoBlobYieldsStandard() {
         let store = InMemoryPreferenceStore()
         XCTAssertEqual(AppPreferences(store: store), AppPreferences.standard)
+    }
+
+    // MARK: Shortcut and hotkey fields (T2/S6–S7)
+
+    func testStandardCarriesStandardShortcutsAndHotkeys() {
+        XCTAssertEqual(AppPreferences.standard.toolShortcuts, ToolShortcutMap.standard)
+        XCTAssertEqual(AppPreferences.standard.hotkeys, HotkeyBindings.standard)
+    }
+
+    func testRoundTripsToolShortcutsAndHotkeys() {
+        let store = InMemoryPreferenceStore()
+        var saved = AppPreferences.standard
+        var shortcuts = saved.toolShortcuts
+        XCTAssertTrue(shortcuts.assigning("Z", to: .laser).isOk)
+        saved.toolShortcuts = shortcuts
+        var hotkeys = saved.hotkeys
+        XCTAssertTrue(hotkeys.assigning(HotkeyBinding(key: .d, modifiers: [.control, .shift]), to: .pin).isOk)
+        saved.hotkeys = hotkeys
+
+        saved.save(to: store)
+        XCTAssertEqual(AppPreferences(store: store), saved)
+    }
+
+    func testBlobPredatingTheShortcutFieldsLoadsStandardShortcuts() {
+        let store = InMemoryPreferenceStore()
+        // A blob written before `toolShortcuts`/`hotkeys` existed carries only
+        // the pointer style; loading must still yield complete defaults.
+        store.set(Data("{\"pointer\":{\"preset\":\"dot\",\"size\":44}}".utf8), forKey: AppPreferences.storageKey)
+
+        let prefs = AppPreferences(store: store)
+        XCTAssertEqual(prefs.pointer.preset, .dot)
+        XCTAssertEqual(prefs.pointer.size, 44)
+        XCTAssertEqual(prefs.toolShortcuts, ToolShortcutMap.standard)
+        XCTAssertEqual(prefs.hotkeys, HotkeyBindings.standard)
     }
 }

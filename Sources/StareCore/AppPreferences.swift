@@ -12,13 +12,26 @@ public struct AppPreferences: Codable, Equatable, Sendable {
     /// Style of the pointer highlight (⌥⇧M).
     public var pointer: PointerStyle
 
+    /// Per-tool keyboard shortcuts; the router reads this map.
+    public var toolShortcuts: ToolShortcutMap
+
+    /// The four global hotkeys (⌥⇧A/M/P/W) as data.
+    public var hotkeys: HotkeyBindings
+
     /// The preferences a fresh install gets, matching the look the app ships
     /// today.
-    public static let standard = AppPreferences(pointer: .standard)
+    public static let standard = AppPreferences()
 
-    /// Creates preferences with the given pointer style.
-    public init(pointer: PointerStyle = .standard) {
+    /// Creates preferences with the given pointer style, tool shortcuts, and
+    /// hotkeys; each unset parameter takes its shipped default.
+    public init(
+        pointer: PointerStyle = .standard,
+        toolShortcuts: ToolShortcutMap = .standard,
+        hotkeys: HotkeyBindings = .standard
+    ) {
         self.pointer = pointer
+        self.toolShortcuts = toolShortcuts
+        self.hotkeys = hotkeys
     }
 
     /// Loads preferences from `store`. A corrupt or absent blob falls back to
@@ -29,14 +42,17 @@ public struct AppPreferences: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case pointer
+        case pointer, toolShortcuts, hotkeys
     }
 
     /// Lenient decoding: a missing or undecodable pointer style falls back to
-    /// `standard` instead of failing the whole document.
+    /// `standard` instead of failing the whole document, and blobs written
+    /// before the shortcut fields existed load complete defaults for them.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.pointer = (try? container.decode(PointerStyle.self, forKey: .pointer)) ?? .standard
+        self.toolShortcuts = (try? container.decode(ToolShortcutMap.self, forKey: .toolShortcuts)) ?? .standard
+        self.hotkeys = (try? container.decode(HotkeyBindings.self, forKey: .hotkeys)) ?? .standard
     }
 
     /// Encodes the preferences as JSON under the versioned key. Legacy keys
