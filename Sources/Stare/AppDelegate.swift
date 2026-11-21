@@ -81,6 +81,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             MainActor.assumeIsolated { self.registerGlobalHotkeys(from: bindings) }
         }
 
+        // Updates (T10/S6): the persisted schedule decides whether a check is
+        // due at launch. The app is not notarized, so a check only informs and
+        // links to the release page; nothing is ever installed, and a result
+        // only lands in the pane's status plus the persisted lastCheck.
+        if preferences.updateSchedule != .never {
+            Task { @MainActor in await UpdateFlow.checkIfDue(model: preferences) }
+        }
+
         // First run (T5/S3): the setup guide is the one asking for Screen
         // Recording now, so the launch-time prompt stays out of the way — the
         // user must not be asked twice. Every later launch keeps exactly

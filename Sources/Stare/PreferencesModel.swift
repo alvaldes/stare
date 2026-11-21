@@ -71,6 +71,32 @@ final class PreferencesModel: ObservableObject {
     @Published var hotkeys: HotkeyBindings {
         didSet { persist() }
     }
+    /// Mirror of the capture settings (T11/S6): format, destination and file
+    /// name prefix; the overlay's capture tail reads them at capture time.
+    @Published var capture: CapturePreference {
+        didSet { persist() }
+    }
+    /// Mirror of the whiteboard defaults (T11/S6): what a new board opens
+    /// with. The overlay's board creation reads them at open time.
+    @Published var whiteboard: WhiteboardDefaults {
+        didSet { persist() }
+    }
+    /// Mirror of how often to check for updates (T10/S6); writing it
+    /// persists the whole blob.
+    @Published var updateSchedule: UpdateCheckSchedule {
+        didSet { persist() }
+    }
+    /// Mirror of when the last update check succeeded (T10/S6): nil until one
+    /// does, stamped by `noteUpdateCheck` — and seedable when a test harness
+    /// runs detached on an in-memory store; never guessed in production.
+    @Published var updateLastCheck: Date? {
+        didSet { persist() }
+    }
+    /// Runtime outcome of the last update check in this session (T10/S6):
+    /// the release to offer if any, whether the last attempt failed — never
+    /// persisted; the blob only stores the schedule and `lastCheck`. Starts
+    /// at "not checked yet" every launch, honestly.
+    @Published private(set) var updateStatus = UpdateStatus(available: nil, lastCheck: nil, lastCheckFailed: false)
     /// Runtime outcome of the last global-hotkey registration attempt
     /// (T9/S6), reported by the AppDelegate's registration path; never
     /// persisted. A rejection means the system refused the registration —
@@ -94,6 +120,10 @@ final class PreferencesModel: ObservableObject {
         self.ink = loaded.ink
         self.toolShortcuts = loaded.toolShortcuts
         self.hotkeys = loaded.hotkeys
+        self.capture = loaded.capture
+        self.whiteboard = loaded.whiteboard
+        self.updateSchedule = loaded.updates.schedule
+        self.updateLastCheck = loaded.updates.lastCheck
     }
 
     /// Writes the one blob from the mirrors. Everything else keeps reading
@@ -112,6 +142,20 @@ final class PreferencesModel: ObservableObject {
         preferences.ink = ink
         preferences.toolShortcuts = toolShortcuts
         preferences.hotkeys = hotkeys
+        preferences.capture = capture
+        preferences.whiteboard = whiteboard
+        preferences.updates = UpdateSchedulePreference(schedule: updateSchedule, lastCheck: updateLastCheck)
         preferences.save(to: store)
+    }
+
+    /// Records the outcome of one update check (T10/S6): the runtime status
+    /// is published for the pane, and a successful check stamps its own date
+    /// into the persisted `updates.lastCheck` — a failed check leaves the
+    /// stored timestamp exactly as it was, matching the checker's semantics.
+    func noteUpdateCheck(_ status: UpdateStatus) {
+        updateStatus = status
+        if let lastCheck = status.lastCheck {
+            updateLastCheck = lastCheck
+        }
     }
 }

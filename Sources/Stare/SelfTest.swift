@@ -165,6 +165,14 @@ enum SelfTest {
         // registered through the real Carbon path.
         report.append(contentsOf: MainActor.assumeIsolated { toolsAndHotkeysReport() })
 
+        // General, Capture and Whiteboard panes (T10/T11/S6): the panes render
+        // in both appearances (via the settings report above), the updates
+        // due-check is proven to leave the network alone when not due, a
+        // folder-destination capture really lands as a file in a temp folder
+        // through the real delivery tail, and a fresh board opens with the
+        // persisted background and page count.
+        report.append(contentsOf: MainActor.assumeIsolated { generalCaptureWhiteboardReport() })
+
         // Marker styles (T7/S5): every pointer preset rendered in light and
         // dark through the same preview view the Settings pane uses.
         report.append(contentsOf: MainActor.assumeIsolated { markerStylesReport() })
@@ -954,6 +962,169 @@ enum SelfTest {
         return report
     }
 
+    /// T10/T11 (S6): the General, Capture and Whiteboard panes end to end,
+    /// detached from the user's real preferences (the harness model uses an
+    /// in-memory store). The General pane's updates due-check is proven to
+    /// keep the network alone while not due, a folder-destination capture is
+    /// driven through the real board delivery tail into a temp directory and
+    /// deleted afterwards, and a fresh whiteboard opens with the persisted
+    /// background and page count through the real controller path.
+    @MainActor
+    private static func generalCaptureWhiteboardReport() -> [String] {
+        var report: [String] = []
+        let store = SelfTestPreferenceStore()
+        let model = PreferencesModel(store: store)
+
+        // --- General pane: updates scheduling and persistence.
+        model.updateSchedule = .weekly
+        model.updateLastCheck = Date()
+        let weeklyNotDue = !UpdateCheckSchedule.weekly.isDue(lastCheck: Date(), now: Date())
+        let weeklyDueLater = UpdateCheckSchedule.weekly.isDue(
+            lastCheck: Calendar.current.date(byAdding: .day, value: -8, to: Date()),
+            now: Date()
+        )
+        let neverNeverDue = !UpdateCheckSchedule.never.isDue(lastCheck: nil, now: Date())
+        let persistedLastCheck = PreferencesModel(store: store).updateLastCheck != nil
+        // The panes rendered in settingsReport above against a seeded blob, so
+        // the app-side due-check wiring must not have touched the feed.
+        let feedUntouched = GitHubUpdateFeed.callCounter.value == 0
+        report.append(
+            "general updates weeklyNotDue=\(weeklyNotDue) weeklyDueLater=\(weeklyDueLater) "
+                + "neverNeverDue=\(neverNeverDue) lastCheckPersisted=\(persistedLastCheck) "
+                + "feedContacts=\(GitHubUpdateFeed.callCounter.value)"
+        )
+        let generalPngs = ["general"].flatMap { area in
+            ["light", "dark"].map { "/tmp/stare-settings-\(area)-\($0).png" }
+        }
+        let generalRendered = generalPngs.filter { FileManager.default.fileExists(atPath: $0) }.count
+        report.append(
+            "general pane pngs=\(generalRendered)/\(generalPngs.count) result=\(weeklyNotDue && weeklyDueLater && neverNeverDue && persistedLastCheck && feedUntouched && generalRendered == generalPngs.count ? "PASS" : "FAIL")"
+        )
+
+        // --- Capture pane: the folder writer at the component seam.
+        guard let image = BoardBackground.white.captureBase(width: 16, height: 12) else {
+            report.append("FAIL: capture component image could not be built")
+            return report
+        }
+        let componentDir = makeTempCaptureDirectory()
+        let jpegPreference = CapturePreference(
+            format: .jpeg,
+            destination: .folder(path: componentDir.path),
+            fileNamePrefix: "Selftest"
+        )
+        let jpegDate = Date()
+        let jpegURL = CaptureFile.write(image, preference: jpegPreference, date: jpegDate)
+        let jpegName = jpegPreference.fileName(at: jpegDate)
+        let jpegOK: Bool
+        if let jpegURL, let data = try? Data(contentsOf: jpegURL), !data.isEmpty,
+            jpegURL.path == componentDir.appendingPathComponent(jpegName).path {
+            jpegOK = true
+        } else {
+            jpegOK = false
+        }
+        let clipboardNil = CaptureFile.write(
+            image,
+            preference: CapturePreference(destination: .clipboard),
+            date: Date()
+        ) == nil
+        if let jpegURL { try? FileManager.default.removeItem(at: jpegURL) }
+        report.append(
+            "capture component jpeg name=\(jpegName) namedRight=\(jpegOK) clipboardWritesNothing=\(clipboardNil)"
+        )
+
+        // --- Capture pane: the real delivery tail, in board mode (needs no
+        // Screen Recording permission): a capture with a folder destination
+        // must land as a file in the harness folder, never on the pasteboard.
+        let deliveryDir = makeTempCaptureDirectory()
+        model.capture = CapturePreference(
+            format: .png,
+            destination: .folder(path: deliveryDir.path),
+            fileNamePrefix: "Stare"
+        )
+        let controller = OverlayController(
+            captureService: CaptureService(),
+            liveFrames: LiveFrameSource(),
+            preferences: model
+        )
+
+        // --- Whiteboard pane: a fresh board opens with the persisted
+        // background and page count through the real controller.
+        model.whiteboard = WhiteboardDefaults(background: .black, pagesOnOpen: 3)
+        controller.toggleBoard()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+        let board = controller.activeBoard
+        let boardOpened = board?.count == 3
+            && (board?.pages.allSatisfy { $0.background == .black } ?? false)
+        var boardPageReport = "none"
+        if let board {
+            boardPageReport = board.pages
+                .map { "p\($0.session.strokes.count)\($0.background.rawValue)" }
+                .joined(separator: " ")
+        }
+        report.append(
+            "whiteboard opened pages=\(board?.count ?? 0) background=\(board?.pages.first?.background.rawValue ?? "none") "
+                + "strokesPerPage=\(boardPageReport)"
+        )
+
+        // Drive one capture in board mode with the harness folder destination.
+        var deliveryWrote = false
+        var deliveryName = "none"
+        if let displayID = controller.firstCanvasDisplayID {
+            controller.capture(displayID: displayID, area: nil)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+            let contents = (try? FileManager.default.contentsOfDirectory(atPath: deliveryDir.path)) ?? []
+            if contents.count == 1 {
+                deliveryName = contents[0]
+                let url = deliveryDir.appendingPathComponent(deliveryName)
+                let data = try? Data(contentsOf: url)
+                let decoded = data.flatMap { NSBitmapImageRep(data: $0) }
+                deliveryWrote = deliveryName.hasPrefix("Stare-")
+                    && deliveryName.hasSuffix(".png")
+                    && decoded != nil
+                    && (decoded?.pixelsWide ?? 0) > 0
+            }
+        } else {
+            report.append("FAIL: board canvas has no display to capture")
+        }
+        report.append(
+            "capture delivery file=\(deliveryName) namedRightAndDecodable=\(deliveryWrote)"
+        )
+        controller.toggleBoard()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+
+        // Temp capture files are deleted here, always.
+        try? FileManager.default.removeItem(at: deliveryDir)
+        try? FileManager.default.removeItem(at: componentDir)
+
+        let capturePngs = ["capture"].flatMap { area in
+            ["light", "dark"].map { "/tmp/stare-settings-\(area)-\($0).png" }
+        }
+        let captureRendered = capturePngs.filter { FileManager.default.fileExists(atPath: $0) }.count
+        report.append(
+            "capture pane delivered=\(deliveryWrote) component=\(jpegOK) clipboardNil=\(clipboardNil) "
+                + "pngs=\(captureRendered)/\(capturePngs.count) result=\(deliveryWrote && jpegOK && clipboardNil && captureRendered == capturePngs.count ? "PASS" : "FAIL")"
+        )
+
+        let whiteboardPngs = ["whiteboard"].flatMap { area in
+            ["light", "dark"].map { "/tmp/stare-settings-\(area)-\($0).png" }
+        }
+        let whiteboardRendered = whiteboardPngs.filter { FileManager.default.fileExists(atPath: $0) }.count
+        report.append(
+            "whiteboard pane opened=\(boardOpened) pngs=\(whiteboardRendered)/\(whiteboardPngs.count) "
+                + "result=\(boardOpened && whiteboardRendered == whiteboardPngs.count ? "PASS" : "FAIL")"
+        )
+        return report
+    }
+
+    /// A fresh temp directory for selftest capture files; the report section
+    /// removes it and everything in it before it returns.
+    private static func makeTempCaptureDirectory() -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("stare-selftest-capture-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
     /// T6 slice 2: renders each Settings pane in both system appearances (one
     /// PNG per pane per appearance) and opens the real settings window to
     /// assert the shell: visible, key, resizable and wider than the old 420-pt
@@ -963,6 +1134,11 @@ enum SelfTest {
     private static func settingsReport() -> [String] {
         var report: [String] = []
         let model = PreferencesModel(store: SelfTestPreferenceStore())
+        // T10: the harness blob is seeded with a fresh update lastCheck, so
+        // the General pane's due-check on render (weekly, checked just now)
+        // is never due during the selftest, and the feed is not contacted.
+        model.updateSchedule = .weekly
+        model.updateLastCheck = Date()
         let controller = SettingsWindowController(
             model: model,
             permission: ScreenRecordingPermission(

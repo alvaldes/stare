@@ -4,7 +4,7 @@ import StareCore
 
 /// The areas of the Settings window, in sidebar order.
 enum SettingsArea: String, CaseIterable, Identifiable {
-    case general, tools, shortcuts, marker, permissions, about
+    case general, tools, shortcuts, marker, capture, whiteboard, permissions, about
 
     var id: Self { self }
 
@@ -14,6 +14,8 @@ enum SettingsArea: String, CaseIterable, Identifiable {
         case .tools: "Tools"
         case .shortcuts: "Shortcuts"
         case .marker: "Pointer Highlight"
+        case .capture: "Capture"
+        case .whiteboard: "Whiteboard"
         case .permissions: "Permissions"
         case .about: "About"
         }
@@ -25,6 +27,8 @@ enum SettingsArea: String, CaseIterable, Identifiable {
         case .tools: "wrench.and.screwdriver"
         case .shortcuts: "keyboard"
         case .marker: "scope"
+        case .capture: "camera.viewfinder"
+        case .whiteboard: "square.grid.2x2"
         case .permissions: "lock.shield"
         case .about: "info.circle"
         }
@@ -184,6 +188,8 @@ struct SettingsView: View {
         case .tools: ToolsPane(model: model)
         case .shortcuts: ShortcutsPane(model: model)
         case .marker: MarkerPane(model: model)
+        case .capture: CapturePane(model: model)
+        case .whiteboard: WhiteboardPane(model: model)
         case .permissions: PermissionsPane(permission: permission)
         case .about: AboutPane()
         }
@@ -197,14 +203,20 @@ struct SettingsView: View {
 
 // MARK: - General
 
-/// Drawing frame, displays and laser — the same settings the old single form
-/// carried, now as cards.
+/// Drawing frame, displays and laser, plus startup and updates (T10/S6) —
+/// as cards.
 private struct GeneralPane: View {
     @ObservedObject var model: PreferencesModel
+    /// The real login-item service, re-read every time the pane appears; the
+    /// pane never caches a status the system has since changed.
+    @StateObject private var login = LaunchAtLogin()
 
     var body: some View {
         VStack(spacing: 16) {
             PaneHeader(title: "General", subtitle: "How Stare draws over the screen.")
+
+            startupCard
+            updatesCard
 
             SettingsCard(title: "Drawing", symbol: "pencil.tip") {
                 SettingRow(
@@ -256,6 +268,109 @@ private struct GeneralPane: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    // MARK: Startup (launch at login, T10/S6)
+
+    /// The toggle drives the real login-item registration, the status is the
+    /// service's own, an approval requirement opens the exact system pane,
+    /// and a registration error is shown instead of swallowed.
+    private var startupCard: some View {
+        SettingsCard(title: "Startup", symbol: "power") {
+            SettingRow(
+                title: "Open Stare at login",
+                detail: loginDetail,
+                content: Toggle("", isOn: Binding(
+                    get: { login.isEnabled },
+                    set: { login.setEnabled($0) }
+                ))
+                .labelsHidden()
+            )
+            HStack(spacing: 8) {
+                Text("Login item: \(login.statusDescription)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            if login.needsApproval {
+                HStack(spacing: 8) {
+                    Label(
+                        "macOS needs your approval before Stare can start at login.",
+                        systemImage: "person.badge.shield.checkmark"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    Spacer()
+                    Button("Open Login Items…") { login.openLoginItemsSettings() }
+                }
+            }
+            if let error = login.lastError {
+                RefusalNote(text: error)
+            }
+        }
+        .onAppear { login.refresh() }
+    }
+
+    /// Registration is meaningful for an app in /Applications — where the
+    /// login item keeps pointing. Running from somewhere else is never
+    /// blocked, but the detail says so plainly instead of implying the entry
+    /// will survive.
+    private var loginDetail: String {
+        if login.runsFromApplications {
+            return "Starts Stare automatically when you log in."
+        }
+        return "Login items are honoured for apps in /Applications; Stare is running from \(Bundle.main.bundlePath)."
+    }
+
+    // MARK: Updates (T10/S6)
+
+    /// The schedule decides when a check runs; Check Now runs one at once.
+    /// An available newer release is named with its version and a link to
+    /// the release page — Stare is not notarized, so it never installs.
+    private var updatesCard: some View {
+        SettingsCard(title: "Updates", symbol: "arrow.down.circle") {
+            SettingRow(
+                title: "Check for updates",
+                content: Picker("", selection: $model.updateSchedule) {
+                    ForEach(UpdateCheckSchedule.allCases, id: \.self) { schedule in
+                        Text(schedule.title).tag(schedule)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 160)
+            )
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(model.updateStatus.message)
+                    if let release = model.updateStatus.available {
+                        Text("Version \(release.version.displayString) is ready to download.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let lastCheck = model.updateLastCheck {
+                        Text("Last checked: \(lastCheck.formatted(date: .abbreviated, time: .shortened))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                Button("Check Now") {
+                    Task { await UpdateFlow.checkNow(model: model) }
+                }
+                if let release = model.updateStatus.available {
+                    Link("Download", destination: release.pageURL)
+                }
+            }
+            Text(
+                "Stare is not notarized, so checking only points at the latest release — "
+                    + "download it here or run `brew upgrade --cask stare`. Stare never installs anything itself."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .onAppear {
+            Task { await UpdateFlow.checkIfDue(model: model) }
         }
     }
 }
@@ -698,6 +813,195 @@ private struct MarkerPane: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(ink.displayName) colour")
+    }
+}
+
+// MARK: - Capture
+
+/// Capture destination and format (T11/S6), wired to the delivery tail the
+/// overlay's hotkey and toolbar capture actually use: clipboard behaves
+/// exactly as before (PNG+TIFF on the pasteboard), a folder writes the file
+/// named by `CapturePreference.fileName(at:)` in the chosen format and the
+/// in-overlay pill says where it went.
+private struct CapturePane: View {
+    @ObservedObject var model: PreferencesModel
+
+    var body: some View {
+        VStack(spacing: 16) {
+            PaneHeader(title: "Capture", subtitle: "How captures are encoded and where they go.")
+
+            SettingsCard(title: "Destination", symbol: "tray.full") {
+                SettingRow(
+                    title: "Capture goes to",
+                    content: Picker("", selection: destinationSelection) {
+                        Text("Clipboard").tag(0)
+                        Text("Folder").tag(1)
+                    }
+                    .labelsHidden()
+                    .frame(width: 180)
+                )
+                if case .folder(let path) = model.capture.destination {
+                    SettingRow(
+                        title: "Folder",
+                        detail: path,
+                        content: Button("Choose…") { chooseFolder() }
+                    )
+                    Text(
+                        "The capture is written into this folder in the chosen format and its in-overlay "
+                            + "confirmation names the file; the corner card still shows it."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                } else {
+                    Text(
+                        "The capture lands on the pasteboard as PNG and TIFF, ready to paste into "
+                            + "another app, and its in-overlay confirmation says so."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+
+            SettingsCard(title: "Format", symbol: "photo") {
+                SettingRow(
+                    title: "File format",
+                    detail: "PNG is lossless, JPEG is smaller. The clipboard always carries PNG and TIFF.",
+                    content: Picker("", selection: $model.capture.format) {
+                        ForEach(CaptureFormat.allCases, id: \.self) { format in
+                            Text(format.title).tag(format)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 140)
+                    .disabled(isClipboard)
+                )
+                if isClipboard {
+                    Text("The clipboard carries PNG and TIFF only; the format applies to folder saves.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            SettingsCard(title: "File name", symbol: "doc.text") {
+                SettingRow(
+                    title: "Name prefix",
+                    detail: "Letters, numbers, hyphen, underscore and dot. Anything else falls back to “Stare”.",
+                    content: TextField("", text: $model.capture.fileNamePrefix)
+                        .frame(width: 180)
+                )
+                HStack(spacing: 6) {
+                    Text("Files are named like")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(exampleName)
+                        .font(.caption.monospaced())
+                }
+            }
+        }
+    }
+
+    private var isClipboard: Bool {
+        if case .folder = model.capture.destination { return false }
+        return true
+    }
+
+    /// `CaptureDestination` is a value with an associated path, not a picker
+    /// tag, so the picker speaks in indices and the set branch carries a path.
+    private var destinationSelection: Binding<Int> {
+        Binding(
+            get: {
+                if case .folder = model.capture.destination { return 1 }
+                return 0
+            },
+            set: { newValue in
+                if newValue == 1 {
+                    let path: String
+                    if case .folder(let existing) = model.capture.destination {
+                        path = existing
+                    } else {
+                        path = "~/Documents"
+                    }
+                    model.capture.destination = .folder(path: path)
+                } else {
+                    model.capture.destination = .clipboard
+                }
+            }
+        )
+    }
+
+    private var folderPath: String {
+        if case .folder(let path) = model.capture.destination { return path }
+        return "~/Documents"
+    }
+
+    private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.directoryURL = URL(fileURLWithPath: (folderPath as NSString).expandingTildeInPath, isDirectory: true)
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            model.capture.destination = .folder(path: url.path)
+        }
+    }
+
+    /// One sample name at a fixed instant, so the row does not tick every
+    /// second with the clock.
+    private var exampleName: String {
+        var components = DateComponents()
+        components.year = 2026
+        components.month = 11
+        components.day = 21
+        components.hour = 14
+        components.minute = 5
+        components.second = 33
+        let sample = Calendar.current.date(from: components) ?? Date()
+        return model.capture.fileName(at: sample)
+    }
+}
+
+// MARK: - Whiteboard
+
+/// What a new whiteboard opens with (T11/S6): background and page count. The
+/// overlay's board creation reads the same blob, so a fresh session really
+/// starts with these. Pages beyond 10 are what the core model opens ahead —
+/// the stepper names the cap instead of faking a bigger one.
+private struct WhiteboardPane: View {
+    @ObservedObject var model: PreferencesModel
+
+    var body: some View {
+        VStack(spacing: 16) {
+            PaneHeader(title: "Whiteboard", subtitle: "What a new board opens with (⌥⇧W).")
+
+            SettingsCard(title: "Background", symbol: "square.fill") {
+                SettingRow(
+                    title: "New pages start",
+                    detail: "⌘B still flips the page you are on, at any time.",
+                    content: Picker("", selection: $model.whiteboard.background) {
+                        ForEach(BoardBackground.allCases, id: \.self) { background in
+                            Text(background.displayName).tag(background)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 160)
+                )
+            }
+
+            SettingsCard(title: "Pages", symbol: "square.grid.2x2") {
+                Stepper(
+                    "Opens with \(model.whiteboard.pagesOnOpen) \(model.whiteboard.pagesOnOpen == 1 ? "page" : "pages")",
+                    value: $model.whiteboard.pagesOnOpen,
+                    in: WhiteboardDefaults.pageRange
+                )
+                Text(
+                    "Up to \(WhiteboardDefaults.pageRange.upperBound) pages are opened ahead. Going past the last one with › "
+                        + "keeps creating empty pages, as before."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
     }
 }
 

@@ -2,6 +2,36 @@ import AppKit
 import Combine
 import StareCore
 
+/// The folder destination's writer (T11/S6), shared by the overlay's capture
+/// tail and the selftest harness: the capture goes into the chosen folder,
+/// named by `CapturePreference.fileName(at:)` in the chosen format.
+enum CaptureFile {
+    /// Writes `image` into the preference's folder destination. Returns the
+    /// written URL, or nil when the destination is not a usable folder or
+    /// the write failed — the caller decides the fallback.
+    static func write(_ image: CGImage, preference: CapturePreference, date: Date, calendar: Calendar = .current) -> URL? {
+        guard case .folder(let path) = preference.destination,
+            preference.destination.isUsablePath,
+            let data = data(for: image, format: preference.format)
+        else { return nil }
+        let folder = URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true)
+        let url = folder.appendingPathComponent(preference.fileName(at: date, calendar: calendar))
+        do {
+            try data.write(to: url)
+            return url
+        } catch {
+            Diag.log("capture file write failed: \(error)")
+            return nil
+        }
+    }
+
+    /// One representation call, shared by writing and the save panel.
+    static func data(for image: CGImage, format: CaptureFormat) -> Data? {
+        let type: NSBitmapImageRep.FileType = format == .png ? .png : .jpeg
+        return NSBitmapImageRep(cgImage: image).representation(using: type, properties: [:])
+    }
+}
+
 /// Owns the drawing overlay: one panel per display, the editor state shared
 /// with the toolbar, and the activate/deactivate lifecycle.
 final class OverlayController {
@@ -32,6 +62,11 @@ final class OverlayController {
     private var toolbar: ToolbarPanel?
     private var previousApplication: NSRunningApplication?
     private let captureService: ScreenCapturing
+    /// The one preferences owner (T6 slice 1), kept so the capture tail can
+    /// read the format/destination at capture time (T11/S6) and the board
+    /// creation can read the whiteboard defaults at open time. Nil in the
+    /// selftest harness paths that run detached on defaults.
+    private let preferences: PreferencesModel?
     /// Live screen frames for blur marks (T5/S3). Captures run only while the
     /// overlay is active and at least one display has a visible blur mark.
     private let liveFrames: LiveFrameSource
@@ -54,6 +89,7 @@ final class OverlayController {
     ) {
         self.captureService = captureService
         self.liveFrames = liveFrames
+        self.preferences = preferences
         self.state = EditorState(preferences: preferences)
         wireEditor()
         // Interest is asked from the canvases, so it is whatever the sessions
@@ -169,9 +205,14 @@ final class OverlayController {
             } else {
                 self.deactivate(restoringFocus: false)
             }
-            self.editor.open(image: image)
+            self.editor.open(image: image, capture: self.capturePreference())
         }
     }
+
+    /// Read by the self test: the display a capture would target while a
+    /// mode is active, and the board a fresh whiteboard opened with.
+    var firstCanvasDisplayID: CGDirectDisplayID? { activeCanvases.values.first?.displayID }
+    var activeBoard: WhiteboardPages? { isBoardActive ? boards.values.first : nil }
 
     func toggle() {
         if isActive { deactivate() } else { activate() }
@@ -483,8 +524,13 @@ final class OverlayController {
         deliver(composed, area: area, canvas: canvas, displayID: displayID)
     }
 
-    /// The shared capture tail: crop to the requested area, copy to the
-    /// pasteboard, and put the corner card up.
+    /// The shared capture tail: crop to the requested area, then put the
+    /// result where the persisted capture preference says (T11/S6). The
+    /// clipboard destination keeps today's behaviour exactly — PNG and TIFF
+    /// on the pasteboard — and a folder destination writes the file named by
+    /// `CapturePreference.fileName(at:)` in the chosen format, saying where
+    /// it went in the in-overlay pill; if the write fails the capture falls
+    /// back to the clipboard instead of being lost.
     private func deliver(_ composed: CGImage, area: CGRect?, canvas: DisplayCanvas, displayID: CGDirectDisplayID) {
         let scale = CGFloat(composed.width) / max(canvas.panel.frame.width, 1)
         let result: CGImage
@@ -495,10 +541,31 @@ final class OverlayController {
             result = composed
         }
 
-        let representation = NSBitmapImageRep(cgImage: result)
-        let pasteboard = NSPasteboard.general
+        let preference = capturePreference()
+        // One instant for the name and the pill, so they always agree.
+        let date = Date()
+        if case .folder = preference.destination, preference.destination.isUsablePath {
+            if let url = CaptureFile.write(result, preference: preference, date: date) {
+                canvas.view.showHint("Capture saved to \(url.lastPathComponent)", seconds: 3)
+                Diag.log("capture saved \(result.width)x\(result.height) marks=\(canvas.view.session.strokes.count) file=\(url.lastPathComponent)")
+            } else {
+                copy(result, to: NSPasteboard.general)
+                canvas.view.showHint("Capture couldn't be saved; copied it to the clipboard", seconds: 3.5)
+                Diag.log("capture file write failed; pasted \(result.width)x\(result.height) marks=\(canvas.view.session.strokes.count)")
+            }
+        } else {
+            copy(result, to: NSPasteboard.general)
+            canvas.view.showHint("Capture copied to the clipboard", seconds: 2.2)
+            Diag.log("capture copied \(result.width)x\(result.height) marks=\(canvas.view.session.strokes.count)")
+        }
+        cards.show(result, on: screen(for: displayID))
+    }
+
+    /// Today's pasteboard write, extracted unchanged: both types, because
+    /// some apps take PNG and others only TIFF.
+    private func copy(_ image: CGImage, to pasteboard: NSPasteboard) {
+        let representation = NSBitmapImageRep(cgImage: image)
         pasteboard.clearContents()
-        // Both types: some apps take PNG, others only TIFF.
         pasteboard.declareTypes([.png, .tiff], owner: nil)
         if let png = representation.representation(using: .png, properties: [:]) {
             pasteboard.setData(png, forType: .png)
@@ -506,8 +573,20 @@ final class OverlayController {
         if let tiff = representation.tiffRepresentation {
             pasteboard.setData(tiff, forType: .tiff)
         }
-        Diag.log("capture copied \(result.width)x\(result.height) marks=\(canvas.view.session.strokes.count)")
-        cards.show(result, on: screen(for: displayID))
+    }
+
+    /// The persisted capture preference, read at capture time so a change in
+    /// Settings applies to the very next capture. The controller runs on the
+    /// main thread only, like every capture-path caller.
+    private func capturePreference() -> CapturePreference {
+        guard let preferences else { return .standard }
+        return MainActor.assumeIsolated { preferences.capture }
+    }
+
+    /// The persisted whiteboard defaults, read at board-open time (T11/S6).
+    private func whiteboardDefaults() -> WhiteboardDefaults {
+        guard let preferences else { return .standard }
+        return MainActor.assumeIsolated { preferences.whiteboard }
     }
 
     private func screen(for displayID: CGDirectDisplayID) -> NSScreen? {
@@ -684,7 +763,14 @@ final class OverlayController {
 
     private func board(for displayID: CGDirectDisplayID) -> WhiteboardPages {
         if let existing = boards[displayID] { return existing }
-        let fresh = WhiteboardPages()
+        // A fresh board starts from the persisted whiteboard defaults: the
+        // background is the user's, and the extra pages are created the same way
+        // the toolbar's › does, so each one inherits that background.
+        let defaults = whiteboardDefaults()
+        let fresh = WhiteboardPages(background: defaults.background)
+        for _ in 1..<max(defaults.pagesOnOpen, 1) {
+            _ = fresh.selectNext()
+        }
         boards[displayID] = fresh
         return fresh
     }

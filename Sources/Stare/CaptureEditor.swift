@@ -1,15 +1,18 @@
 import AppKit
 import SwiftUI
 import StareCore
+import UniformTypeIdentifiers
 
 /// Editing a capture: the image with the tools on top, crop, copy and save.
 /// The capture arrives with its marks already composed, so this is a second layer
-/// over a real picture.
+/// over a real picture. The save panel's default name and format come from the
+/// persisted capture preference (T11/S6), handed in by the overlay — the
+/// editor never loads the blob itself, staying detached from app state.
 final class CaptureEditorController {
     private var windows: [CaptureEditorWindow] = []
 
-    func open(image: CGImage) {
-        let window = CaptureEditorWindow(image: image) { [weak self] closing in
+    func open(image: CGImage, capture: CapturePreference = .standard) {
+        let window = CaptureEditorWindow(image: image, capture: capture) { [weak self] closing in
             self?.windows.removeAll { $0 === closing }
         }
         windows.append(window)
@@ -27,8 +30,8 @@ final class CaptureEditorController {
 final class CaptureEditorWindow: NSWindow {
     override var canBecomeKey: Bool { true }
 
-    init(image: CGImage, onClose: @escaping (CaptureEditorWindow) -> Void) {
-        let content = CaptureEditorContent(image: image)
+    init(image: CGImage, capture: CapturePreference, onClose: @escaping (CaptureEditorWindow) -> Void) {
+        let content = CaptureEditorContent(image: image, capture: capture)
         super.init(
             contentRect: CGRect(origin: .zero, size: content.preferredSize),
             styleMask: [.titled, .closable, .resizable],
@@ -57,6 +60,8 @@ final class CaptureEditorContent: NSView {
     let canvas: CaptureEditorCanvas
     private let chrome: NSHostingView<EditorChrome>
     private let state = EditorState()
+    /// The preference the save panel defaults from (T11/S6).
+    private let capture: CapturePreference
 
     var preferredSize: CGSize {
         let image = canvas.image
@@ -67,7 +72,8 @@ final class CaptureEditorContent: NSView {
         return CGSize(width: width, height: min(max(height, 260), 760) + chrome.fittingSize.height)
     }
 
-    init(image: CGImage) {
+    init(image: CGImage, capture: CapturePreference) {
+        self.capture = capture
         canvas = CaptureEditorCanvas(image: image)
         chrome = NSHostingView(
             rootView: EditorChrome(
@@ -102,7 +108,10 @@ final class CaptureEditorContent: NSView {
             onClear: { [weak self] in self?.canvas.clearMarks() },
             onCrop: { [weak self] in self?.canvas.beginCrop() },
             onCopy: { [weak self] in self?.canvas.copyToPasteboard() },
-            onSave: { [weak self] in self?.canvas.savePanel() },
+            onSave: { [weak self] in
+                guard let self else { return }
+                self.canvas.savePanel(preference: self.capture)
+            },
             onClose: { [weak self] in self?.window?.close() }
         )
     }
@@ -389,17 +398,22 @@ final class CaptureEditorCanvas: NSView {
         Diag.log("editor copied \(composed.width)x\(composed.height)")
     }
 
-    func savePanel() {
+    /// The save panel defaults to the persisted capture preference: the file
+    /// name is `CapturePreference.fileName(at:)` — prefix plus timestamp —
+    /// and the chosen format sets the panel's type and extension, instead of
+    /// the hardcoded "Stare.png" (T11/S6).
+    func savePanel(preference: CapturePreference) {
         guard let composed = composedImage() else { return }
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.png]
-        panel.nameFieldStringValue = "Stare.png"
+        let isPNG = preference.format == .png
+        panel.allowedContentTypes = [isPNG ? UTType.png : UTType.jpeg]
+        panel.nameFieldStringValue = preference.fileName(at: Date())
         panel.begin { response in
             guard response == .OK, let url = panel.url,
-                  let png = NSBitmapImageRep(cgImage: composed).representation(using: .png, properties: [:]) else {
+                let data = CaptureFile.data(for: composed, format: preference.format) else {
                 return
             }
-            try? png.write(to: url)
+            try? data.write(to: url)
             Diag.log("editor saved \(url.lastPathComponent)")
         }
     }
