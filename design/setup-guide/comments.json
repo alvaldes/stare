@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "comments": [
+    {
+      "id": "vjbbmdsz",
+      "file": "03-permission-checklist.html",
+      "selector": "body > div:nth-of-type(2) > main",
+      "excerpt": "BEFORE YOU START Set up Stare Stare asks for exactly one permission, once: Screen Recording. Everything else just works. Screen Recording Not allowed Allow Screen Recording Stare can’t draw over or capture your screen until you allow it. System Settings opens — switch Screen Recording on for Stare,",
+      "comment": "this one but in a minimalistic and no so big window. Remenber to use de logo image of stare",
+      "createdAt": "2026-11-21T22:39:52.233Z",
+      "status": "resolved",
+      "sentAt": "2026-11-21T22:39:52.249Z",
+      "resolvedAt": "2026-11-21T22:53:38.792Z",
+      "resolution": "Minimal 460x430 artboard: dropped eyebrow, meter and after-line; real Stare app icon inlined from Resources/app-icon.svg at 58px."
+    }
+  ]
+}

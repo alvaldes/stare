@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stare setup — 02 Two-step guide</title>
+<style>
+  *{box-sizing:border-box;margin:0}
+  html,body{height:100%}
+  body{background:#a9b3c1;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',sans-serif;
+    color:#1c2030;-webkit-font-smoothing:antialiased}
+  :focus-visible{outline:2px solid #0062cc;outline-offset:2px;border-radius:6px}
+
+  .window{position:fixed;inset:12px;border-radius:10px;background:#e9edf3;display:flex;flex-direction:column;
+    box-shadow:0 30px 80px -24px rgb(28 32 48/.45);overflow:hidden}
+  .titlebar{flex:none;height:40px;display:flex;align-items:center;padding:0 14px;
+    border-bottom:1px solid #d3d9e3;position:relative}
+  .lights{display:flex;gap:7px}
+  .lights i{width:12px;height:12px;border-radius:50%}
+  .lights i:nth-child(1){background:#ff5f57;box-shadow:inset 0 0 0 .5px rgb(0 0 0/.15)}
+  .lights i:nth-child(2){background:#febc2e;box-shadow:inset 0 0 0 .5px rgb(0 0 0/.15)}
+  .lights i:nth-child(3){background:#28c840;box-shadow:inset 0 0 0 .5px rgb(0 0 0/.15)}
+  .titlebar h1{position:absolute;left:0;right:0;text-align:center;font-size:13px;font-weight:600;pointer-events:none}
+
+  main{flex:1;display:flex;flex-direction:column;padding:26px 64px 0;min-height:0}
+
+  /* —— the two-step indicator —— */
+  .steps{flex:none;display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:24px}
+  .step{display:flex;align-items:center;gap:8px;font-size:13px}
+  .step .dot{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:11.5px;font-weight:700}
+  .step-done .dot{background:#34c759;color:#fff}
+  .step-done{color:rgba(28,32,48,.65)}
+  .step-done s{text-decoration-color:rgba(28,32,48,.4)}
+  .step-current .dot{border:2px solid #0062cc;color:#0062cc;background:#fff}
+  .step-current{font-weight:600}
+  .rule{width:64px;height:1px;background:#d3d9e3}
+
+  /* step 1 recap — already read, kept small so step 2 leads */
+  .recap{flex:none;display:flex;align-items:center;gap:12px;max-width:560px;margin:0 auto;
+    background:rgb(255 255 255/.6);border:1px solid #d3d9e3;border-radius:10px;padding:10px 14px}
+  .recap svg{flex:none}
+  .recap p{font-size:12.5px;line-height:1.45;color:rgba(28,32,48,.78);text-align:left}
+
+  .panel{flex:1;display:flex;align-items:center;justify-content:center;min-height:0}
+  .card{width:560px;background:#fff;border:1px solid #d3d9e3;border-radius:12px;padding:20px 22px;
+    box-shadow:0 10px 30px -12px rgb(28 32 48/.25),inset 0 1px 0 rgb(255 255 255/.7);
+    display:flex;gap:16px;align-items:flex-start;text-align:left}
+  .card .mark{flex:none;width:44px;height:44px;border-radius:50%;display:grid;place-items:center}
+  .card h2{font-size:15px;font-weight:600}
+  .card p{font-size:13px;line-height:1.5;color:rgba(28,32,48,.78);margin-top:4px}
+  .card .tag{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:#0057b3;
+    background:rgb(0 87 179/.08);border-radius:99px;padding:3px 9px;margin-top:10px}
+
+  .titlebar-gap{flex:none;display:flex;justify-content:center;font-size:11.5px;color:rgba(28,32,48,.65);
+    gap:14px;padding-bottom:8px}
+  kbd{font-family:inherit;font-size:10.5px;background:#fff;border:1px solid #d3d9e3;border-bottom-width:2px;
+    border-radius:5px;padding:1px 6px;color:#1c2030}
+
+  /* —— footer action bar: secondary left-of, primary right-most (macOS order) —— */
+  footer{flex:none;display:flex;align-items:center;gap:12px;padding:14px 20px;
+    border-top:1px solid #d3d9e3;background:rgb(255 255 255/.55)}
+  .btn{font-family:inherit;font-weight:600;font-size:13.5px;border-radius:9px;border:0;cursor:pointer;
+    min-height:38px;padding:0 20px;transition:transform 120ms ease-out}
+  .btn:active{transform:scale(.985)}
+  .btn-primary{background:#0062cc;color:#fff}
+  .btn-primary:hover{filter:brightness(1.06)}
+  .btn-warn{background:#ff9500;color:#1c2030}
+  .btn-warn:hover{filter:brightness(1.05)}
+  .btn-secondary{background:#fff;color:#1c2030;border:1px solid #d3d9e3}
+  .btn-secondary:hover{background:#f6f8fb}
+  .notnow{margin-right:auto;background:transparent;color:rgba(28,32,48,.78);font-weight:500;font-size:13px;
+    min-height:0;padding:4px 10px}
+  .notnow:hover{color:#1c2030}
+  .hint{position:fixed;left:24px;top:58px;z-index:2;display:flex;flex-direction:column;gap:6px;
+    font-size:11px;color:rgba(28,32,48,.65)}
+
+  /* —— preview state switcher (design tooling, not part of the UI) —— */
+  .switch{position:fixed;right:24px;top:58px;z-index:2}
+  .switch fieldset{border:1px dashed #d3d9e3;border-radius:8px;padding:5px;display:flex;gap:3px;background:rgb(255 255 255/.7)}
+  .switch legend{font:500 10px/1 -apple-system,sans-serif;letter-spacing:.06em;text-transform:uppercase;
+    color:rgba(28,32,48,.65);padding:0 5px}
+  .switch input{position:absolute;opacity:0;pointer-events:none}
+  .switch label{font:500 11px/1 -apple-system,BlinkMacSystemFont,sans-serif;
+    padding:5px 8px;border-radius:6px;cursor:pointer;color:#1c2030}
+  .switch input:checked + label{background:#1c2030;color:#fff}
+  .switch input:focus-visible + label{outline:2px solid #0062cc;outline-offset:2px}
+
+  [hidden]{display:none !important}
+  .fade{animation:fade 160ms ease-out}
+  @keyframes fade{from{opacity:0;transform:translateY(3px)}}
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{animation:none !important;transition:none !important}
+  }
+</style>
+</head>
+<body>
+
+<div class="hint" aria-hidden="true"><span><kbd>Return</kbd> primary</span><span><kbd>Esc</kbd> Not now</span></div>
+
+<div class="switch" aria-label="Preview permission state">
+  <fieldset>
+    <legend>Preview state</legend>
+    <input type="radio" name="state" id="st-denied" value="denied">
+    <label for="st-denied">denied</label>
+    <input type="radio" name="state" id="st-pending" value="grantedPendingRestart">
+    <label for="st-pending">pendingRestart</label>
+    <input type="radio" name="state" id="st-granted" value="granted" checked>
+    <label for="st-granted">granted</label>
+  </fieldset>
+</div>
+
+<div class="window">
+  <header class="titlebar">
+    <span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
+    <h1>Stare</h1>
+  </header>
+
+  <nav class="steps" aria-label="Setup steps">
+    <span class="step step-done"><span class="dot" aria-hidden="true">
+      <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 6.5l2.5 2.5 4.5-5.5" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      <s>What Stare does</s></span>
+    <span class="rule" aria-hidden="true"></span>
+    <span class="step step-current"><span class="dot" aria-hidden="true">2</span> Allow Screen Recording</span>
+  </nav>
+
+  <main>
+    <p class="recap">
+      <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true">
+        <rect x="1" y="1" width="32" height="32" rx="8" fill="#23262f"/>
+        <path d="M17 7 C22 9 25 13 25 18 C25 22 21 25 17 27 C13 25 9 22 9 18 C9 13 12 9 17 7 Z" fill="#fff"/>
+        <path d="M17 14v8" stroke="#23262f" stroke-width="1.6" stroke-linecap="round"/>
+        <circle cx="17" cy="13" r="1.8" fill="#0062cc"/>
+      </svg>
+      Stare draws over your screen and captures it with your marks. One screen, one shot — what you circle is what it keeps.
+    </p>
+
+    <div class="panel" aria-live="polite">      <section class="card">
+        <span class="mark" id="s-mark" aria-hidden="true"></span>
+        <div>
+          <h2 id="s-title">Screen Recording on</h2>
+          <p id="s-detail">Stare can draw over the screen and capture it with your marks.</p>
+          <span class="tag" id="s-tag">Done — nothing else to set up</span>
+        </div>
+      </section>
+    </div>
+
+    <p class="titlebar-gap" aria-hidden="true"><span><kbd>Return</kbd> primary</span><span><kbd>Esc</kbd> Not now</span></p>
+  </main>
+
+  <footer>
+    <button class="btn notnow" id="s-notnow" type="button">Not now</button>
+    <button class="btn btn-secondary" id="s-secondary" type="button" hidden>Open System Settings…</button>
+    <button class="btn btn-primary" id="s-primary" type="button">Continue</button>
+  </footer>
+</div>
+
+<script>
+(function(){
+  var ICON = {
+    denied:   '<svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="10" fill="#ff9500"/><path d="M6 11h10" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>',
+    pending:  '<svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="10" fill="#ff9500"/><path d="M15 11a4 4 0 1 1-1.6-3.2M14.4 4.2l-.6 3.4-3.4-.6" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    granted:  '<svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="10" fill="#34c759"/><path d="M6.5 11.5l3 3 6-6.5" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+  };
+
+  var STATES = {
+    denied: {
+      title: "Allow Screen Recording",
+      detail: "Stare can’t draw over or capture your screen until you allow it. System Settings opens — switch Screen Recording on for Stare, then come back here.",
+      tag: "Step 2 of 2 · waiting on a system setting",
+      mark: "denied",
+      primary: { label: "Open System Settings…", cls: "btn btn-primary" },
+      secondary: null
+    },
+    grantedPendingRestart: {
+      title: "Allow Screen Recording",
+      detail: "Stare was granted Screen Recording, but it only takes effect after Stare restarts. If the toggle was off, open System Settings and re-authorize Stare.",
+      tag: "Step 2 of 2 · granted, restart pending",
+      mark: "pending",
+      primary: { label: "Restart Stare", cls: "btn btn-warn" },
+      secondary: { label: "Open System Settings…" }
+    },
+    granted: {
+      title: "Allow Screen Recording",
+      detail: "Stare can draw over the screen and capture it with your marks. Setup is finished.",
+      tag: "Done — nothing else to set up",
+      mark: "granted",
+      primary: { label: "Continue", cls: "btn btn-primary" },
+      secondary: null
+    }
+  };
+
+  var els = {
+    mark: document.getElementById("s-mark"),
+    title: document.getElementById("s-title"),
+    detail: document.getElementById("s-detail"),
+    tag: document.getElementById("s-tag"),
+    primary: document.getElementById("s-primary"),
+    secondary: document.getElementById("s-secondary"),
+    notnow: document.getElementById("s-notnow"),
+    card: document.querySelector(".card")
+  };
+
+  function render(state){
+    var s = STATES[state];
+    els.mark.innerHTML = ICON[s.mark];
+    els.mark.style.background = s.mark === "granted" ? "#34c759" : "#ff9500";
+    els.title.textContent = s.title;
+    els.detail.textContent = s.detail;
+    els.tag.textContent = s.tag;
+    els.tag.style.color = s.mark === "granted" ? "#1d7a3b" : "#0057b3";
+    els.tag.style.background = s.mark === "granted" ? "rgb(52 199 89/.12)" : "rgb(0 87 179/.08)";
+    els.primary.className = s.primary.cls;
+    els.primary.textContent = s.primary.label;
+    if (s.secondary){
+      els.secondary.hidden = false;
+      els.secondary.textContent = s.secondary.label;
+    } else {
+      els.secondary.hidden = true;
+    }
+    els.card.classList.remove("fade");
+    void els.card.offsetWidth;
+    if (!matchMedia("(prefers-reduced-motion: reduce)").matches){
+      els.card.classList.add("fade");
+    }
+  }
+
+  function current(){
+    return document.querySelector('input[name="state"]:checked').value;
+  }
+  document.querySelectorAll('input[name="state"]').forEach(function(r){
+    r.addEventListener("change", function(){ render(current()); });
+  });
+
+  document.addEventListener("keydown", function(e){
+    if (e.key === "Escape"){ e.preventDefault(); els.notnow.click(); }
+  });
+
+  render(current());
+})();
+</script>
+</body>
+</html>

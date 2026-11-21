@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stare setup — 01 Status-led hero</title>
+<style>
+  *{box-sizing:border-box;margin:0}
+  html,body{height:100%}
+  body{background:#a9b3c1;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',sans-serif;
+    color:#1c2030;-webkit-font-smoothing:antialiased}
+  :focus-visible{outline:2px solid #0062cc;outline-offset:2px;border-radius:6px}
+
+  /* —— the real 880×760 window —— */
+  .window{position:fixed;inset:12px;border-radius:10px;background:#e9edf3;display:flex;flex-direction:column;
+    box-shadow:0 30px 80px -24px rgb(28 32 48/.45);overflow:hidden}
+  .titlebar{flex:none;height:40px;display:flex;align-items:center;padding:0 14px;
+    border-bottom:1px solid #d3d9e3;position:relative}
+  .lights{display:flex;gap:7px}
+  .lights i{width:12px;height:12px;border-radius:50%}
+  .lights i:nth-child(1){background:#ff5f57;box-shadow:inset 0 0 0 .5px rgb(0 0 0/.15)}
+  .lights i:nth-child(2){background:#febc2e;box-shadow:inset 0 0 0 .5px rgb(0 0 0/.15)}
+  .lights i:nth-child(3){background:#28c840;box-shadow:inset 0 0 0 .5px rgb(0 0 0/.15)}
+  .titlebar h1{position:absolute;left:0;right:0;text-align:center;font-size:13px;font-weight:600;pointer-events:none}
+
+  main{flex:1;display:flex;flex-direction:column;align-items:center;text-align:center;
+    padding:20px 72px 0;min-height:0}
+  .hero{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    max-width:520px;margin-bottom:4px}
+  .appname{font-size:26px;font-weight:700;letter-spacing:-.01em;margin-top:16px}
+  .blurb{font-size:14px;line-height:1.5;color:rgba(28,32,48,.78);margin-top:8px}
+
+  .status{display:flex;align-items:center;gap:14px;text-align:left;margin-top:26px;
+    background:#fff;border:1px solid #d3d9e3;border-radius:12px;padding:14px 18px;
+    box-shadow:0 10px 30px -12px rgb(28 32 48/.25),inset 0 1px 0 rgb(255 255 255/.7);min-width:420px}
+  .status .badge{flex:none;width:40px;height:40px;border-radius:50%;display:grid;place-items:center}
+  .status b{display:block;font-size:16px;letter-spacing:-.005em}
+  .status span{display:block;font-size:13px;line-height:1.45;color:rgba(28,32,48,.78);margin-top:2px}
+
+  .next{display:flex;align-items:center;gap:6px;font-size:12.5px;color:rgba(28,32,48,.78);margin-top:14px;max-width:420px}
+  .next svg{flex:none}
+
+  .actions{flex:none;display:flex;flex-direction:column;align-items:center;gap:10px;padding:18px 0 8px}
+  .btn{font-family:inherit;font-weight:600;font-size:14px;border-radius:9px;border:0;cursor:pointer;
+    min-width:300px;min-height:40px;transition:transform 120ms ease-out,filter 120ms}
+  .btn:active{transform:scale(.985)}
+  .btn-primary{background:#0062cc;color:#fff}
+  .btn-primary:hover{filter:brightness(1.06)}
+  .btn-warn{background:#ff9500;color:#1c2030}
+  .btn-warn:hover{filter:brightness(1.05)}
+  .btn-secondary{background:#fff;color:#1c2030;border:1px solid #d3d9e3}
+  .btn-secondary:hover{background:#f6f8fb}
+
+  .keys{flex:none;display:flex;justify-content:center;align-items:center;gap:14px;padding-bottom:10px;
+    font-size:11.5px;color:rgba(28,32,48,.65)}
+  kbd{font-family:inherit;font-size:10.5px;background:#fff;border:1px solid #d3d9e3;border-bottom-width:2px;
+    border-radius:5px;padding:1px 6px;color:#1c2030}
+
+  .notnow{flex:none;display:flex;justify-content:center;padding-bottom:20px;padding-top:2px}
+  .btn-plain{background:transparent;color:rgba(28,32,48,.78);font-weight:500;font-size:13px;
+    min-height:28px;min-width:0;padding:4px 12px}
+  .btn-plain:hover{color:#1c2030}
+
+  /* —— preview state switcher (design tooling, not part of the UI) —— */
+  .switch{position:fixed;right:24px;top:58px;z-index:2;font-size:10px;letter-spacing:.06em;text-transform:uppercase;
+    color:rgba(28,32,48,.65)}
+  .switch fieldset{border:1px dashed #d3d9e3;border-radius:8px;padding:5px;display:flex;gap:3px;background:rgb(255 255 255/.7)}
+  .switch legend{padding:0 5px}
+  .switch input{position:absolute;opacity:0;pointer-events:none}
+  .switch label{font:500 11px/1 -apple-system,BlinkMacSystemFont,sans-serif;letter-spacing:0;text-transform:none;
+    padding:5px 8px;border-radius:6px;cursor:pointer;color:#1c2030}
+  .switch input:checked + label{background:#1c2030;color:#fff}
+  .switch input:focus-visible + label{outline:2px solid #0062cc;outline-offset:2px}
+
+  [hidden]{display:none !important}
+  .fade{animation:fade 160ms ease-out}
+  @keyframes fade{from{opacity:0;transform:translateY(3px)}}
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{animation:none !important;transition:none !important}
+  }
+</style>
+</head>
+<body>
+
+<div class="switch" aria-label="Preview permission state">
+  <fieldset>
+    <legend>Preview state</legend>
+    <input type="radio" name="state" id="st-denied" value="denied">
+    <label for="st-denied">denied</label>
+    <input type="radio" name="state" id="st-pending" value="grantedPendingRestart">
+    <label for="st-pending">pendingRestart</label>
+    <input type="radio" name="state" id="st-granted" value="granted" checked>
+    <label for="st-granted">granted</label>
+  </fieldset>
+</div>
+
+<div class="window">
+  <header class="titlebar">
+    <span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
+    <h1>Stare</h1>
+  </header>
+
+  <main>
+    <section class="hero" aria-live="polite">
+      <!-- App icon: the nib mark, drawn crisply -->
+      <svg width="88" height="88" viewBox="0 0 88 88" role="img" aria-label="Stare app icon">
+        <defs>
+          <linearGradient id="sq" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#2b2f3b"/><stop offset="1" stop-color="#1d2029"/>
+          </linearGradient>
+        </defs>
+        <rect x="2" y="2" width="84" height="84" rx="21" fill="url(#sq)"/>
+        <rect x="2.75" y="2.75" width="82.5" height="82.5" rx="20.4" fill="none" stroke="rgb(255 255 255/.16)" stroke-width="1.5"/>
+        <path d="M44 16 C58 21 68 31 68 46 C68 60 57 69 44 74 C31 69 20 60 20 46 C20 31 30 21 44 16 Z" fill="#fff"/>
+        <path d="M44 34 L44 68" stroke="#1d2029" stroke-width="2.5" stroke-linecap="round"/>
+        <circle cx="44" cy="32" r="4.4" fill="#0062cc"/>
+        <path d="M24 80 Q44 72 62 80" fill="none" stroke="#ff9500" stroke-width="3" stroke-linecap="round" opacity=".9"/>
+      </svg>
+
+      <h2 class="appname" style="font-size:26px">Stare</h2>
+      <p class="blurb">Stare draws over your screen and captures it with your marks.
+        It needs Screen Recording to see what you draw over.</p>
+
+      <div aria-live="polite">
+      <div class="status">
+        <span class="badge" id="s-badge" aria-hidden="true"></span>
+        <div>
+          <b id="s-title">Screen Recording on</b>
+          <span id="s-detail">Stare can draw over the screen and capture it with your marks.</span>
+        </div>
+      </div>
+
+      <p class="next"><svg id="s-arrow" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+        <path d="M1 7h11M8 3l4 4-4 4" fill="none" stroke="#0062cc" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span id="s-next">You’re set. Start Stare any time from the menu bar.</span></p>
+      </div>
+    </section>
+
+    <section class="actions">
+      <button class="btn btn-primary" id="s-primary" type="button">Continue</button>
+      <button class="btn btn-secondary" id="s-secondary" type="button" hidden>Open System Settings…</button>
+    </section>
+
+    <p class="keys" aria-hidden="true"><span><kbd>Return</kbd> primary</span><span><kbd>Esc</kbd> Not now</span></p>
+
+    <div class="notnow"><button class="btn-plain btn" id="s-notnow" type="button">Not now</button></div>
+  </main>
+</div>
+
+<script>
+(function(){
+  var ICON = {
+    denied:   '<svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="10" fill="#ff9500"/><path d="M6 11h10" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>',
+    pending:  '<svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="10" fill="#ff9500"/><path d="M15 11a4 4 0 1 1-1.6-3.2M14.4 4.2l-.6 3.4-3.4-.6" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    granted:  '<svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="10" fill="#34c759"/><path d="M6.5 11.5l3 3 6-6.5" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+  };
+
+  var STATES = {
+    denied: {
+      title: "Screen Recording off",
+      detail: "Stare can’t draw over or capture your screen until you allow it.",
+      next: "System Settings opens in a new window — switch Screen Recording on for Stare.",
+      primary: { label: "Open System Settings…", cls: "btn btn-primary" },
+      secondary: null,
+      badge: "denied"
+    },
+    grantedPendingRestart: {
+      title: "Screen Recording on — restart required",
+      detail: "Stare was granted Screen Recording, but it only takes effect after Stare restarts.",
+      next: "Stare quits and relaunches. Nothing you’re working on is affected.",
+      primary: { label: "Restart Stare", cls: "btn btn-warn" },
+      secondary: { label: "Open System Settings…"},
+      badge: "pending"
+    },
+    granted: {
+      title: "Screen Recording on",
+      detail: "Stare can draw over the screen and capture it with your marks.",
+      next: "You’re set. Start Stare any time from the menu bar.",
+      primary: { label: "Continue", cls: "btn btn-primary" },
+      secondary: null,
+      badge: "granted"
+    }
+  };
+
+  var els = {
+    badge: document.getElementById("s-badge"),
+    title: document.getElementById("s-title"),
+    detail: document.getElementById("s-detail"),
+    next: document.getElementById("s-next"),
+    primary: document.getElementById("s-primary"),
+    secondary: document.getElementById("s-secondary"),
+    notnow: document.getElementById("s-notnow"),
+    hero: document.querySelector(".hero"),
+    status: document.querySelector(".status")
+  };
+  var keys = Object.keys(STATES);
+
+  function render(state){
+    var s = STATES[state];
+    els.badge.innerHTML = ICON[s.badge];
+    // Icon color passes 3:1 against white in all states; the label carries the meaning, never the hue alone.
+    els.badge.style.background = s.badge === "granted" ? "#34c759" : "#ff9500";
+    els.title.textContent = s.title;
+    els.detail.textContent = s.detail;
+    els.next.textContent = s.next;
+    els.primary.className = s.primary.cls;
+    els.primary.textContent = s.primary.label;
+    if (s.secondary){
+      els.secondary.hidden = false;
+      els.secondary.textContent = s.secondary.label;
+    } else {
+      els.secondary.hidden = true;
+    }
+    els.status.classList.remove("fade");
+    void els.status.offsetWidth; // restart the entrance fade
+    if (!matchMedia("(prefers-reduced-motion: reduce)").matches){
+      els.status.classList.add("fade");
+    }
+  }
+
+  function current(){
+    return document.querySelector('input[name="state"]:checked').value;
+  }
+  document.querySelectorAll('input[name="state"]').forEach(function(r){
+    r.addEventListener("change", function(){ render(current()); });
+  });
+
+  // Previews the native contract: Escape is equivalent to "Not now" (S5).
+  document.addEventListener("keydown", function(e){
+    if (e.key === "Escape"){ e.preventDefault(); els.notnow.click(); }
+  });
+
+  render(current());
+})();
+</script>
+</body>
+</html>
