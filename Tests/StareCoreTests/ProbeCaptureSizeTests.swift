@@ -50,4 +50,37 @@ final class ProbeCaptureSizeTests: XCTestCase {
             XCTAssertGreaterThanOrEqual(pixels, min(ProbeCaptureSize.shortSide, max(1, min(width, height))))
         }
     }
+
+    // MARK: Attempts
+
+    /// The first probe tries the cheap size and, if that fails, the capture the
+    /// capture key takes. Two attempts is the ceiling.
+    func testFirstProbeTriesReducedThenFullSize() {
+        XCTAssertEqual(ProbeCaptureSize.attempts(displayDownscale: 9, lastSucceeded: nil), [9, 1])
+    }
+
+    /// Once a size has worked, the probe stops paying for the other one: the
+    /// permission refresh runs about once a second, and two captures per tick
+    /// in the state that repeats most is the cost the reviewers flagged.
+    func testKnownGoodReducedSizeIsTheOnlyAttempt() {
+        XCTAssertEqual(ProbeCaptureSize.attempts(displayDownscale: 9, lastSucceeded: 9), [9])
+    }
+
+    /// A display that kept falling back to a full-size capture keeps that
+    /// answer instead of retrying the reduced size every tick.
+    func testKnownGoodFullSizeIsTheOnlyAttempt() {
+        XCTAssertEqual(ProbeCaptureSize.attempts(displayDownscale: 9, lastSucceeded: 1), [1])
+    }
+
+    /// A display already at the floor has one attempt, never two identical ones.
+    func testDisplayAtTheFloorHasOneAttempt() {
+        XCTAssertEqual(ProbeCaptureSize.attempts(displayDownscale: 1, lastSucceeded: nil), [1])
+    }
+
+    /// The wait is bounded: an unbounded semaphore on the main thread hangs the
+    /// app if ScreenCaptureKit never answers.
+    func testTheProbeWaitIsBounded() {
+        XCTAssertGreaterThan(ProbeCaptureSize.timeout, 0)
+        XCTAssertLessThanOrEqual(ProbeCaptureSize.timeout, 5, "a probe may not block the main thread for long")
+    }
 }

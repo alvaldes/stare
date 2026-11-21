@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 
 /// How small the Screen Recording probe capture is allowed to get.
 ///
@@ -26,5 +27,29 @@ public enum ProbeCaptureSize {
         let short = min(max(0, pixelWidth), max(0, pixelHeight))
         guard short > shortSide else { return 1 }
         return CGFloat(short) / CGFloat(shortSide)
+    }
+
+    /// Ceiling on one probe capture, in seconds.
+    ///
+    /// The probe blocks the thread that runs the permission refresh — the main
+    /// thread — so an unbounded wait hangs the app whenever ScreenCaptureKit
+    /// stops answering. A timeout turns that into a plain "cannot capture yet".
+    public static let timeout: TimeInterval = 2
+
+    /// The capture sizes to try, in order, for one probe.
+    ///
+    /// The first probe tries the cheap size and, if that fails, the capture the
+    /// capture key takes — the probe may never be stricter than the capture it
+    /// vouches for. Once a size has worked it becomes the only attempt: the
+    /// refresh runs about once a second, and paying for two captures per tick in
+    /// the state that repeats most is the cost this avoids.
+    ///
+    /// - Parameters:
+    ///   - displayDownscale: what `downscale(pixelWidth:pixelHeight:)` returned
+    ///     for the display being probed.
+    ///   - lastSucceeded: the factor the previous probe answered with, if any.
+    public static func attempts(displayDownscale: CGFloat, lastSucceeded: CGFloat?) -> [CGFloat] {
+        if let lastSucceeded { return [lastSucceeded] }
+        return displayDownscale > 1 ? [displayDownscale, 1] : [1]
     }
 }

@@ -32,6 +32,13 @@ final class SystemScreenRecordingClient: ScreenRecordingClient, @unchecked Senda
 
     private let captureService: CaptureService
 
+    /// The size the last successful probe answered with, per display, so a
+    /// display that only works at full size stops paying for a reduced attempt
+    /// on every refresh. `ProbeCapturePlan` owns the rule and its tests; this
+    /// adapter only performs the captures. Touched from the main-thread refresh
+    /// only.
+    private var plan = ProbeCapturePlan()
+
     /// Reuses the app's own capture service, so the probe cannot drift from
     /// what capturing actually does.
     init(captureService: CaptureService) {
@@ -61,30 +68,34 @@ final class SystemScreenRecordingClient: ScreenRecordingClient, @unchecked Senda
         }
 
         // The reduced capture is the cheap answer, the full-size one is the
-        // capture the capture key takes. Falling back to it keeps the probe
-        // from ever being stricter than the capture it vouches for.
-        for downscale in [Self.probeDownscale(for: screen), 1] {
-            if let failure = Self.capture(
+        // capture the capture key takes, so the probe is never stricter than the
+        // capture it vouches for. `ProbeCapturePlan` owns which sizes are tried
+        // and remembers the one that worked — one capture per refresh once a
+        // size is known, instead of two every second.
+        return plan.run(displayID: displayID, displayDownscale: Self.probeDownscale(for: screen)) { downscale in
+            let failure = Self.capture(
                 displayID: displayID,
                 downscale: downscale,
                 using: captureService
-            ) {
+            )
+            if let failure {
                 let error = failure as NSError
                 Self.log.error(
                     "probe capture failed display=\(displayID) downscale=\(downscale, privacy: .public) error=\(error.domain, privacy: .public)/\(error.code) \(error.localizedDescription, privacy: .public)"
                 )
-                continue
             }
-            return true
+            return failure
         }
-        return false
     }
 
-    /// One capture attempt, blocked on until it finishes: `captureDisplay` is
-    /// async and `ScreenRecordingClient` is not, so a detached task does the
-    /// work and this thread waits, exactly like the synchronous capture path.
-    /// The main thread has nothing else to do in between — the caller is the
-    /// permission model's refresh — and the wait is bounded by one frame.
+    /// One capture attempt, blocked on until it finishes or until
+    /// `ProbeCaptureSize.timeout` runs out: `captureDisplay` is async and
+    /// `ScreenRecordingClient` is not, so a detached task does the work and this
+    /// thread waits, exactly like the synchronous capture path. The main thread
+    /// has nothing else to do in between — the caller is the permission model's
+    /// refresh — but a stalled ScreenCaptureKit call must not hang it, so the
+    /// wait is bounded. Worst case for a first probe on an unknown display is
+    /// one attempt per size, each bounded by that timeout.
     ///
     /// Returns the failure, or nil when the capture succeeded.
     private static func capture(
@@ -107,7 +118,9 @@ final class SystemScreenRecordingClient: ScreenRecordingClient, @unchecked Senda
             }
         }
 
-        semaphore.wait()
+        if semaphore.wait(timeout: .now() + ProbeCaptureSize.timeout) == .timedOut {
+            return ProbeTimeout()
+        }
         return failure
     }
 
@@ -136,5 +149,14 @@ final class SystemScreenRecordingClient: ScreenRecordingClient, @unchecked Senda
     private static func displayID(of screen: NSScreen) -> CGDirectDisplayID? {
         let key = NSDeviceDescriptionKey("NSScreenNumber")
         return (screen.deviceDescription[key] as? NSNumber)?.uint32Value
+    }
+}
+
+/// The probe waited as long as it is allowed to and ScreenCaptureKit never
+/// answered. Reported as a plain failure: no capture happened, so the probe may
+/// not claim the permission works.
+struct ProbeTimeout: LocalizedError {
+    var errorDescription: String? {
+        "The capture probe timed out after \(ProbeCaptureSize.timeout) s"
     }
 }
