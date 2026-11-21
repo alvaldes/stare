@@ -162,11 +162,28 @@ public enum MarkCompositor {
             source = base
         }
         let sourceScale = scale
+
+        // The patch may reach past the base — a mark drawn across the page's
+        // edge covers less of the picture than its own rectangle. The blurred
+        // source only exists where the base is, so the patch is clipped to
+        // that intersection before it is sampled or drawn: the inside part is
+        // blurred at its true position (the live view path draws the crop at
+        // the intersection the same way), never stretched across the whole
+        // rect. Nothing crashes and nothing lands off the base.
+        let baseRect = CGRect(
+            x: 0,
+            y: 0,
+            width: CGFloat(source.width) / sourceScale,
+            height: CGFloat(source.height) / sourceScale
+        )
+        let visible = rect.intersection(baseRect)
+        guard !visible.isNull, !visible.isEmpty else { return }
+
         let pixelRect = CGRect(
-            x: rect.minX * sourceScale,
-            y: CGFloat(source.height) - rect.maxY * sourceScale,
-            width: rect.width * sourceScale,
-            height: rect.height * sourceScale
+            x: visible.minX * sourceScale,
+            y: CGFloat(source.height) - visible.maxY * sourceScale,
+            width: visible.width * sourceScale,
+            height: visible.height * sourceScale
         )
         guard let blurred = BlurEffect.crop(
             source,
@@ -174,16 +191,10 @@ public enum MarkCompositor {
             radius: BlurEffect.defaultRadius * sourceScale
         ) else { return }
 
-        // The crop rectangle never rotates: the pixels always come from the
-        // unrotated area of the base frame. The cropped image itself is what
-        // turns about the mark's anchor, so a rotated blur patch still shows
-        // the pixels underneath it. The context is flipped for overlay space,
-        // so an image drawn plainly would land upside down; unflip it inside
-        // the rectangle.
         context.saveGState()
-        context.translateBy(x: rect.minX, y: rect.maxY)
+        context.translateBy(x: visible.minX, y: visible.maxY)
         context.scaleBy(x: 1, y: -1)
-        context.draw(blurred, in: CGRect(origin: .zero, size: rect.size))
+        context.draw(blurred, in: CGRect(origin: .zero, size: visible.size))
         context.restoreGState()
     }
 

@@ -547,9 +547,22 @@ class OverlayView: NSView {
     private var selectionReach: CGFloat { viewTransform.pageLength(Self.selectionHitRadius) }
     private var selectionHandleSize: CGFloat { viewTransform.pageLength(MarkSelection.defaultHandleSize) }
 
+    /// Which handle a page-space point grabs: the handle size and the rotation
+    /// knob's offset are measured in screen points and mapped through the
+    /// layer's own transform, so what a click hits is exactly what the chrome
+    /// draws.
+
     /// Page-space size of a view-space length, shared by the eraser and the
     /// chrome (1 in the plain overlay, 1/zoom on the board).
     var pageLengthForScreen: CGFloat { viewTransform.pageLength(1) }
+
+    /// The rotation knob's offset above the box, in page units: the number the
+    /// chrome draws with and the number a click grabs with must be this same
+    /// value. Dividing the screen offset by the zoom keeps the knob at a
+    /// constant screen distance from the box, like every other piece of chrome.
+    var selectionRotationHandleOffset: CGFloat {
+        viewTransform.pageLength(MarkSelection.defaultRotationHandleOffset)
+    }
 
     /// A click with the edit cursor: a handle of the already selected mark
     /// wins, then the topmost mark under the pointer (newest first), then the
@@ -557,7 +570,11 @@ class OverlayView: NSView {
     /// away, so select-and-move is one gesture.
     private func beginSelection(at point: CGPoint) {
         if let id = selectedMarkID, let selected = session.strokes.first(where: { $0.id == id }) {
-            if let handle = MarkSelection(stroke: selected).handle(at: point, handleSize: selectionHandleSize) {
+            if let handle = MarkSelection(stroke: selected).handle(
+                at: point,
+                handleSize: selectionHandleSize,
+                rotationHandleOffset: selectionRotationHandleOffset
+            ) {
                 startSelectionDrag(handle, on: selected, at: point)
                 return
             }
@@ -573,7 +590,11 @@ class OverlayView: NSView {
             selectedMarkID = hit.id
             onSelectionChanged?(hit.id)
         }
-        let handle = MarkSelection(stroke: hit).handle(at: point, handleSize: selectionHandleSize) ?? .body
+        let handle = MarkSelection(stroke: hit).handle(
+            at: point,
+            handleSize: selectionHandleSize,
+            rotationHandleOffset: selectionRotationHandleOffset
+        ) ?? .body
         startSelectionDrag(handle, on: hit, at: point)
     }
 
@@ -1175,7 +1196,7 @@ class OverlayView: NSView {
         context.restoreGState()
 
         for (handle, point) in selection.handlePoints(
-            rotationHandleOffset: MarkSelection.defaultRotationHandleOffset
+            rotationHandleOffset: selectionRotationHandleOffset
         ) {
             if handle == .rotation {
                 let radius = 5 * unit

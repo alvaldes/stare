@@ -215,12 +215,16 @@ final class MarkCompositorTests: XCTestCase {
         XCTAssertNotNil(result)
 
         // Pixel (100,100) sits on the rectangle's bottom border inside the
-        // patch: neither the pure page colour (255) nor the pure rectangle ink
-        // (≈59) — the content was diffused. The old behaviour — blur cropping
-        // the solid page colour, changing nothing — reads exactly 255.
+        // patch: neither the pure page colour (255) nor visibly tinted away
+        // from it. The blur of the border's thin line under the patch's 15pt
+        // radius never darkens this pixel past g≈244 — measured, deterministic
+        // — so the assertion holds the real output inside (200, 250): a result
+        // at or above 250 differs from the undiffused page by 2% or less, which
+        // is not visible diffusion, and the old behaviour — blur cropping the
+        // solid page colour — reads exactly 255 and fails.
         let onBorder = pixel(result!, x: 100, y: 100)
-        XCTAssertGreaterThan(onBorder.g, 70, "the blur must mix in the rectangle's ink")
-        XCTAssertLessThan(onBorder.g, 252, "the blur must mix in the page colour")
+        XCTAssertGreaterThan(onBorder.g, 200, "the patch keeps the page colour, not the pure ink")
+        XCTAssertLessThan(onBorder.g, 250, "the patch must be visibly diffused away from the page colour")
 
         // Pixel (130,110) is inside the patch over plain page, close enough to
         // the border that the diffusion tints it: not the pure page colour.
@@ -231,6 +235,117 @@ final class MarkCompositorTests: XCTestCase {
         // Outside the patch the page is untouched.
         XCTAssertTrue(isReddish(pixel(result!, x: 40, y: 70)), "the border left of the patch is untouched")
         XCTAssertTrue(isWhitesh(pixel(result!, x: 20, y: 160)), "the page beside the patch is untouched")
+    }
+
+    // S1 coverage (verifier advisory): a blur mark may extend past the base
+    // image — a mark drawn across the page's edge, or a capture smaller than
+    // the patch. The part of the patch over the base is the inside part and it
+    // must blur the content underneath it at its true position: exactly like
+    // the same patch stopped at the base's edge, never the crop stretched
+    // across the whole rect. The part off the base must not reshape what the
+    // base shows inside, and nothing crashes.
+    func testBlurMarkCrossingTheBaseEdgeBlursOnlyTheInsidePart() {
+        // Black left half, white right half, boundary at x = 50; the mark runs
+        // 250pt past the right edge of the base.
+        let baseImage = splitBase()
+        let mark = Stroke(
+            tool: .blur,
+            ink: .red,
+            points: [CGPoint(x: 35, y: 30), CGPoint(x: 350, y: 70)]
+        )
+        // The same patch stopped at the edge: the reference the inside part
+        // must reproduce.
+        let clipped = Stroke(
+            tool: .blur,
+            ink: .red,
+            points: [CGPoint(x: 35, y: 30), CGPoint(x: 100, y: 70)]
+        )
+
+        for diffuses in [false, true] {
+            let crossing = MarkCompositor.composite(
+                marks: [mark], over: baseImage, diffusesContent: diffuses
+            )
+            XCTAssertNotNil(crossing, "a patch past the base edge must compose, not crash")
+            XCTAssertEqual(crossing!.width, 100, "the composed capture keeps the base's size")
+            let stopped = MarkCompositor.composite(
+                marks: [clipped], over: baseImage, diffusesContent: diffuses
+            )!
+            // Inside the base the crossing patch is exactly the patch that
+            // stops at the edge: same crop, drawn at the same place, not
+            // stretched over the mark's own (much wider) rectangle.
+            for x in [36, 42, 48, 54, 60, 70, 80, 90, 99] {
+                for y in [32, 50, 68] {
+                    XCTAssertEqual(
+                        pixel(crossing!, x: x, y: y).r, pixel(stopped, x: x, y: y).r,
+                        "the inside part at (\(x),\(y)) must blur like the patch stopped at the edge"
+                    )
+                }
+            }
+            // The blurred boundary inside the patch sits where the base puts
+            // it: x = 45 is 5pt into the black half and reads visibly mixed,
+            // x = 60 is 10pt into the white half and reads near white. A crop
+            // stretched across the 315pt-wide rect maps these samples back to
+            // black-side pixels (≈124 and ≈140) and fails both.
+            XCTAssertGreaterThan(pixel(crossing!, x: 45, y: 50).r, 150,
+                                 "the boundary blurs where the base is, got \(pixel(crossing!, x: 45, y: 50))")
+            XCTAssertGreaterThan(pixel(crossing!, x: 60, y: 50).r, 200,
+                                 "the white half stays white inside the patch, got \(pixel(crossing!, x: 60, y: 50))")
+            // Outside the patch the base is untouched.
+            XCTAssertEqual(pixel(crossing!, x: 10, y: 50).r, pixel(baseImage, x: 10, y: 50).r, "left of the patch")
+            XCTAssertEqual(pixel(crossing!, x: 40, y: 10).r, pixel(baseImage, x: 40, y: 10).r, "above the patch")
+            XCTAssertEqual(pixel(crossing!, x: 40, y: 90).r, pixel(baseImage, x: 40, y: 90).r, "below the patch")
+        }
+
+        // A patch entirely off the base composes the plain base instead of
+        // crashing.
+        let outside = Stroke(
+            tool: .blur,
+            ink: .red,
+            points: [CGPoint(x: 110, y: 40), CGPoint(x: 140, y: 60)]
+        )
+        let offBase = MarkCompositor.composite(marks: [outside], over: baseImage, diffusesContent: true)
+        XCTAssertNotNil(offBase, "a patch entirely off the base must compose, not crash")
+        XCTAssertEqual(pixel(offBase!, x: 55, y: 50).r, pixel(baseImage, x: 55, y: 50).r, "nothing lands where the base is")
+    }
+
+    /// Black left half, white right half, on a 100x100 sRGB image.
+    private func splitBase() -> CGImage {
+        let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        context.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 50, height: height))
+        context.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+        context.fill(CGRect(x: 50, y: 0, width: 50, height: height))
+        return context.makeImage()!
+    }
+
+    // S1 coverage (verifier advisory): a degenerate blur mark — two equal
+    // points, one point, or no points — is a no-op: the composition succeeds
+    // and the base is left exactly as it was.
+    func testDegenerateBlurMarkIsANoOp() {
+        let base = whiteBase()
+        let degenerate: [(String, Stroke)] = [
+            ("zero-size", Stroke(tool: .blur, ink: .red, points: [CGPoint(x: 40, y: 40), CGPoint(x: 40, y: 40)])),
+            ("single-point", Stroke(tool: .blur, ink: .red, points: [CGPoint(x: 60, y: 60)])),
+            ("no-points", Stroke(tool: .blur, ink: .red, points: [])),
+        ]
+        for (name, mark) in degenerate {
+            let overlay = MarkCompositor.composite(marks: [mark], over: base)
+            XCTAssertNotNil(overlay, "\(name): a degenerate blur mark must compose as the plain base")
+            XCTAssertTrue(isWhitesh(pixel(overlay!, x: 39, y: 39)), "\(name): no paint where the degenerate mark sat")
+            XCTAssertTrue(isWhitesh(pixel(overlay!, x: 61, y: 61)), "\(name): no paint where the degenerate mark sat")
+
+            let board = MarkCompositor.composite(marks: [mark], over: base, diffusesContent: true)
+            XCTAssertNotNil(board, "\(name): a degenerate blur mark must compose as the plain base")
+            XCTAssertTrue(isWhitesh(pixel(board!, x: 50, y: 50)), "\(name): no paint where the degenerate mark sat")
+        }
     }
 
     // S1, draw order: a blur mark applies to what is already rendered beneath
@@ -293,8 +408,8 @@ final class MarkCompositorTests: XCTestCase {
         // View (15,50) → pixel (30,100): on the rectangle's left border inside
         // the patch — neither the pure page colour nor the pure ink.
         let onBorder = pixel(result!, x: 30, y: 100)
-        XCTAssertGreaterThan(onBorder.g, 70, "the panned blur must diffuse the content shown beneath it")
-        XCTAssertLessThan(onBorder.g, 252, "the panned blur must diffuse the content shown beneath it")
+        XCTAssertGreaterThan(onBorder.g, 200, "the patch keeps the page colour, not the pure ink")
+        XCTAssertLessThan(onBorder.g, 250, "the panned patch must be visibly diffused, not near-white")
 
         // View (55,50) → pixel (110,100): the right border beyond the patch
         // stays sharp.

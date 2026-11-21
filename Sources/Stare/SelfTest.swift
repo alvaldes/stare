@@ -1109,7 +1109,88 @@ enum SelfTest {
                 + "identity=\(identity) markBack=\(markBack) ok=\(resetOk)"
         )
 
-        let passed = drawOk && landingOk && movedOk && resetOk
+        // 4. The rotation knob is chrome, so it keeps its on-screen size: its
+        // distance above the box is measured in screen points — always
+        // `defaultRotationHandleOffset` — at every zoom, exactly like the box
+        // and the corner handles. The knob the chrome draws (the accent ring
+        // on the rendered pixels) is where a click grabs rotation: drawn and
+        // hit must be the same number.
+        guard let knobMark = board.currentPage.session.strokes.first, !knobMark.points.isEmpty else {
+            report.append("FAIL: board zoom knob mark missing")
+            return report
+        }
+        func accentNear(_ point: CGPoint, rendered: CGImage, scale: CGFloat) -> Bool {
+            // The chrome accent is (0.25, 0.55, 1) — blue-dominant, unlike the
+            // neutral dot grid, the page colour or the red pen ink.
+            func isAccent(_ sample: (red: Int, green: Int, blue: Int)) -> Bool {
+                sample.blue > 200 && sample.red < 140 && sample.green > 80 && sample.green < 200
+            }
+            var hits = 0
+            for ringPoint in [CGPoint(x: 0, y: -5), CGPoint(x: 0, y: 5), CGPoint(x: -5, y: 0), CGPoint(x: 5, y: 0)] {
+                for dx in stride(from: -0.5, through: 0.5, by: 0.5) {
+                    for dy in stride(from: -0.5, through: 0.5, by: 0.5) {
+                        if isAccent(rgb(rendered, at: CGPoint(x: point.x + ringPoint.x + dx, y: point.y + ringPoint.y + dy), scale: scale)) {
+                            hits += 1
+                        }
+                    }
+                }
+            }
+            return hits >= 2
+        }
+        var knobOk = true
+        var distanceReported: CGFloat = -1
+        var knobRotated = false
+        for (label, targetZoom) in [("0.25", BoardTransform.minZoom), ("1", CGFloat(1)), ("8", BoardTransform.maxZoom)] {
+            view.resetPageView()
+            let markCentrePage = mid(of: knobMark.points)
+            view.applyZoom(targetZoom, anchoredAt: view.viewPoint(fromPage: markCentrePage))
+            let zoom = board.currentPage.zoom
+            // A click on the body re-selects the mark at this zoom: the chrome
+            // only draws for the selected mark.
+            let bodyView = view.viewPoint(fromPage: knobMark.anchor)
+            sendDrag(to: panel, from: CGPoint(x: bodyView.x, y: view.bounds.height - bodyView.y),
+                     to: CGPoint(x: bodyView.x, y: view.bounds.height - bodyView.y))
+            guard view.selectedMarkID == knobMark.id else {
+                report.append("FAIL: board zoom knob zoom=\(label) the mark did not re-select")
+                knobOk = false
+                continue
+            }
+            let selection = MarkSelection(stroke: board.currentPage.session.strokes.first!)
+            let knobPage = selection.handlePoints(
+                rotationHandleOffset: view.selectionRotationHandleOffset
+            )[.rotation]!
+            let screenDistance = (selection.unrotatedBounds.minY - knobPage.y) * zoom
+            distanceReported = screenDistance
+            let distanceOk = screenDistance >= 17 && screenDistance <= 23
+            let rendered = renderView(view, to: "/tmp/stare-board-zoom-knob.png")
+            let renderScale = rendered.map { CGFloat($0.width) / max(view.bounds.width, 1) } ?? 0
+            let knobView = view.viewPoint(fromPage: knobPage)
+            let ringOk = rendered.map { accentNear(knobView, rendered: $0, scale: renderScale) } ?? false
+            let stepOk = distanceOk && ringOk
+            knobOk = knobOk && stepOk
+            report.append(
+                "board zoom knob zoom=\(label) screenDistance="
+                    + String(format: "%.1f", screenDistance)
+                    + " expect 20±3 drawnRing=\(ringOk) ok=\(stepOk)"
+            )
+            if label == "8" && stepOk {
+                // The drawn knob is where a click grabs: drag it a quarter turn.
+                let anchor = knobMark.anchor
+                let target = knobPage.applying(Stroke.rotationTransform(around: anchor, by: .pi / 2))
+                let from = CGPoint(x: knobView.x, y: view.bounds.height - knobView.y)
+                let toView = view.viewPoint(fromPage: target)
+                sendDrag(to: panel, from: from,
+                         to: CGPoint(x: toView.x, y: view.bounds.height - toView.y))
+                knobRotated = abs((board.currentPage.session.strokes.first?.rotation ?? 0) - .pi / 2) < 0.05
+                knobOk = knobOk && knobRotated
+            }
+        }
+        report.append(
+            "board zoom knob grab rotated=\(knobRotated) lastScreenDistance="
+                + String(format: "%.1f", distanceReported)
+        )
+
+        let passed = drawOk && landingOk && movedOk && resetOk && knobOk
         report.append("board zoom result=\(passed ? "PASS" : "FAIL")")
         return report
     }
