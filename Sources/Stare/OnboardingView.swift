@@ -24,8 +24,9 @@ struct OnboardingView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            Spacer(minLength: 12)
+
             header
-                .padding(.top, 24)
                 .padding(.horizontal, 32)
 
             card
@@ -46,9 +47,10 @@ struct OnboardingView: View {
 
     private var header: some View {
         VStack(spacing: 10) {
-            // The product's own icon: the same artwork the bundle ships, so the
-            // guide never renders a washed-out placeholder.
-            Image(nsImage: NSApp.applicationIconImage)
+            // The bundle's own icon file, not `NSApp.applicationIconImage`:
+            // that one comes back desaturated on macOS 26, which is why the
+            // guide used to show a gray placeholder instead of the aurora mark.
+            Image(nsImage: Self.appIcon)
                 .resizable()
                 .frame(width: 58, height: 58)
                 .accessibilityHidden(true)
@@ -162,17 +164,23 @@ struct OnboardingView: View {
 
     // MARK: Footer
 
+    /// The bundle icon in full colour. `NSApp.applicationIconImage` returns a
+    /// desaturated variant on macOS 26 and the guide rendered a gray square,
+    /// so the real artwork is read from `Resources/AppIcon.icns` first.
+    ///
+    /// `let`, not `var`: the controller refreshes the model once a second, and a
+    /// computed property would re-decode the 612 KB icon file on every tick.
+    private static let appIcon: NSImage = {
+        if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let icon = NSImage(contentsOf: url) {
+            return icon
+        }
+        return NSApp.applicationIconImage
+    }()
+
     private var footer: some View {
         HStack(spacing: 14) {
-            Text("Return primary     Esc Not now")
-                .font(.caption)
-                // `secondaryLabelColor`, not `tertiary`: tertiary lands around
-                // 1.9:1 on the window background, far under AA for readable
-                // text. The hint is supplementary but still text.
-                .foregroundStyle(Color(nsColor: .secondaryLabelColor))
-                .accessibilityHidden(true)
-
-            Spacer(minLength: 8)
+            Spacer(minLength: 0)
 
             Button("Not now", action: onNotNow)
                 .buttonStyle(.plain)
