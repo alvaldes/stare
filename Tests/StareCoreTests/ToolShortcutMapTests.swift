@@ -147,4 +147,22 @@ final class ToolShortcutMapTests: XCTestCase {
         XCTAssertEqual(ShortcutRouter.resolve("v", allowedTools: [.select]), .tool(.select))
         XCTAssertEqual(ShortcutRouter.resolve("v", allowedTools: Tool.captureEditorTools), .none)
     }
+
+    // MARK: Router over an edited map (T8/S6)
+
+    func testRouterRoutesFromACustomMapAndDropsTheDisplacedKey() {
+        var map = ToolShortcutMap.standard
+        XCTAssertTrue(map.assigning("Z", to: .laser).isOk)
+        let router = ShortcutRouter(shortcuts: map)
+        XCTAssertEqual(router.resolve("z"), .tool(.laser), "the edited key routes to the tool")
+        XCTAssertEqual(router.resolve("f"), .none, "the displaced key claims nothing once the map lets it go")
+    }
+
+    func testRouterPrefersAClaimedDigitOverTheInkSelector() {
+        var map = ToolShortcutMap.standard
+        XCTAssertTrue(map.assigning("3", to: .pen).isOk)
+        let router = ShortcutRouter(shortcuts: map)
+        XCTAssertEqual(router.resolve("3"), .tool(.pen), "a claimed digit routes to its tool before the ink fallback")
+        XCTAssertEqual(router.resolve("4"), .ink(.green), "unclaimed digits stay ink selectors")
+    }
 }

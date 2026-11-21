@@ -24,6 +24,20 @@ final class ToolbarHostingView: NSHostingView<ToolbarView> {
 final class ToolbarPanel: NSPanel {
     private static let anchorKey = "toolbarAnchor"
 
+    /// Posted by `requestPositionReset` (T8/S6): the palette forgets where the
+    /// user dragged it and opens where a fresh install opens it.
+    static let resetPositionNotification = Notification.Name("stare.toolbar.resetPosition")
+
+    /// Clears the saved palette anchor and screen, so the palette lands where
+    /// a fresh install places it, and repositions a visible palette at once.
+    static func requestPositionReset() {
+        UserDefaults.standard.removeObject(forKey: anchorKey)
+        UserDefaults.standard.removeObject(forKey: screenKey)
+        NotificationCenter.default.post(name: resetPositionNotification, object: nil)
+    }
+
+    private let state: EditorState
+
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
@@ -36,6 +50,7 @@ final class ToolbarPanel: NSPanel {
         onPreviousPage: (() -> Void)? = nil,
         onNextPage: (() -> Void)? = nil
     ) {
+        self.state = state
         let hosting = ToolbarHostingView(
             rootView: ToolbarView(
                 state: state,
@@ -84,6 +99,19 @@ final class ToolbarPanel: NSPanel {
             name: NSWindow.didMoveNotification,
             object: self
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handlePositionReset),
+            name: Self.resetPositionNotification,
+            object: nil
+        )
+    }
+
+    /// Re-anchors a visible palette at the fresh-install spot immediately, so
+    /// the Settings action is seen and not just stored for next time.
+    @objc private func handlePositionReset() {
+        guard isVisible else { return }
+        positionNearPointerDisplay(placement: state.palettePlacementValue)
     }
 
     deinit {
@@ -140,6 +168,7 @@ final class ToolbarPanel: NSPanel {
 
     private static let screenKey = "toolbarScreen"
 
+    /// The display the palette was last parked on, if it still exists.
     private func savedScreen() -> NSScreen? {
         guard let name = UserDefaults.standard.string(forKey: Self.screenKey) else { return nil }
         return NSScreen.screens.first { $0.localizedName == name }

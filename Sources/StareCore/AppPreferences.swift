@@ -23,6 +23,13 @@ public struct AppPreferences: Codable, Equatable, Sendable {
     /// The four global hotkeys (⌥⇧A/M/P/W) as data.
     public var hotkeys: HotkeyBindings
 
+    /// The tool drawing starts with (T8/S6): what the palette arms on open.
+    public var tool: Tool
+
+    /// The ink drawing starts with (T8/S6): what the palette's swatch shows
+    /// as active on open.
+    public var ink: Ink
+
     /// Capture format, destination and file name prefix.
     public var capture: CapturePreference
 
@@ -49,6 +56,8 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         general: GeneralPreferences = .standard,
         toolShortcuts: ToolShortcutMap = .standard,
         hotkeys: HotkeyBindings = .standard,
+        tool: Tool = .pen,
+        ink: Ink = .red,
         capture: CapturePreference = .standard,
         whiteboard: WhiteboardDefaults = .standard,
         updates: UpdateSchedulePreference = .standard,
@@ -58,6 +67,8 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         self.general = general
         self.toolShortcuts = toolShortcuts
         self.hotkeys = hotkeys
+        self.tool = tool
+        self.ink = ink
         self.capture = capture
         self.whiteboard = whiteboard
         self.updates = updates
@@ -74,7 +85,7 @@ public struct AppPreferences: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case pointer, general, toolShortcuts, hotkeys, capture, whiteboard, updates, hasCompletedOnboarding
+        case pointer, general, toolShortcuts, hotkeys, tool, ink, capture, whiteboard, updates, hasCompletedOnboarding
     }
 
     /// Lenient decoding: a missing or undecodable field falls back to its
@@ -87,10 +98,34 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         self.general = (try? container.decode(GeneralPreferences.self, forKey: .general)) ?? .standard
         self.toolShortcuts = (try? container.decode(ToolShortcutMap.self, forKey: .toolShortcuts)) ?? .standard
         self.hotkeys = (try? container.decode(HotkeyBindings.self, forKey: .hotkeys)) ?? .standard
+        // Tool and ink persist as their raw values: the enums are plain data
+        // types, not Codable themselves, and an unknown raw value from a
+        // foreign document falls back to the shipped defaults instead of
+        // failing the whole blob.
+        self.tool = (try? container.decode(String.self, forKey: .tool)).flatMap(Tool.init(rawValue:)) ?? .pen
+        self.ink = (try? container.decode(String.self, forKey: .ink)).flatMap(Ink.init(rawValue:)) ?? .red
         self.capture = (try? container.decode(CapturePreference.self, forKey: .capture)) ?? .standard
         self.whiteboard = (try? container.decode(WhiteboardDefaults.self, forKey: .whiteboard)) ?? .standard
         self.updates = (try? container.decode(UpdateSchedulePreference.self, forKey: .updates)) ?? .standard
         self.hasCompletedOnboarding = (try? container.decode(Bool.self, forKey: .hasCompletedOnboarding)) ?? false
+    }
+
+    /// Encodes the preferences as JSON under the versioned key. `tool` and
+    /// `ink` are written as their raw values (`Tool`/`Ink` are plain data
+    /// enums, not `Codable`). Legacy keys stay untouched; they stop being
+    /// read once the blob exists.
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(pointer, forKey: .pointer)
+        try container.encode(general, forKey: .general)
+        try container.encode(toolShortcuts, forKey: .toolShortcuts)
+        try container.encode(hotkeys, forKey: .hotkeys)
+        try container.encode(tool.rawValue, forKey: .tool)
+        try container.encode(ink.rawValue, forKey: .ink)
+        try container.encode(capture, forKey: .capture)
+        try container.encode(whiteboard, forKey: .whiteboard)
+        try container.encode(updates, forKey: .updates)
+        try container.encode(hasCompletedOnboarding, forKey: .hasCompletedOnboarding)
     }
 
     /// Encodes the preferences as JSON under the versioned key. Legacy keys

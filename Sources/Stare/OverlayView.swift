@@ -848,7 +848,9 @@ class OverlayView: NSView {
         }
 
         if let character = characters.first {
-            switch ShortcutRouter.resolve(character) {
+            // Routing goes through the live tool-shortcut map (T8/S6): a
+            // shortcut edited in Settings routes here too.
+            switch state.shortcutRouter.resolve(character) {
             case .tool(let tool):
                 state.tool = tool
                 return

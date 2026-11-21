@@ -293,15 +293,17 @@ final class CaptureEditorCanvas: NSView {
             return
         }
 
-        if let character = characters.first {
+        if let character = characters.first, let state {
             // Only tools the editor offers resolve here: V and T must not arm
-            // a cursor or a text field this surface cannot serve.
-            switch ShortcutRouter.resolve(character, allowedTools: Tool.captureEditorTools) {
+            // a cursor or a text field this surface cannot serve. The editor's
+            // state is detached from the app's preferences (T8/S6), so it
+            // routes over its own in-memory map — the shipped standard one.
+            switch state.shortcutRouter.resolve(character, allowedTools: Tool.captureEditorTools) {
             case .tool(let tool):
-                state?.tool = tool
+                state.tool = tool
                 return
             case .ink(let ink):
-                state?.ink = ink
+                state.ink = ink
                 return
             case .none:
                 break

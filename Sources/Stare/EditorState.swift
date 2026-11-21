@@ -13,7 +13,8 @@ import StareCore
 /// `ToolbarPanel`, `CaptureEditor`, `SelfTest`, and the current
 /// `SettingsView`) use them; consumers that used to compare strings compare
 /// the typed accessors (`overlayScopeValue`, `palettePlacementValue`,
-/// `pointerPreset`) instead. `tool` and `ink` stay in-memory until T8.
+/// `pointerPreset`) instead. `tool`, `ink` and the shortcut map persist too
+/// (T8/S6).
 final class EditorState: ObservableObject {
     /// The single preferences owner. Nil in surfaces that never see the
     /// app's instance — the capture editor (created per capture, detached
@@ -27,9 +28,28 @@ final class EditorState: ObservableObject {
     private var syncingFromModel = false
 
     @Published var tool: Tool = .pen {
-        didSet { Diag.log("tool=\(tool.rawValue)") }
+        didSet {
+            Diag.log("tool=\(tool.rawValue)")
+            writeIfNotSyncing { $0.tool = tool }
+        }
     }
-    @Published var ink: Ink = .red
+    @Published var ink: Ink = .red {
+        didSet { writeIfNotSyncing { $0.ink = ink } }
+    }
+    /// Mirror of the persisted tool-shortcut map (T8/S6): the overlay and the
+    /// capture editor route key presses through `shortcutRouter`, which is
+    /// rebuilt from this map, so a shortcut edited in Settings routes
+    /// everywhere. Detached state (capture editor, selftest harness) keeps
+    /// the shipped `.standard` map in memory only.
+    @Published var toolShortcuts: ToolShortcutMap = .standard {
+        didSet { writeIfNotSyncing { $0.toolShortcuts = toolShortcuts } }
+    }
+    /// The router the drawing surfaces resolve keys with: always rebuilt from
+    /// the live map, so the map the Settings pane edits is the map that
+    /// routes.
+    var shortcutRouter: ShortcutRouter {
+        ShortcutRouter(shortcuts: toolShortcuts)
+    }
     @Published var showArmedFrame: Bool {
         didSet { writeIfNotSyncing { $0.showArmedFrame = showArmedFrame } }
     }
@@ -175,6 +195,11 @@ final class EditorState: ObservableObject {
             overlayScope = scope.rawValue
             palettePlacement = placement.rawValue
             laserLifetime = lifetime.rawValue
+            MainActor.assumeIsolated {
+                self.tool = preferences.tool
+                self.ink = preferences.ink
+                self.toolShortcuts = preferences.toolShortcuts
+            }
         } else {
             pointerSize = CGFloat(PointerStyle.standard.size)
             pointerShape = "squircle"
@@ -226,6 +251,15 @@ final class EditorState: ObservableObject {
         }.store(in: &preferenceCancellables)
         model.$laserLifetime.dropFirst().sink { [weak self] value in
             self?.syncFromModel { $0.laserLifetime = value.rawValue }
+        }.store(in: &preferenceCancellables)
+        model.$tool.dropFirst().sink { [weak self] value in
+            self?.syncFromModel { $0.tool = value }
+        }.store(in: &preferenceCancellables)
+        model.$ink.dropFirst().sink { [weak self] value in
+            self?.syncFromModel { $0.ink = value }
+        }.store(in: &preferenceCancellables)
+        model.$toolShortcuts.dropFirst().sink { [weak self] value in
+            self?.syncFromModel { $0.toolShortcuts = value }
         }.store(in: &preferenceCancellables)
     }
 

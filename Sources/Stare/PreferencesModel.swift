@@ -49,6 +49,34 @@ final class PreferencesModel: ObservableObject {
     @Published var hasCompletedOnboarding: Bool {
         didSet { persist() }
     }
+    /// Mirror of the tool drawing starts with (T8/S6); writing it persists
+    /// the whole blob.
+    @Published var tool: Tool {
+        didSet { persist() }
+    }
+    /// Mirror of the ink drawing starts with (T8/S6); writing it persists
+    /// the whole blob.
+    @Published var ink: Ink {
+        didSet { persist() }
+    }
+    /// Mirror of the per-tool shortcut map (T8/S6): the Settings pane edits
+    /// it and the overlay's routing reads it through `EditorState`; writing
+    /// it persists the whole blob.
+    @Published var toolShortcuts: ToolShortcutMap {
+        didSet { persist() }
+    }
+    /// Mirror of the four global hotkeys (T9/S6): the Settings pane edits it
+    /// and the AppDelegate's registration path reads it; writing it persists
+    /// the whole blob.
+    @Published var hotkeys: HotkeyBindings {
+        didSet { persist() }
+    }
+    /// Runtime outcome of the last global-hotkey registration attempt
+    /// (T9/S6), reported by the AppDelegate's registration path; never
+    /// persisted. A rejection means the system refused the registration —
+    /// usually another app owns the shortcut — and the previous binding
+    /// stayed registered, with the model reverted to it.
+    @Published var hotkeyRejection: HotkeyRejection?
 
     /// Loads the blob once through `AppPreferences(store:)`, which also
     /// carries the legacy per-key migration; no legacy key is ever written.
@@ -62,6 +90,10 @@ final class PreferencesModel: ObservableObject {
         self.palettePlacement = loaded.general.palettePlacement
         self.laserLifetime = loaded.general.laserLifetime
         self.hasCompletedOnboarding = loaded.hasCompletedOnboarding
+        self.tool = loaded.tool
+        self.ink = loaded.ink
+        self.toolShortcuts = loaded.toolShortcuts
+        self.hotkeys = loaded.hotkeys
     }
 
     /// Writes the one blob from the mirrors. Everything else keeps reading
@@ -76,6 +108,10 @@ final class PreferencesModel: ObservableObject {
             laserLifetime: laserLifetime
         )
         preferences.hasCompletedOnboarding = hasCompletedOnboarding
+        preferences.tool = tool
+        preferences.ink = ink
+        preferences.toolShortcuts = toolShortcuts
+        preferences.hotkeys = hotkeys
         preferences.save(to: store)
     }
 }

@@ -153,6 +153,53 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertEqual(prefs.hotkeys, HotkeyBindings.standard)
     }
 
+    // MARK: Active tool and ink (T8/S6)
+
+    func testStandardCarriesPenAndRedInk() {
+        XCTAssertEqual(AppPreferences.standard.tool, .pen)
+        XCTAssertEqual(AppPreferences.standard.ink, .red)
+        XCTAssertEqual(AppPreferences(store: InMemoryPreferenceStore()).tool, .pen)
+        XCTAssertEqual(AppPreferences(store: InMemoryPreferenceStore()).ink, .red)
+    }
+
+    func testRoundTripsToolAndInkThroughStore() {
+        let store = InMemoryPreferenceStore()
+        var saved = AppPreferences.standard
+        saved.tool = .laser
+        saved.ink = .blue
+
+        saved.save(to: store)
+        let loaded = AppPreferences(store: store)
+        XCTAssertEqual(loaded.tool, .laser)
+        XCTAssertEqual(loaded.ink, .blue)
+        XCTAssertEqual(loaded, saved)
+    }
+
+    func testBlobPredatingToolAndInkLoadsTheirDefaults() {
+        let store = InMemoryPreferenceStore()
+        store.set(Data(#"{"pointer":{"preset":"dot","size":44}}"#.utf8), forKey: AppPreferences.storageKey)
+
+        let prefs = AppPreferences(store: store)
+        XCTAssertEqual(prefs.tool, .pen)
+        XCTAssertEqual(prefs.ink, .red)
+        XCTAssertEqual(prefs.pointer.preset, .dot)
+    }
+
+    func testCorruptOrUnknownToolAndInkFallBackToDefaultsAndKeepTheRest() {
+        let store = InMemoryPreferenceStore()
+        // An unknown tool raw value and an undecodable ink must not fail the
+        // whole document; every other field still loads.
+        store.set(
+            Data(#"{"tool":"wrench","ink":["garbage"],"capture":{"fileNamePrefix":"Shots"}}"#.utf8),
+            forKey: AppPreferences.storageKey
+        )
+
+        let prefs = AppPreferences(store: store)
+        XCTAssertEqual(prefs.tool, .pen)
+        XCTAssertEqual(prefs.ink, .red)
+        XCTAssertEqual(prefs.capture.fileNamePrefix, "Shots")
+    }
+
     // MARK: Capture, whiteboard and update fields (T3/S6)
 
     func testStandardCarriesStandardCaptureWhiteboardAndUpdateFields() {

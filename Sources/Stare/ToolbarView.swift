@@ -96,7 +96,7 @@ struct ToolbarView: View {
                 )
         }
         .buttonStyle(.plain)
-        .help(Text(verbatim: "\(tool.displayName) (\(tool.shortcut))"))
+        .help(Text(verbatim: "\(tool.displayName) (\(state.toolShortcuts[tool]))"))
     }
 
     private func inkButton(_ ink: Ink) -> some View {
