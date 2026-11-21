@@ -1058,6 +1058,30 @@ private struct WhiteboardPane: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
+
+            SettingsCard(title: "Board", symbol: "rectangle.on.rectangle") {
+                SettingRow(
+                    title: "Open the board on",
+                    // The same values the drawing pane's "Draw on" row uses, so
+                    // both surfaces speak one language (whiteboard-2/S3).
+                    content: Picker("", selection: $model.whiteboard.scope) {
+                        ForEach(OverlayScope.allCases, id: \.self) { scope in
+                            Text(scope.title).tag(scope)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 220)
+                )
+                Text("Every display is the default; the scope applies while the board is open, and a display that leaves it keeps its pages.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                SettingRow(
+                    title: "Show border",
+                    detail: "The board's own frame, whatever the drawing frame does.",
+                    content: Toggle("", isOn: $model.whiteboard.showsBorder)
+                        .labelsHidden()
+                )
+            }
         }
     }
 }

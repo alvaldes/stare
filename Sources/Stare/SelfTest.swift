@@ -142,6 +142,31 @@ enum SelfTest {
         // board canvas and its view.
         report.append(contentsOf: boardReport())
 
+        // Board pages (T12/S9): delete, reorder, index select and pan reset
+        // through the real view path.
+        report.append(contentsOf: boardPagesReport())
+
+        // Board blur of content (S1): through the real board canvas, a blur
+        // mark diffuses the page's own content with no frame source, and the
+        // capture shows the same result.
+        report.append(contentsOf: boardBlurReport())
+
+        // Board preferences (T2/T3/T4): the page colour follows the system
+        // theme, the scope opens the expected canvases while keeping pages,
+        // and the border is its own preference, independent of the drawing
+        // frame in both directions.
+        report.append(contentsOf: boardPreferencesReport())
+
+        // Board zoom (T5/S5): drawing, the edit cursor and the capture while
+        // zoomed, all through the real view path; ⌘0 resets pan and zoom
+        // together.
+        report.append(contentsOf: boardZoomReport())
+
+        // Board dots (T6/S6): the Freeform-style dot grid on the real render
+        // path — dots follow pan and zoom, and the pitch stays readable at
+        // both ends of the zoom range.
+        report.append(contentsOf: boardDotsReport())
+
         // Palette in both system appearances: the same view must read on a light
         // and on a dark system, which a screenshot of one theme cannot prove.
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
@@ -195,6 +220,23 @@ enum SelfTest {
         // Edit cursor (T11/S6): select, move, scale, rotate and delete a mark
         // through the real view path, with the geometry asserts on the session.
         report.append(contentsOf: selectReport())
+
+        // Numbered badge placement (owner report): a click with the number tool
+        // must paint the whole round badge with its digit immediately, exactly
+        // like a committed mark, in drawing mode and on the whiteboard.
+        report.append(contentsOf: numberBadgeReport())
+
+        // Numbered badge undo (owner-approved follow-up): the click-committed
+        // mark has to reach the controller's global history exactly once, the
+        // same way a drag-committed mark does — one ⌘Z removes exactly that
+        // badge, ⇧⌘Z brings the same mark back, and the sequence neither gains
+        // nor loses a number.
+        report.append(contentsOf: numberUndoReport())
+
+        // Escape (owner report): the drawing hint promises "esc to clear", so
+        // with nothing selected Escape must clear the layer's marks and keep
+        // drawing mode up — never leave it by way of the exit path.
+        report.append(contentsOf: escapeReport())
 
         // Click pulse (T7/S3): the pulse curve sampled the way the pointer
         // timer samples it, and the highlight rendered through the real
@@ -494,6 +536,873 @@ enum SelfTest {
         return report
     }
 
+    // MARK: - Board pages (T12/S9)
+
+    /// Page management end to end through the real board view: adding pages,
+    /// deleting the current one (which keeps the remaining pages and their
+    /// marks), refusing to delete the last page, moving left/right (which keeps
+    /// the moved page current, with its marks) and resetting the pan. The
+    /// board's blur of its own content has its own section (`board blur`).
+    private static func boardPagesReport() -> [String] {
+        var report: [String] = []
+        guard let screen = NSScreen.screens.first else {
+            report.append("FAIL: board pages no screens")
+            return report
+        }
+        let state = EditorState()
+        let board = WhiteboardPages()
+        guard let canvas = DisplayCanvas(screen: screen, state: state, onEscape: {}, board: board),
+              let view = canvas.boardView else {
+            report.append("FAIL: board pages canvas could not be created")
+            return report
+        }
+        let panel = canvas.panel
+        panel.orderFrontRegardless()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        defer { panel.orderOut(nil) }
+
+        func markID(on pageIndex: Int) -> UUID? {
+            board.pages[pageIndex].session.strokes.first?.id
+        }
+
+        // Adding pages: page 2 is created past the last one and gets a mark.
+        state.tool = .pen
+        state.ink = .red
+        sendDrag(to: panel, from: CGPoint(x: 150, y: 150), to: CGPoint(x: 350, y: 150))
+        let page1Mark = markID(on: 0)
+        view.selectNextPage()
+        state.ink = .blue
+        sendDrag(to: panel, from: CGPoint(x: 200, y: 400), to: CGPoint(x: 400, y: 400))
+        let addOk = board.count == 2 && board.currentIndex == 1
+            && page1Mark != nil && markID(on: 1) != nil
+        report.append(
+            "board pages add count=\(board.count) current=\(board.currentIndex + 1) "
+                + "page1Mark=\(page1Mark != nil) page2Mark=\(markID(on: 1) != nil) ok=\(addOk)"
+        )
+
+        // Deleting the current page keeps the remaining pages and their marks.
+        let deleted = view.deleteCurrentPage()
+        let deleteKeepsOthers = deleted && board.count == 1 && board.currentIndex == 0
+            && board.pages[0].session.strokes.first?.id == page1Mark
+            && !board.pages[0].session.strokes.isEmpty
+        report.append(
+            "board pages delete deleted=\(deleted) count=\(board.count) "
+                + "page1MarkKept=\(board.pages[0].session.strokes.first?.id == page1Mark) ok=\(deleteKeepsOthers)"
+        )
+
+        // The last page cannot be deleted: the board never goes empty.
+        let refused = !view.deleteCurrentPage() && board.count == 1
+            && !board.pages[0].session.strokes.isEmpty
+        report.append(
+            "board pages last-page-refused count=\(board.count) marks=\(board.pages[0].session.strokes.count) ok=\(refused)"
+        )
+
+        // Rebuild three pages with distinct marks for the reorder checks.
+        view.selectNextPage()
+        state.ink = .blue
+        sendDrag(to: panel, from: CGPoint(x: 200, y: 400), to: CGPoint(x: 400, y: 400))
+        view.selectNextPage()
+        state.ink = .green
+        sendDrag(to: panel, from: CGPoint(x: 300, y: 250), to: CGPoint(x: 500, y: 250))
+        let page1 = markID(on: 0), page2 = markID(on: 1), page3 = markID(on: 2)
+        let rebuilt = board.count == 3 && page1 != nil && page2 != nil && page3 != nil
+        report.append("board pages rebuilt count=\(board.count) marksDistinct=\(Set([page1, page2, page3]).count == 3) ok=\(rebuilt)")
+
+        // ⌥← on page 3: it swaps with page 2 and stays current, marks intact.
+        let movedLeft = view.moveCurrentPageLeft()
+        let leftOk = movedLeft && board.count == 3 && board.currentIndex == 1
+            && markID(on: 1) == page3 && markID(on: 2) == page2 && markID(on: 0) == page1
+            && !board.currentPage.session.strokes.isEmpty
+        func pageIndex(of id: UUID?) -> Int {
+            guard let id else { return -1 }
+            return board.pages.firstIndex { $0.session.strokes.first?.id == id } ?? -1
+        }
+        let order = [page1, page2, page3].map(pageIndex(of:)).map(String.init).joined(separator: ",")
+        report.append(
+            "board pages move-left moved=\(movedLeft) current=\(board.currentIndex + 1) "
+                + "order=[\(order)] ok=\(leftOk)"
+        )
+
+        // ⌥→ twice: page 3 walks back to the end. At the end a further ⌥→ and
+        // at the start a ⌥← are refused.
+        view.moveCurrentPageRight()
+        let refusedRight = !view.moveCurrentPageRight()
+        view.moveCurrentPageLeft()
+        let moveOk = leftOk && refusedRight
+            && view.moveCurrentPageLeft()
+            && board.currentIndex == 0 && markID(on: 0) == page3
+            && !view.moveCurrentPageLeft()
+            && board.currentIndex == 0 && board.count == 3
+        report.append(
+            "board pages move-right boundaryRefused=\(refusedRight) "
+                + "current=\(board.currentIndex + 1)/\(board.count) ok=\(moveOk)"
+        )
+
+        // ⌘0: pan and zoom first through the real view path (the same
+        // translations a space-drag and a pinch produce), then the reset must
+        // return both together — offset zero and zoom one.
+        view.pan(byPointerDelta: CGSize(width: -80, height: -50))
+        // Measure the pan before the zoom: an anchored zoom legitimately moves
+        // the offset too, so a combined assertion would fail on correct code.
+        let panned = board.currentPage.offset == CGSize(width: 80, height: 50)
+        view.applyZoom(2, anchoredAt: CGPoint(x: 400, y: 300))
+        let zoomed = board.currentPage.zoom == 2
+        view.resetPageView()
+        let panReset = panned && zoomed
+            && board.currentPage.offset == .zero && board.currentPage.zoom == 1
+        report.append(
+            "board pages pan-reset panned=\(panned) zoomed=\(zoomed) "
+                + "offset=\(board.currentPage.offset) zoom=\(board.currentPage.zoom) "
+                + "ok=\(panReset)"
+        )
+
+        // ⌘⌫ menu item: the key equivalent has to match what a real Delete key
+        // press delivers ("\u{7F}", keyCode 51 — the same key the view
+        // answers), which a synthetic key event through the real menu
+        // machinery proves. A "\u{8}" binding never fires.
+        let menuKeyReport = menuKeyProbe()
+        report.append(contentsOf: menuKeyReport)
+        let menuKeyOk = menuKeyReport.contains { $0.contains("ok=true") }
+
+        let passed = addOk && deleteKeepsOthers && refused && rebuilt && leftOk && moveOk && panReset && menuKeyOk
+        report.append("board pages result=\(passed ? "PASS" : "FAIL")")
+        return report
+    }
+
+    // MARK: - Board blur of content (S1)
+
+    /// The board's blur through the real view path: a blur mark diffuses the
+    /// board's own content — the red rectangle painted before it — while a
+    /// mark painted after it stays sharp, with no frame source and nothing
+    /// asking for Screen Recording, and the board capture composes the same
+    /// blurred patch over the page's solid background.
+    private static func boardBlurReport() -> [String] {
+        var report: [String] = []
+        guard let screen = NSScreen.screens.first else {
+            report.append("FAIL: board blur no screens")
+            return report
+        }
+        let state = EditorState()
+        let board = WhiteboardPages()
+        guard let canvas = DisplayCanvas(screen: screen, state: state, onEscape: {}, board: board),
+              let view = canvas.boardView else {
+            report.append("FAIL: board blur canvas could not be created")
+            return report
+        }
+        let panel = canvas.panel
+        panel.orderFrontRegardless()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        defer { panel.orderOut(nil) }
+
+        // S1: board canvases are never given a frame source, a display id or
+        // blur interest — the board never reads frames for its blur.
+        let noFrameSource = view.liveFrameSource == nil && view.displayID == 0 && !view.hasLiveBlurMarks
+        report.append(
+            "board blur frames frameSource=\(view.liveFrameSource == nil ? "nil" : "set") "
+                + "displayID=\(view.displayID) blurInterest=\(view.hasLiveBlurMarks) ok=\(noFrameSource)"
+        )
+
+        // A red rectangle, then a blur overlapping its bottom border, then a
+        // blue pen mark painted after the blur crossing the patch: draw order
+        // decides what the blur diffuses and what stays sharp.
+        state.tool = .rectangle
+        state.ink = .red
+        sendDrag(to: panel, from: CGPoint(x: 150, y: 150), to: CGPoint(x: 450, y: 300))
+        state.tool = .blur
+        sendDrag(to: panel, from: CGPoint(x: 200, y: 220), to: CGPoint(x: 500, y: 380))
+        state.tool = .pen
+        state.ink = .blue
+        sendDrag(to: panel, from: CGPoint(x: 250, y: 250), to: CGPoint(x: 480, y: 330))
+        let strokes = board.currentPage.session.strokes
+        guard strokes.count == 3, strokes[1].tool == .blur else {
+            report.append("FAIL: board blur marks were not committed (strokes=\(strokes.count))")
+            return report
+        }
+
+        guard let rendered = renderView(view, to: "/tmp/stare-board-blur-content.png") else {
+            report.append("FAIL: board blur render failed")
+            return report
+        }
+        let scale = CGFloat(rendered.width) / max(view.bounds.width, 1)
+
+        // Sample points come from the stored marks in page space (the drags
+        // were sent in window coordinates), converted to view space through
+        // the view's own mapping — never hardcoded screen positions.
+        let rectMark = strokes[0], blurMark = strokes[1], penMark = strokes[2]
+        let rectBox = PathBuilder.normalizedRect(from: rectMark.points[0], to: rectMark.points[1])
+        let patch = PathBuilder.normalizedRect(from: blurMark.points[0], to: blurMark.points[1])
+        // A border point of the rectangle inside the patch: the horizontal
+        // border whose y the patch covers, at the patch's middle x.
+        let borderY = patch.contains(CGPoint(x: patch.midX, y: rectBox.minY)) ? rectBox.minY : rectBox.maxY
+        let borderX = min(max(patch.midX, rectBox.minX + 5), rectBox.maxX - 5)
+        let borderPage = CGPoint(x: borderX, y: borderY)
+        // A little into the patch from that border, over plain page.
+        let tintedPage = CGPoint(x: borderX, y: borderY + (borderY == rectBox.minY ? 8 : -8))
+        // The pen mark painted after the blur: its midpoint must cross the
+        // patch, where it has to stay sharp.
+        let penMid = CGPoint(
+            x: (penMark.points[0].x + penMark.points[1].x) / 2,
+            y: (penMark.points[0].y + penMark.points[1].y) / 2
+        )
+        // Border and page points well clear of the patch (more than two blur
+        // radii from its edge).
+        let outsideRedPage = CGPoint(x: rectBox.minX + 5, y: borderY)
+        let outsidePagePoint = CGPoint(x: rectBox.minX - 40, y: rectBox.maxY + 40)
+        guard patch.contains(borderPage), patch.contains(tintedPage), patch.contains(penMid),
+              !patch.contains(outsideRedPage), board.currentPage.offset == .zero else {
+            report.append(
+                "FAIL: board blur geometry did not overlap (rect=\(rectBox) patch=\(patch) penMid=\(penMid))"
+            )
+            return report
+        }
+
+        func viewRGB(_ image: CGImage, _ page: CGPoint) -> (red: Int, green: Int, blue: Int) {
+            rgb(image, at: view.viewPoint(fromPage: page), scale: scale)
+        }
+        let diffused = viewRGB(rendered, borderPage)
+        let tinted = viewRGB(rendered, tintedPage)
+        let afterSharp = viewRGB(rendered, penMid)
+        let outsideRed = viewRGB(rendered, outsideRedPage)
+        let outsidePage = viewRGB(rendered, outsidePagePoint)
+        // On the border inside the patch: red (g≈59) and page white (255)
+        // mixed — neither pure colour, the content was diffused, not cropped
+        // from the page colour (the old behaviour read exactly 255).
+        let diffusedOk = diffused.green > 70 && diffused.green < 252
+        // Near the border the diffusion tints the plain page too.
+        let tintedOk = tinted.green < 250 && tinted.green > 59
+        // The pen mark painted after the blur reads as pure ink over the patch.
+        let sharpOk = afterSharp.red < 80 && afterSharp.blue > 200
+        // Outside the patch the border and the page are untouched.
+        let outsideOk = outsideRed.red > 150 && outsideRed.green < 120
+            && outsidePage.green > 240
+        let contentOk = diffusedOk && tintedOk && sharpOk && outsideOk
+        report.append(
+            "board blur content diffused g=\(diffused.green) expect 70<g<252, "
+                + "tinted g=\(tinted.green) expect 59<g<250, "
+                + "afterSharp r=\(afterSharp.red) b=\(afterSharp.blue) expect sharp, "
+                + "outside r=\(outsideRed.red) g=\(outsideRed.green) page g=\(outsidePage.green) "
+                + "png=/tmp/stare-board-blur-content.png ok=\(contentOk)"
+        )
+
+        // The board capture composes the page the way captureBoardMarks does —
+        // the page's solid background, the marks, the pan — and its patch must
+        // show the same diffused result the view shows.
+        guard let base = board.currentPage.background.captureBase(
+            width: Int(view.bounds.width * scale),
+            height: Int(view.bounds.height * scale)
+        ) else {
+            report.append("FAIL: board blur capture base failed")
+            return report
+        }
+        guard let capture = MarkCompositor.composite(
+            marks: board.currentPage.session.strokes,
+            over: base,
+            scale: scale,
+            diffusesContent: true,
+            offset: board.currentPage.offset
+        ) else {
+            report.append("FAIL: board blur capture composition failed")
+            return report
+        }
+        let captureDiffused = viewRGB(capture, borderPage)
+        let captureTinted = viewRGB(capture, tintedPage)
+        let captureSharp = viewRGB(capture, penMid)
+        func delta(_ a: (red: Int, green: Int, blue: Int), _ b: (red: Int, green: Int, blue: Int)) -> Int {
+            max(abs(a.red - b.red), max(abs(a.green - b.green), abs(a.blue - b.blue)))
+        }
+        let diffusedDelta = delta(diffused, captureDiffused)
+        let tintedDelta = delta(tinted, captureTinted)
+        let sharpDelta = delta(afterSharp, captureSharp)
+        // The blurred patch must agree almost exactly (same compositor, same
+        // scale); the sharp pen mark's antialiasing may differ a little
+        // between the view's scaled context and the pixel compositor.
+        let captureOk = diffusedDelta <= 6 && tintedDelta <= 6 && sharpDelta <= 12
+        report.append(
+            "board blur capture diffusedDelta=\(diffusedDelta) tintedDelta=\(tintedDelta) "
+                + "sharpDelta=\(sharpDelta) expect<=6/6/12 ok=\(captureOk)"
+        )
+
+        let passed = noFrameSource && contentOk && captureOk
+        report.append("board blur result=\(passed ? "PASS" : "FAIL")")
+        return report
+    }
+
+    // MARK: - Board preferences (T2/T3/T4)
+
+    /// The three board preferences end to end:
+    ///
+    /// - S4: a page with no explicit choice (`.system`) renders white under a
+    ///   light appearance and black under a dark one, keeps following (its
+    ///   stored value never becomes explicit), and ⌘B resolves the visible
+    ///   colour and lands on the opposite explicit choice.
+    /// - S3: the scope opens one canvas on the pointer's display or one per
+    ///   display, and switching while the board is open keeps the pages of the
+    ///   displays that stay — the same board object, marks included.
+    /// - S2: the border renders with the drawing frame off and vanishes with
+    ///   it on: two independent preferences, both directions proven.
+    private static func boardPreferencesReport() -> [String] {
+        var report: [String] = []
+        let size = CGSize(width: 900, height: 600)
+
+        func borderlessWindow(_ view: NSView, appearance: NSAppearance?) -> NSWindow {
+            let window = NSWindow(
+                contentRect: CGRect(origin: .zero, size: size),
+                styleMask: [.borderless],
+                backing: .buffered,
+                defer: false
+            )
+            window.appearance = appearance
+            window.contentView = view
+            window.orderFrontRegardless()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            return window
+        }
+
+        // --- S4: the page colour follows the system ---
+        let colourState = EditorState()
+        colourState.boardPageBackground = "system"
+        let board = WhiteboardPages(background: colourState.boardBackgroundChoice)
+        let colourView = WhiteboardView(
+            frame: CGRect(origin: .zero, size: size), state: colourState, board: board, onEscape: {}
+        )
+        let lightWindow = borderlessWindow(colourView, appearance: NSAppearance(named: .aqua))
+        let startsSystem = board.currentPage.background == .system
+        func backgroundSample(_ image: CGImage?) -> (red: Int, green: Int, blue: Int) {
+            guard let image else { return (-1, -1, -1) }
+            let scale = CGFloat(image.width) / max(colourView.bounds.width, 1)
+            return rgb(image, at: CGPoint(x: 600, y: 300), scale: scale)
+        }
+        let lightRender = renderView(colourView, to: "/tmp/stare-board-system-light.png")
+        let lightBg = backgroundSample(lightRender)
+
+        lightWindow.appearance = NSAppearance(named: .darkAqua)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        let darkRender = renderView(colourView, to: "/tmp/stare-board-system-dark.png")
+        let darkBg = backgroundSample(darkRender)
+        let stillSystem = board.currentPage.background == .system
+        let lightOk = lightBg.red >= 245 && lightBg.green >= 245 && lightBg.blue >= 245
+        let darkOk = darkBg.red <= 15 && darkBg.green <= 15 && darkBg.blue <= 15
+        // ⌘B in dark mode: the page shows black, so the flip lands on white —
+        // an explicit choice from now on.
+        colourView.togglePageBackground()
+        let flipped = board.currentPage.background == .white
+        lightWindow.orderOut(nil)
+        let colourOk = startsSystem && stillSystem && lightOk && darkOk && flipped
+        report.append(
+            "board prefs colour startsSystem=\(startsSystem) stillSystem=\(stillSystem) "
+                + "light=\(lightBg) expect 255/255/255 dark=\(darkBg) expect 0/0/0 "
+                + "flip-in-dark=\(flipped) expect white "
+                + "png=/tmp/stare-board-system-light.png,/tmp/stare-board-system-dark.png ok=\(colourOk)"
+        )
+
+        // --- S3: the scope opens the expected canvases and keeps the pages ---
+        let controller = OverlayController(captureService: CaptureService())
+        controller.state.boardScope = "active"
+        // The pointer decides the active display; warp it to the main screen's
+        // centre so the probe is deterministic on any machine.
+        let main = NSScreen.screens[0]
+        let warpOk = CGWarpMouseCursorPosition(
+            CGPoint(x: main.frame.midX, y: main.frame.midY)
+        ) == .success
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        controller.toggleBoard()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+
+        let activeViews = controller.selfTestViews
+        let activeCount = activeViews.count
+        // A mark on the active display's board, through the real event path.
+        controller.state.tool = .pen
+        controller.state.ink = .red
+        if let activeView = activeViews.first as? WhiteboardView, let panel = activeView.window {
+            sendDrag(to: panel, from: CGPoint(x: 200, y: 200), to: CGPoint(x: 400, y: 200))
+        }
+        let boardBefore = (controller.selfTestViews.first as? WhiteboardView)?.board
+        let drewMark = boardBefore?.currentPage.session.strokes.isEmpty == false
+
+        // Switch the scope while the board is open: every display.
+        controller.state.boardScope = "all"
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        let allViews = controller.selfTestViews
+        let allCount = allViews.count
+        let sameBoardKept = allViews.contains { ($0 as? WhiteboardView)?.board === boardBefore }
+        let marksKept = allViews.contains {
+            ($0 as? WhiteboardView)?.board.currentPage.session.strokes.isEmpty == false
+        }
+        let allOk = allCount == NSScreen.screens.count && sameBoardKept && marksKept
+        report.append(
+            "board prefs scope active canvases=\(activeCount) expect 1 (warp=\(warpOk)) mark=\(drewMark), "
+                + "all canvases=\(allCount) expect \(NSScreen.screens.count) "
+                + "sameBoard=\(sameBoardKept) marksKept=\(marksKept) ok=\(allOk && drewMark)"
+        )
+
+        // And back to the active display only: the mark is still there.
+        controller.state.boardScope = "active"
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        let backViews = controller.selfTestViews
+        let backCount = backViews.count
+        let backKept = backViews.contains {
+            ($0 as? WhiteboardView)?.board === boardBefore
+                && $0.session.strokes.isEmpty == false
+        }
+        let backOk = backCount == 1 && backKept
+        report.append(
+            "board prefs scope back canvases=\(backCount) expect 1 markKept=\(backKept) ok=\(backOk)"
+        )
+
+        controller.toggleBoard()
+        controller.deactivate(restoringFocus: false)
+
+        // --- S2: the border is its own preference, both directions ---
+        let borderState = EditorState()
+        borderState.ink = .red
+        borderState.showArmedFrame = true
+        borderState.boardShowBorder = false
+        let borderView = WhiteboardView(
+            frame: CGRect(origin: .zero, size: size), state: borderState,
+            board: WhiteboardPages(), onEscape: {}
+        )
+        let borderWindow = borderlessWindow(borderView, appearance: nil)
+        func edgeSample() -> (red: Int, green: Int, blue: Int) {
+            guard let image = renderView(borderView, to: "/tmp/stare-board-border.png") else {
+                return (-1, -1, -1)
+            }
+            let scale = CGFloat(image.width) / max(borderView.bounds.width, 1)
+            // The frame strokes a 3pt line 3pt inside the edge; its midpoint
+            // is far from the rounded corners.
+            return rgb(image, at: CGPoint(x: size.width / 2, y: 3), scale: scale)
+        }
+        let hiddenSample = edgeSample()
+        let hiddenOk = borderState.boardShowBorder == false
+            && borderState.showArmedFrame == true
+            && hiddenSample.green >= 245 && hiddenSample.red >= 245
+        borderState.boardShowBorder = true
+        let shownSample = edgeSample()
+        // Red ink at 0.45 alpha over white: red stays high, green drops.
+        let shownOk = shownSample.red >= 200 && shownSample.green < 240
+        // And with the drawing frame off, the board's border must still draw.
+        borderState.showArmedFrame = false
+        let frameOffSample = edgeSample()
+        let frameOffOk = frameOffSample.red >= 200 && frameOffSample.green < 240
+        borderWindow.orderOut(nil)
+        let borderOk = hiddenOk && shownOk && frameOffOk
+        report.append(
+            "board prefs border drawingFrame=on border=off edge=\(hiddenSample) expect white, "
+                + "border=on edge=\(shownSample) expect red-tinted, drawingFrame=off border=on "
+                + "edge=\(frameOffSample) expect red-tinted ok=\(borderOk)"
+        )
+
+        let passed = colourOk && drewMark && allOk && backOk && borderOk
+        report.append("board prefs result=\(passed ? "PASS" : "FAIL")")
+        return report
+    }
+
+    // MARK: - Board zoom (T5/S5)
+
+    /// Zoom through the real board view (T5/S5): with the page at 2\u{00d7} via the
+    /// real `applyZoom` path, a pen stroke drawn through the panel's own event
+    /// path stores exactly the page point under the pointer — it lands where
+    /// the pointer was, proven on the geometry and in the rendered pixels — the
+    /// edit cursor then selects and moves that mark while zoomed and it lands
+    /// where the drag ended in screen terms, and \u{2318}0 (the view's real reset
+    /// path) returns pan and zoom to their identity together, the mark back
+    /// where its stored page point says it belongs.
+    private static func boardZoomReport() -> [String] {
+        var report: [String] = []
+        guard let screen = NSScreen.screens.first else {
+            report.append("FAIL: board zoom no screens")
+            return report
+        }
+        let state = EditorState()
+        let board = WhiteboardPages()
+        guard let canvas = DisplayCanvas(screen: screen, state: state, onEscape: {}, board: board),
+              let view = canvas.boardView else {
+            report.append("FAIL: board zoom canvas could not be created")
+            return report
+        }
+        let panel = canvas.panel
+        panel.orderFrontRegardless()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        defer { panel.orderOut(nil) }
+
+        func close(_ a: CGPoint, _ b: CGPoint) -> Bool {
+            abs(a.x - b.x) < 0.5 && abs(a.y - b.y) < 0.5
+        }
+        /// A window point's view point: events carry window coordinates
+        /// (bottom-left origin) and the view fills the window, flipped.
+        func windowToView(_ point: CGPoint) -> CGPoint {
+            CGPoint(x: point.x, y: view.bounds.height - point.y)
+        }
+        func mid(of points: [CGPoint]) -> CGPoint {
+            guard let first = points.first, let last = points.last else { return .zero }
+            return CGPoint(x: (first.x + last.x) / 2, y: (first.y + last.y) / 2)
+        }
+
+        // \u{2318}+: 2\u{00d7} through the real anchored zoom, at a fixed view anchor: the
+        // page point under the anchor must not move.
+        let anchor = CGPoint(x: 450, y: 300)
+        view.applyZoom(2, anchoredAt: anchor)
+        let zoom = board.currentPage.zoom
+        let anchorOk = abs(zoom - 2) < 0.001
+            && close(view.viewPoint(fromPage: view.pagePoint(anchor)), anchor)
+
+        // 1. Drawing at a non-default zoom: the stroke stores the page point
+        // under the pointer, derived from the very points the events carried —
+        // never hardcoded screen positions.
+        state.tool = .pen
+        state.ink = .red
+        let pointerFromWindow = CGPoint(x: 200, y: 300)
+        let pointerToWindow = CGPoint(x: 340, y: 300)
+        let expectedDown = view.pagePoint(windowToView(pointerFromWindow))
+        let expectedUp = view.pagePoint(windowToView(pointerToWindow))
+        sendDrag(to: panel, from: pointerFromWindow, to: pointerToWindow)
+        guard let mark = board.currentPage.session.strokes.first else {
+            report.append("FAIL: board zoom mark was not committed")
+            return report
+        }
+        let storedDown = mark.points.first ?? .zero
+        let storedUp = mark.points.last ?? .zero
+        let drawOk = anchorOk && close(storedDown, expectedDown) && close(storedUp, expectedUp)
+        report.append(
+            "board zoom draw zoom=\(String(format: "%.2f", zoom)) "
+                + "stored first=\(storedDown) expect page \(expectedDown), "
+                + "last=\(storedUp) expect page \(expectedUp) ok=\(drawOk)"
+        )
+
+        // The same thing in pixels: the stored mark renders under the pointer.
+        let rendered = renderView(view, to: "/tmp/stare-board-zoom.png")
+        let renderScale = rendered.map { CGFloat($0.width) / max(view.bounds.width, 1) } ?? 2
+        let markPage = mid(of: mark.points)
+        let markView = view.viewPoint(fromPage: markPage)
+        let landing = rendered.map { rgb($0, at: markView, scale: renderScale) } ?? (red: -1, green: -1, blue: -1)
+        let landingOk = landing.red >= 180 && landing.green < 120
+        report.append(
+            "board zoom draw pixels mark@\(markView)=\(landing) expect red png=/tmp/stare-board-zoom.png ok=\(landingOk)"
+        )
+
+        // 2. The edit cursor while zoomed: click the mark's body, drag it —
+        // select-and-move is one gesture. The mark moves by the drag's
+        // page-space shift (the screen delta divided by the zoom, the same
+        // arithmetic panning uses) and lands exactly where the drag ended, in
+        // screen terms.
+        let dragStartWindow = CGPoint(x: markView.x, y: view.bounds.height - markView.y)
+        let dragEndWindow = CGPoint(x: dragStartWindow.x + 100, y: dragStartWindow.y - 60)
+        let dragEndView = windowToView(dragEndWindow)
+        state.tool = .select
+        sendDrag(to: panel, from: dragStartWindow, to: dragEndWindow)
+        let moved = board.currentPage.session.strokes.first
+        let expectedPage = CGPoint(x: markPage.x + 100 / zoom, y: markPage.y + 60 / zoom)
+        let movedPage = moved.map { mid(of: $0.points) } ?? .zero
+        let movedOk = moved?.id == mark.id
+            && board.currentPage.session.strokes.count == 1
+            && close(movedPage, expectedPage)
+            && close(view.viewPoint(fromPage: movedPage), dragEndView)
+        report.append(
+            "board zoom move marks=\(board.currentPage.session.strokes.count) sameMark=\(moved?.id == mark.id) "
+                + "page=\(movedPage) expect \(expectedPage), screen=\(view.viewPoint(fromPage: movedPage)) "
+                + "expect drag end \(dragEndView) ok=\(movedOk)"
+        )
+
+        // 3. \u{2318}0: pan and zoom away through the real paths first (a space-drag
+        // translation and a \u{2318}\u{2212} step), then the reset must return both together:
+        // offset zero, zoom one, the identity transform, and the mark back at
+        // its stored page point on screen.
+        view.pan(byPointerDelta: CGSize(width: -80, height: -50))
+        view.applyZoom(1.25, anchoredAt: anchor)
+        let panned = board.currentPage.offset != .zero && board.currentPage.zoom != 1
+        view.resetPageView()
+        let identity = board.currentPage.transform == BoardTransform.identity
+        let markBack = close(view.viewPoint(fromPage: storedDown), storedDown)
+        let resetOk = panned && identity && markBack
+        report.append(
+            "board zoom reset panned=\(panned) offset=\(board.currentPage.offset) "
+                + "zoom=\(String(format: "%.2f", board.currentPage.zoom)) "
+                + "identity=\(identity) markBack=\(markBack) ok=\(resetOk)"
+        )
+
+        // 4. The rotation knob is chrome, so it keeps its on-screen size: its
+        // distance above the box is measured in screen points — always
+        // `defaultRotationHandleOffset` — at every zoom, exactly like the box
+        // and the corner handles. The knob the chrome draws (the accent ring
+        // on the rendered pixels) is where a click grabs rotation: drawn and
+        // hit must be the same number.
+        guard let knobMark = board.currentPage.session.strokes.first, !knobMark.points.isEmpty else {
+            report.append("FAIL: board zoom knob mark missing")
+            return report
+        }
+        func accentNear(_ point: CGPoint, rendered: CGImage, scale: CGFloat) -> Bool {
+            // The chrome accent is (0.25, 0.55, 1) — blue-dominant, unlike the
+            // neutral dot grid, the page colour or the red pen ink.
+            func isAccent(_ sample: (red: Int, green: Int, blue: Int)) -> Bool {
+                sample.blue > 200 && sample.red < 140 && sample.green > 80 && sample.green < 200
+            }
+            var hits = 0
+            for ringPoint in [CGPoint(x: 0, y: -5), CGPoint(x: 0, y: 5), CGPoint(x: -5, y: 0), CGPoint(x: 5, y: 0)] {
+                for dx in stride(from: -0.5, through: 0.5, by: 0.5) {
+                    for dy in stride(from: -0.5, through: 0.5, by: 0.5) {
+                        if isAccent(rgb(rendered, at: CGPoint(x: point.x + ringPoint.x + dx, y: point.y + ringPoint.y + dy), scale: scale)) {
+                            hits += 1
+                        }
+                    }
+                }
+            }
+            return hits >= 2
+        }
+        var knobOk = true
+        var distanceReported: CGFloat = -1
+        var knobRotated = false
+        for (label, targetZoom) in [("0.25", BoardTransform.minZoom), ("1", CGFloat(1)), ("8", BoardTransform.maxZoom)] {
+            view.resetPageView()
+            let markCentrePage = mid(of: knobMark.points)
+            view.applyZoom(targetZoom, anchoredAt: view.viewPoint(fromPage: markCentrePage))
+            let zoom = board.currentPage.zoom
+            // A click on the body re-selects the mark at this zoom: the chrome
+            // only draws for the selected mark.
+            let bodyView = view.viewPoint(fromPage: knobMark.anchor)
+            sendDrag(to: panel, from: CGPoint(x: bodyView.x, y: view.bounds.height - bodyView.y),
+                     to: CGPoint(x: bodyView.x, y: view.bounds.height - bodyView.y))
+            guard view.selectedMarkID == knobMark.id else {
+                report.append("FAIL: board zoom knob zoom=\(label) the mark did not re-select")
+                knobOk = false
+                continue
+            }
+            let selection = MarkSelection(stroke: board.currentPage.session.strokes.first!)
+            let knobPage = selection.handlePoints(
+                rotationHandleOffset: view.selectionRotationHandleOffset
+            )[.rotation]!
+            let screenDistance = (selection.unrotatedBounds.minY - knobPage.y) * zoom
+            distanceReported = screenDistance
+            let distanceOk = screenDistance >= 17 && screenDistance <= 23
+            let rendered = renderView(view, to: "/tmp/stare-board-zoom-knob.png")
+            let renderScale = rendered.map { CGFloat($0.width) / max(view.bounds.width, 1) } ?? 0
+            let knobView = view.viewPoint(fromPage: knobPage)
+            let ringOk = rendered.map { accentNear(knobView, rendered: $0, scale: renderScale) } ?? false
+            let stepOk = distanceOk && ringOk
+            knobOk = knobOk && stepOk
+            report.append(
+                "board zoom knob zoom=\(label) screenDistance="
+                    + String(format: "%.1f", screenDistance)
+                    + " expect 20±3 drawnRing=\(ringOk) ok=\(stepOk)"
+            )
+            if label == "8" && stepOk {
+                // The drawn knob is where a click grabs: drag it a quarter turn.
+                let anchor = knobMark.anchor
+                let target = knobPage.applying(Stroke.rotationTransform(around: anchor, by: .pi / 2))
+                let from = CGPoint(x: knobView.x, y: view.bounds.height - knobView.y)
+                let toView = view.viewPoint(fromPage: target)
+                sendDrag(to: panel, from: from,
+                         to: CGPoint(x: toView.x, y: view.bounds.height - toView.y))
+                knobRotated = abs((board.currentPage.session.strokes.first?.rotation ?? 0) - .pi / 2) < 0.05
+                knobOk = knobOk && knobRotated
+            }
+        }
+        report.append(
+            "board zoom knob grab rotated=\(knobRotated) lastScreenDistance="
+                + String(format: "%.1f", distanceReported)
+        )
+
+        let passed = drawOk && landingOk && movedOk && resetOk && knobOk
+        report.append("board zoom result=\(passed ? "PASS" : "FAIL")")
+        return report
+    }
+
+    // MARK: - Board dots (T6/S6)
+
+    /// The Freeform-style dot grid through the real view path (T6/S6): the
+    /// same dot in page space follows the content — its screen point moves
+    /// after a pan and again after a zoom change, and the pixels move with it
+    /// while the old spots stay clear — the screen pitch stays inside a
+    /// readable band at both ends of the zoom range, and the dots read on a
+    /// white, a black and a system-following page.
+    private static func boardDotsReport() -> [String] {
+        var report: [String] = []
+        let size = CGSize(width: 900, height: 600)
+
+        func borderlessWindow(_ view: NSView, appearance: NSAppearance?) -> NSWindow {
+            let window = NSWindow(
+                contentRect: CGRect(origin: .zero, size: size),
+                styleMask: [.borderless],
+                backing: .buffered,
+                defer: false
+            )
+            window.appearance = appearance
+            window.contentView = view
+            window.orderFrontRegardless()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            return window
+        }
+        func renderScale(_ image: CGImage?) -> CGFloat {
+            guard let image else { return 2 }
+            return CGFloat(image.width) / max(size.width, 1)
+        }
+        func sample(_ image: CGImage?, at point: CGPoint, scale: CGFloat) -> (red: Int, green: Int, blue: Int) {
+            image.map { rgb($0, at: point, scale: scale) } ?? (red: -1, green: -1, blue: -1)
+        }
+
+        let state = EditorState()
+        let board = WhiteboardPages()
+        let view = WhiteboardView(
+            frame: CGRect(origin: .zero, size: size), state: state, board: board, onEscape: {}
+        )
+        let window = borderlessWindow(view, appearance: nil)
+        defer { window.orderOut(nil) }
+
+        // A dot clear of the view edges, taken from the grid's own
+        // enumeration on the base pitch — never a hand-picked point.
+        let spacing = DotGrid.pageSpacing(atZoom: 1)
+        let dotsAround = DotGrid.dots(
+            in: CGRect(x: 80, y: 80, width: 32, height: 32),
+            spacing: spacing
+        )
+        let dot = dotsAround.first ?? CGPoint(x: 96, y: 96)
+        let onGrid = dotsAround.count == 1 && dot == CGPoint(x: spacing * 4, y: spacing * 4)
+        report.append("board dots grid pitch=\(spacing)pt dot=\(dot) onGrid=\(onGrid)")
+
+        // The same dot in page space follows the content: one pan, then one
+        // zoom change, each time to a different screen point — and the pixels
+        // follow, the old spot left clear.
+        let before = view.viewPoint(fromPage: dot)
+        view.pan(byPointerDelta: CGSize(width: 30, height: 20))
+        let afterPan = view.viewPoint(fromPage: dot)
+        let panImage = renderView(view, to: "/tmp/stare-board-dots-pan.png")
+        let panScale = renderScale(panImage)
+        let panMoved = afterPan != before
+        let panDot = sample(panImage, at: afterPan, scale: panScale)
+        let panOld = sample(panImage, at: before, scale: panScale)
+        let panOk = panMoved && panDot.green <= 240 && panOld.green >= 250
+        report.append(
+            "board dots pan dot page=\(dot) screen \(before) → \(afterPan) "
+                + "marked=\(panDot) expect darker, oldSpot=\(panOld) expect clear ok=\(panOk)"
+        )
+
+        view.applyZoom(2, anchoredAt: CGPoint(x: 150, y: 150))
+        let afterZoom = view.viewPoint(fromPage: dot)
+        let zoomImage = renderView(view, to: "/tmp/stare-board-dots-zoom.png")
+        let zoomScale = renderScale(zoomImage)
+        let zoomMoved = afterZoom != afterPan
+        let zoomDot = sample(zoomImage, at: afterZoom, scale: zoomScale)
+        let zoomOld = sample(zoomImage, at: afterPan, scale: zoomScale)
+        let zoomOk = zoomMoved && zoomDot.green <= 240 && zoomOld.green >= 250
+        report.append(
+            "board dots zoom dot page=\(dot) screen \(afterPan) → \(afterZoom) "
+                + "marked=\(zoomDot) expect darker, oldSpot=\(zoomOld) expect clear ok=\(zoomOk)"
+        )
+
+        // The pitch on screen (page pitch × zoom) at both ends of the zoom
+        // range, inside a readable band: at 0.25× the power-of-two coarsening
+        // holds the pitch at DotGrid.minimumScreenSpacing (12pt) — anything
+        // denser merges into a texture — so 12pt is the band's floor and the
+        // base pitch (24pt) its ceiling; at 8× the pitch grows with the zoom
+        // (24 × 8 = 192pt), readable by construction, and it must stay under
+        // one further coarsening step (24 × 2 × 8 = 384pt) to pin that the
+        // doubling stops as soon as the pitch is readable.
+        let lowZoom = BoardTransform.minZoom
+        let highZoom = BoardTransform.maxZoom
+        let lowScreen = DotGrid.pageSpacing(atZoom: lowZoom) * lowZoom
+        let highScreen = DotGrid.pageSpacing(atZoom: highZoom) * highZoom
+        let pitchOk = lowScreen >= DotGrid.minimumScreenSpacing && lowScreen < DotGrid.spacing
+            && highScreen >= DotGrid.spacing && highScreen < DotGrid.spacing * 2 * highZoom
+        report.append(
+            "board dots pitch at zoom \(lowZoom) screen=\(lowScreen)pt expect >=12 <24, "
+                + "at zoom \(highZoom) screen=\(highScreen)pt expect >=24 <384 ok=\(pitchOk)"
+        )
+
+        // Reading on the page colours, sampled through the real render at a
+        // dot and a dot-free spot. White page first, then \u{2318}B to black through
+        // the real toggle, then a system-following page under an explicit
+        // light appearance (which must read exactly like the white page).
+        let dotSpot = afterZoom
+        let emptySpot = CGPoint(x: 600, y: 300)
+        let whiteImage = renderView(view, to: "/tmp/stare-board-dots-white.png")
+        let whiteScale = renderScale(whiteImage)
+        let whitePage = sample(whiteImage, at: emptySpot, scale: whiteScale)
+        let whiteDot = sample(whiteImage, at: dotSpot, scale: whiteScale)
+        let whiteOk = whitePage.green >= 250 && whiteDot.green <= 240
+            && whitePage.green - whiteDot.green >= 20
+        report.append(
+            "board dots read white page@\(emptySpot)=\(whitePage) expect white, "
+                + "dot@\(dotSpot)=\(whiteDot) expect darker png=/tmp/stare-board-dots-white.png ok=\(whiteOk)"
+        )
+
+        view.togglePageBackground()
+        let blackIsBlack = board.currentPage.background == .black
+        let blackImage = renderView(view, to: "/tmp/stare-board-dots-black.png")
+        let blackScale = renderScale(blackImage)
+        let blackPage = sample(blackImage, at: emptySpot, scale: blackScale)
+        let blackDot = sample(blackImage, at: dotSpot, scale: blackScale)
+        let blackOk = blackIsBlack && blackPage.green <= 15
+            && blackDot.green >= 25 && blackDot.green - blackPage.green >= 20
+        report.append(
+            "board dots read black page@\(emptySpot)=\(blackPage) expect black, "
+                + "dot@\(dotSpot)=\(blackDot) expect lighter png=/tmp/stare-board-dots-black.png ok=\(blackOk)"
+        )
+
+        let systemState = EditorState()
+        let systemBoard = WhiteboardPages(background: .system)
+        let systemView = WhiteboardView(
+            frame: CGRect(origin: .zero, size: size), state: systemState, board: systemBoard, onEscape: {}
+        )
+        let systemWindow = borderlessWindow(systemView, appearance: NSAppearance(named: .aqua))
+        let systemIsSystem = systemBoard.currentPage.background == .system
+        let systemSpot = systemView.viewPoint(fromPage: dot)
+        let systemImage = renderView(systemView, to: "/tmp/stare-board-dots-system.png")
+        let systemScale = renderScale(systemImage)
+        let systemPage = sample(systemImage, at: emptySpot, scale: systemScale)
+        let systemDot = sample(systemImage, at: systemSpot, scale: systemScale)
+        let systemOk = systemIsSystem && systemPage.green >= 250 && systemDot.green <= 240
+            && systemPage.green - systemDot.green >= 20
+        report.append(
+            "board dots read system page@\(emptySpot)=\(systemPage) expect white, "
+                + "dot@\(systemSpot)=\(systemDot) expect darker png=/tmp/stare-board-dots-system.png ok=\(systemOk)"
+        )
+        systemWindow.orderOut(nil)
+
+        let passed = onGrid && panOk && zoomOk && pitchOk && whiteOk && blackOk && systemOk
+        report.append("board dots result=\(passed ? "PASS" : "FAIL")")
+        return report
+    }
+
+    /// Which character a real Delete key press has to be bound to in an
+    /// NSMenuItem for the item to fire: the probe sends the exact key event a
+    /// ⌘⌫ press produces (characters "\u{7F}", keyCode 51) through the real
+    /// menu key-equivalent machinery with each candidate binding.
+    private static func menuKeyProbe() -> [String] {
+        final class ProbeTarget: NSObject {
+            var fired = false
+            @objc func hit() { fired = true }
+        }
+
+        func fires(with key: String) -> Bool {
+            let target = ProbeTarget()
+            let item = NSMenuItem(title: "probe", action: #selector(ProbeTarget.hit), keyEquivalent: key)
+            item.keyEquivalentModifierMask = .command
+            item.target = target
+            let menu = NSMenu()
+            menu.addItem(item)
+            guard let event = NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: .command,
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: "\u{7F}",
+                charactersIgnoringModifiers: "\u{7F}",
+                isARepeat: false,
+                keyCode: 51
+            ) else { return false }
+            _ = menu.performKeyEquivalent(with: event)
+            return target.fired
+        }
+
+        let backspaceBindingFires = fires(with: "\u{8}")
+        let deleteBindingFires = fires(with: "\u{7F}")
+        let ok = deleteBindingFires && !backspaceBindingFires
+        return [
+            "board pages menu-key backspace(\\u{8})-fires=\(backspaceBindingFires) "
+                + "delete(\\u{7F})-fires=\(deleteBindingFires) ok=\(ok)",
+        ]
+    }
+
     // MARK: - Select (T11/S6)
 
     /// The edit cursor end to end through the real view path: draw a rectangle,
@@ -680,6 +1589,471 @@ enum SelfTest {
 
         let passed = moveOk && undoRestoresMove && scaleOk && quarterTurn && hitOk && escapeOk && deleteOk
         report.append("select result=\(passed ? "PASS" : "FAIL")")
+        return report
+    }
+
+    // MARK: - Numbered badge placement
+
+    /// The dirty-rect recording both the overlay and the board probes share.
+    private protocol InvalidationsRecording: OverlayView {
+        func resetInvalidations()
+        var recordedInvalidations: [NSRect] { get }
+    }
+
+    /// Records the dirty rects the view asks AppKit to repaint, so the self
+    /// test can replay an NSView's real incremental painting regime.
+    private final class RecordingOverlayView: OverlayView, InvalidationsRecording {
+        private(set) var recordedInvalidations: [NSRect] = []
+
+        func resetInvalidations() { recordedInvalidations.removeAll() }
+
+        override func setNeedsDisplay(_ invalidRect: NSRect) {
+            recordedInvalidations.append(invalidRect)
+            super.setNeedsDisplay(invalidRect)
+        }
+    }
+
+    /// A numbered step commits inside `session.begin`, so `mouseUp` never runs
+    /// for it and the badge must be invalidated at its full size on mouse-down.
+    /// The rule pinned here: the pixels the app paints for the placed mark (only
+    /// the rects the view itself invalidated, over the pre-click pixels — the
+    /// real regime AppKit repaints with) must equal the pixels of the same
+    /// stroke repainted as a committed mark. A badge invalidated as the small
+    /// drag band around the click point fails both: the rim pixels outside the
+    /// band are never painted and the digit is clipped away.
+    private static func numberBadgeReport() -> [String] {
+        var report: [String] = []
+        let size = CGSize(width: 900, height: 600)
+
+        func overlayRender(_ view: NSView) -> CGImage? {
+            guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
+            view.cacheDisplay(in: view.bounds, to: rep)
+            return rep.cgImage
+        }
+
+        /// The incremental painting regime: repaint exactly `rect` with the
+        /// view's fresh render, blended over the previous pixels. Rects the
+        /// view never marks keep whatever was on screen before — there is no
+        /// full repaint to rescue a forgotten region.
+        func flush(_ context: CGContext, with image: CGImage, rect: CGRect, scale: CGFloat) {
+            context.saveGState()
+            // Overlay space is top-left origin; the bitmap context is bottom-left.
+            context.clip(to: CGRect(
+                x: rect.minX * scale,
+                y: (size.height - rect.maxY) * scale,
+                width: rect.width * scale,
+                height: rect.height * scale
+            ))
+            context.draw(image, in: CGRect(x: 0, y: 0, width: size.width * scale, height: size.height * scale))
+            context.restoreGState()
+        }
+
+        /// Places one numbered badge at `centre` through the real mouse-down
+        /// path, then repaints only the rects the view itself invalidated over
+        /// a baseline of the pre-click pixels. Returns the flushed screen
+        /// pixels and the full committed repaint's pixels at the badge rim,
+        /// the fill beside the digit and a `digitVisible` scan, so the flushed
+        /// screen can be asserted equal to what a committed mark renders.
+        func placementCheck(
+            view: InvalidationsRecording, window: NSWindow, centre: CGPoint
+        ) -> (
+            rects: Int, flushedRim: (Int, Int, Int), flushedFill: (Int, Int, Int), digitVisible: Bool,
+            committedRim: (Int, Int, Int), committedFill: (Int, Int, Int), parityOk: Bool
+        )? {
+            view.resetInvalidations()
+            // The pixels before the click, with the session still empty.
+            guard let baseline = overlayRender(view) else { return nil }
+            guard let down = NSEvent.mouseEvent(
+                with: .leftMouseDown,
+                location: CGPoint(x: centre.x, y: size.height - centre.y),
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 1,
+                clickCount: 1,
+                pressure: 1
+            ) else { return nil }
+            view.mouseDown(with: down)
+            guard let mark = view.session.strokes.last, mark.tool == .number else { return nil }
+            guard let first = mark.points.first else { return nil }
+
+            let renderScale = CGFloat(baseline.width) / max(view.bounds.width, 1)
+            guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+                  let screen = CGContext(
+                    data: nil,
+                    width: Int(size.width * renderScale),
+                    height: Int(size.height * renderScale),
+                    bitsPerComponent: 8,
+                    bytesPerRow: 0,
+                    space: space,
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                  ) else { return nil }
+            // The pixels before the click: the page surface with the empty
+            // overlay already drawn on it.
+            screen.draw(baseline, in: CGRect(x: 0, y: 0, width: size.width * renderScale, height: size.height * renderScale))
+
+            let recorded = view.recordedInvalidations.filter { !$0.isEmpty && $0.intersects(view.bounds) }
+            guard let fresh = overlayRender(view) else { return nil }
+            for rect in recorded {
+                flush(screen, with: fresh, rect: rect, scale: renderScale)
+            }
+            guard let screenImage = screen.makeImage(),
+                  let committed = overlayRender(view) else { return nil }
+
+            let rim = CGPoint(x: first.x, y: first.y - 10)
+            let fill = CGPoint(x: first.x + 8, y: first.y)
+            let flushedRim = rgb(screenImage, at: rim, scale: renderScale)
+            let flushedFill = rgb(screenImage, at: fill, scale: renderScale)
+            let committedRim = rgb(committed, at: rim, scale: renderScale)
+            let committedFill = rgb(committed, at: fill, scale: renderScale)
+            var digitVisible = false
+            let digitRangeX = stride(from: -6.0, through: 6.0, by: 2)
+            let digitRangeY = stride(from: -9.0, through: 9.0, by: 2)
+            for dx in digitRangeX {
+                for dy in digitRangeY {
+                    let point = CGPoint(x: first.x + dx, y: first.y + dy)
+                    let pixel = rgb(screenImage, at: point, scale: renderScale)
+                    if pixel.0 > 230 && pixel.1 > 230 && pixel.2 > 230 { digitVisible = true }
+                }
+            }
+            // Same stroke, painted the way the app paints a placed mark and
+            // repainted as a committed mark: the pixels must agree.
+            func close(_ a: (Int, Int, Int), _ b: (Int, Int, Int)) -> Bool {
+                abs(a.0 - b.0) <= 10 && abs(a.1 - b.1) <= 10 && abs(a.2 - b.2) <= 10
+            }
+            let parityOk = close(flushedRim, committedRim) && close(flushedFill, committedFill)
+            return (
+                rects: recorded.count, flushedRim: flushedRim, flushedFill: flushedFill,
+                digitVisible: digitVisible, committedRim: committedRim, committedFill: committedFill,
+                parityOk: parityOk
+            )
+        }
+
+        func borderlessWindow(_ view: NSView) -> NSWindow {
+            let window = NSWindow(
+                contentRect: CGRect(origin: .zero, size: size),
+                styleMask: [.borderless],
+                backing: .buffered,
+                defer: false
+            )
+            window.contentView = view
+            window.orderFrontRegardless()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            return window
+        }
+
+        // Drawing mode: the badge on the transparent overlay.
+        let state = EditorState()
+        state.tool = .number
+        state.ink = .red
+        let overlay = RecordingOverlayView(frame: CGRect(origin: .zero, size: size), state: state, onEscape: {})
+        let overlayWindow = borderlessWindow(overlay)
+        defer { overlayWindow.orderOut(nil) }
+
+        if let check = placementCheck(view: overlay, window: overlayWindow, centre: CGPoint(x: 450, y: 300)) {
+            let rimOk = check.flushedRim.0 >= 200 && check.flushedRim.1 < 150
+            let fillOk = check.flushedFill.0 >= 200 && check.flushedFill.1 < 150
+            let ok = check.rects > 0 && rimOk && fillOk && check.digitVisible && check.parityOk
+            report.append(
+                "number overlay rects=\(check.rects) rim=\(check.flushedRim) expect red, "
+                    + "fill=\(check.flushedFill) expect red, digit=\(check.digitVisible) expect true, "
+                    + "committed rim=\(check.committedRim) fill=\(check.committedFill) parity=\(check.parityOk) "
+                    + "png=/tmp/stare-number-overlay.png ok=\(ok)"
+            )
+        } else {
+            report.append("FAIL: number overlay badge was not committed")
+            return report
+        }
+        _ = overlayRender(overlay).map { writePNG($0, to: "/tmp/stare-number-overlay.png") }
+
+        // The whiteboard: same click path over the page's own background.
+        let boardState = EditorState()
+        boardState.tool = .number
+        boardState.ink = .blue
+        let board = WhiteboardPages()
+        let boardView = RecordingBoardView(frame: CGRect(origin: .zero, size: size), state: boardState, board: board, onEscape: {})
+        let boardWindow = borderlessWindow(boardView)
+        defer { boardWindow.orderOut(nil) }
+
+        if let check = placementCheck(view: boardView, window: boardWindow, centre: CGPoint(x: 300, y: 300)) {
+            let rimOk = check.flushedRim.2 >= 180 && check.flushedRim.0 < 120
+            let fillOk = check.flushedFill.2 >= 180 && check.flushedFill.0 < 120
+            let ok = check.rects > 0 && rimOk && fillOk && check.digitVisible && check.parityOk
+            report.append(
+                "number board rects=\(check.rects) rim=\(check.flushedRim) expect blue, "
+                    + "fill=\(check.flushedFill) expect blue, digit=\(check.digitVisible) expect true, "
+                    + "committed rim=\(check.committedRim) fill=\(check.committedFill) parity=\(check.parityOk) "
+                    + "png=/tmp/stare-number-board.png ok=\(ok)"
+            )
+        } else {
+            report.append("FAIL: number board badge was not committed")
+            return report
+        }
+        _ = overlayRender(boardView).map { writePNG($0, to: "/tmp/stare-number-board.png") }
+
+        let passed = report.allSatisfy { !$0.contains("ok=false") && !$0.contains("FAIL") }
+        report.append("number result=\(passed ? "PASS" : "FAIL")")
+        return report
+    }
+
+    /// The whiteboard flavour of the recording view: the incremental-painting
+    /// probe has to run through the board's own click path too, where the same
+    /// mouse-down code lays the badge over the page background.
+    private final class RecordingBoardView: WhiteboardView, InvalidationsRecording {
+        private(set) var recordedInvalidations: [NSRect] = []
+
+        func resetInvalidations() { recordedInvalidations.removeAll() }
+
+        override func setNeedsDisplay(_ invalidRect: NSRect) {
+            recordedInvalidations.append(invalidRect)
+            super.setNeedsDisplay(invalidRect)
+        }
+    }
+
+    // MARK: - Escape clears and stays
+
+    /// Escape through the real key path in a real borderless window: with a
+    /// mark selected it still gives the selection up first; with nothing
+    /// selected it clears the layer's marks and stays in drawing mode (the
+    /// exit path stays silent — leaving stays on ⌥⇧A / Done). The whiteboard
+    /// flavour clears the current page and the board stays open.
+    private static func escapeReport() -> [String] {
+        var report: [String] = []
+        let size = CGSize(width: 900, height: 600)
+
+        func borderlessWindow(_ view: NSView) -> NSWindow {
+            let window = NSWindow(
+                contentRect: CGRect(origin: .zero, size: size),
+                styleMask: [.borderless],
+                backing: .buffered,
+                defer: false
+            )
+            window.contentView = view
+            window.orderFrontRegardless()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            return window
+        }
+        func mouseEvent(_ type: NSEvent.EventType, at point: CGPoint, window: NSWindow) -> NSEvent? {
+            NSEvent.mouseEvent(
+                with: type,
+                location: CGPoint(x: point.x, y: size.height - point.y),
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 1,
+                clickCount: 1,
+                pressure: 1
+            )
+        }
+        func drag(_ view: OverlayView, window: NSWindow, from start: CGPoint, to end: CGPoint) {
+            view.mouseDown(with: mouseEvent(.leftMouseDown, at: start, window: window)!)
+            view.mouseDragged(with: mouseEvent(.leftMouseDragged, at: end, window: window)!)
+            view.mouseUp(with: mouseEvent(.leftMouseUp, at: end, window: window)!)
+        }
+        @discardableResult
+        func key(_ view: NSView, _ keyCode: UInt16, _ characters: String, modifiers: NSEvent.ModifierFlags = []) -> Bool {
+            guard let event = NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: modifiers,
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: 0,
+                context: nil,
+                characters: characters,
+                charactersIgnoringModifiers: characters,
+                isARepeat: false,
+                keyCode: keyCode
+            ) else { return false }
+            view.keyDown(with: event)
+            return true
+        }
+
+        // The overlay: drawing mode is a plain view in a real window.
+        let state = EditorState()
+        state.tool = .pen
+        state.ink = .red
+        let view = OverlayView(frame: CGRect(origin: .zero, size: size), state: state, onEscape: {})
+        let window = borderlessWindow(view)
+        defer { window.orderOut(nil) }
+
+        var exitCalls = 0
+        var clearCalls = 0
+        view.onEscape = { exitCalls += 1 }
+        // The controller's real routing: drop the display's marks and keep
+        // the layer up.
+        view.onClearMarks = { clearCalls += 1; view.clear() }
+
+        drag(view, window: window, from: CGPoint(x: 100, y: 100), to: CGPoint(x: 300, y: 140))
+        guard view.session.strokes.count == 1 else {
+            report.append("FAIL: escape pen mark was not committed")
+            return report
+        }
+
+        // Escape with nothing selected: the hint's promise — the marks clear
+        // and drawing mode stays up; the exit path never fires.
+        key(view, 53, "\u{1B}")
+        let cleared = view.session.strokes.isEmpty && clearCalls == 1
+        let stayedInDrawing = exitCalls == 0
+        report.append(
+            "escape cleared=\(cleared) stayedInDrawing=\(stayedInDrawing) "
+                + "marks=\(view.session.strokes.count) expect 0 exits=\(exitCalls) expect 0 ok=\(cleared && stayedInDrawing)"
+        )
+
+        // A new stroke can be drawn immediately after the clear.
+        drag(view, window: window, from: CGPoint(x: 400, y: 200), to: CGPoint(x: 500, y: 240))
+        let keepsDrawing = view.session.strokes.count == 1
+        report.append("escape keeps-drawing marks=\(view.session.strokes.count) expect 1 ok=\(keepsDrawing)")
+
+        // With a mark selected, Escape still clears the selection first.
+        state.tool = .select
+        drag(view, window: window, from: CGPoint(x: 450, y: 220), to: CGPoint(x: 450, y: 220))
+        let reselected = view.selectedMarkID != nil
+        key(view, 53, "\u{1B}")
+        let selectionFirst = reselected && view.selectedMarkID == nil
+            && view.session.strokes.count == 1 && clearCalls == 1 && exitCalls == 0
+        report.append(
+            "escape selection-first deselected=\(view.selectedMarkID == nil) marks=\(view.session.strokes.count) expect 1 "
+                + "clears=\(clearCalls) expect 1 ok=\(selectionFirst)"
+        )
+
+        // The whiteboard: Escape clears the current page and the board stays open.
+        let boardState = EditorState()
+        boardState.tool = .pen
+        boardState.ink = .blue
+        let board = WhiteboardPages()
+        let boardView = WhiteboardView(frame: CGRect(origin: .zero, size: size), state: boardState, board: board, onEscape: {})
+        let boardWindow = borderlessWindow(boardView)
+        defer { boardWindow.orderOut(nil) }
+
+        var boardExitCalls = 0
+        var boardClearCalls = 0
+        boardView.onEscape = { boardExitCalls += 1 }
+        boardView.onClearMarks = { boardClearCalls += 1; boardView.clear() }
+        drag(boardView, window: boardWindow, from: CGPoint(x: 150, y: 150), to: CGPoint(x: 350, y: 190))
+        guard board.pages[0].session.strokes.count == 1 else {
+            report.append("FAIL: escape board mark was not committed")
+            return report
+        }
+        key(boardView, 53, "\u{1B}")
+        let boardCleared = board.pages[0].session.strokes.isEmpty && boardClearCalls == 1
+        let boardStayedOpen = boardExitCalls == 0 && board.count == 1
+        report.append(
+            "escape board cleared=\(boardCleared) stayedOpen=\(boardStayedOpen) "
+                + "marks=\(board.pages[0].session.strokes.count) expect 0 exits=\(boardExitCalls) expect 0 ok=\(boardCleared && boardStayedOpen)"
+        )
+
+        let passed = cleared && stayedInDrawing && keepsDrawing && selectionFirst
+            && boardCleared && boardStayedOpen
+        report.append("escape result=\(passed ? "PASS" : "FAIL")")
+        return report
+    }
+
+    // MARK: - Number undo (global history)
+
+    /// A numbered step commits inside `DrawingSession.begin`, so `mouseUp`
+    /// never runs for it. The rule pinned here: the placement still reaches
+    /// the controller's global history exactly once, the same way a
+    /// drag-committed mark does — one ⌘Z removes exactly that badge, ⇧⌘Z
+    /// brings the same mark back, and the sequence neither gains nor loses a
+    /// number. Driven through the real controller canvases and their history.
+    private static func numberUndoReport() -> [String] {
+        var report: [String] = []
+        let controller = OverlayController(captureService: CaptureService())
+        controller.activate()
+        defer {
+            if controller.isBoardActive { controller.toggleBoard() }
+            controller.deactivate(restoringFocus: false)
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+
+        controller.state.tool = .number
+
+        /// One real click through the view's own mouse-down path; returns the
+        /// placed badge.
+        func place(on view: OverlayView, at point: CGPoint) -> Stroke? {
+            guard let window = view.window else { return nil }
+            let height = view.bounds.height
+            guard let down = NSEvent.mouseEvent(
+                with: .leftMouseDown,
+                location: CGPoint(x: point.x, y: height - point.y),
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 1,
+                clickCount: 1,
+                pressure: 1
+            ) else { return nil }
+            view.mouseDown(with: down)
+            return view.session.strokes.last
+        }
+
+        // Drawing mode: place, undo through the controller, redo through it.
+        guard let view = controller.selfTestViews.first else {
+            report.append("FAIL: number undo no drawing canvas")
+            return report
+        }
+        guard let placed = place(on: view, at: CGPoint(x: 320, y: 320)),
+              placed.stepNumber == 1, view.session.strokes.count == 1 else {
+            report.append("FAIL: number undo badge was not placed")
+            return report
+        }
+        controller.undo()
+        let removed = view.session.strokes.isEmpty && view.session.stepCount == 0
+        controller.redo()
+        guard let restored = view.session.strokes.first else {
+            report.append("FAIL: number undo redo restored nothing")
+            return report
+        }
+        // The same mark comes back — which only counts when the undo really
+        // removed it — with its number, and the sequence moves on to 2.
+        let restoredOk = removed && restored.id == placed.id && restored.stepNumber == 1
+            && view.session.stepCount == 1 && view.session.nextStepNumber == 2
+        // The sequence keeps running without a gap: the next badge takes
+        // number 2, and undoing it hands the number back while badge 1 stays.
+        guard let second = place(on: view, at: CGPoint(x: 520, y: 320)), second.stepNumber == 2 else {
+            report.append("FAIL: number undo next badge did not take number 2")
+            return report
+        }
+        controller.undo()
+        let keepsSequence = view.session.strokes.count == 1
+            && view.session.strokes.first?.stepNumber == 1
+            && view.session.nextStepNumber == 2
+        report.append(
+            "number undo removed=\(removed) restored=\(restoredOk) keep=\(keepsSequence) "
+                + "marks=\(view.session.strokes.count) expect 1 ok=\(removed && restoredOk && keepsSequence)"
+        )
+        let overlayOk = removed && restoredOk && keepsSequence
+
+        // The whiteboard: the same controller path over the board's canvases,
+        // and the page's own session (what captures compose from) stays in step.
+        controller.toggleBoard()
+        guard let boardView = controller.selfTestViews.first as? WhiteboardView else {
+            report.append("FAIL: number undo no board canvas")
+            return report
+        }
+        guard let boardPlaced = place(on: boardView, at: CGPoint(x: 400, y: 400)),
+              boardPlaced.stepNumber == 1 else {
+            report.append("FAIL: number undo board badge was not placed")
+            return report
+        }
+        controller.undo()
+        let boardRemoved = boardView.session.strokes.isEmpty
+            && boardView.board.currentPage.session.strokes.isEmpty
+        controller.redo()
+        let boardRestoredMark = boardView.session.strokes.first
+        let boardRestored = boardRemoved && boardRestoredMark?.id == boardPlaced.id
+            && boardRestoredMark?.stepNumber == 1
+            && boardView.board.currentPage.session.strokes.first?.id == boardPlaced.id
+        report.append(
+            "number undo board removed=\(boardRemoved) restored=\(boardRestored) "
+                + "marks=\(boardView.session.strokes.count) expect 1 ok=\(boardRemoved && boardRestored)"
+        )
+
+        let passed = overlayOk && boardRemoved && boardRestored
+        report.append("number undo result=\(passed ? "PASS" : "FAIL")")
         return report
     }
 

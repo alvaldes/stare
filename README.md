@@ -101,7 +101,7 @@ reopen it any time from the menu bar with **Setup Guide…**.
 | Where | Keys |
 | --- | --- |
 | Drawing | Hold `⇧` for a straight line with the pen or highlighter, or a square or circle with the rectangle or ellipse |
-| Whiteboard | `⌘←` `⌘→` change page (going past the last one adds a page) · `⌘B` flips the page between white and black · hold space and drag to pan |
+| Whiteboard | `⌘←` `⌘→` change page (going past the last one adds a page) · `⌘B` flips the page between white and black · hold space and drag to pan · pinch or `⌘+`/`⌘−` zooms, `⌘0` resets pan and zoom |
 | Whiteboard | `S` captures the marks over the page colour, no Screen Recording needed · `Esc` closes the board and keeps the pages for the session |
 | Capture card | Hover keeps it on screen · click opens the editor · drag it into another app |
 | Editor | Same tools and inks · `⌘Z` undo · `⇧⌘Z` redo · `Esc` cancels a crop, then closes |
@@ -122,7 +122,7 @@ applies immediately. The sections:
 - **Shortcuts** — the four global shortcuts (`⌥⇧A`, `⌥⇧M`, `⌥⇧P`, `⌥⇧W`) with a key recorder and conflict checks.
 - **Pointer Highlight** — the style of the `⌥⇧M` highlight: five shapes (Ring, Squircle, Rhombus, Dot, Spotlight), size up to 240 pt, band width, border style (Solid or Dashed), opacity, glow, the click animation (Scale or Rotate), colour and idle fade, with a live preview drawn by the same renderer the overlay uses.
 - **Capture** — where captures go (the clipboard or a folder), the file format for folder saves, and the file-name prefix.
-- **Whiteboard** — the background — White, Black or System, which opens pages white in light mode and black in dark mode — and how many pages a new board opens with.
+- **Whiteboard** — the page colour a new board opens with — White, Black or System, which opens pages white in light mode and black in dark mode — how many pages it opens with, which displays the board covers (every one or only the active display), and whether its border is drawn.
 - **Permissions** — the live Screen Recording status, with a link to System Settings.
 - **About** — the version and one line about the app.
 

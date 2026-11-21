@@ -21,6 +21,10 @@ struct ToolbarView: View {
     /// callbacks exist, hidden in the plain overlay and the editor bar.
     var onPreviousPage: (() -> Void)? = nil
     var onNextPage: (() -> Void)? = nil
+    /// Whiteboard delete affordance (T12/S9): nil hides it (the plain overlay
+    /// and the editor bar never show it). Disabled while one page remains,
+    /// since the board can never go empty.
+    var onDeletePage: (() -> Void)? = nil
     /// The tools the bar offers. Defaults to the full drawing palette; a
     /// surface where some tools cannot work (the capture editor) offers a
     /// filtered set, so no dead button is shown and no dead shortcut arms a
@@ -57,6 +61,19 @@ struct ToolbarView: View {
                     .foregroundStyle(Color.secondary)
                     .frame(minWidth: 26)
                 iconButton("chevron.right", help: "Next page (⌘→)", action: next)
+                if let onDeletePage {
+                    Button(action: onDeletePage) {
+                        Image(systemName: "rectangle.stack.badge.minus")
+                            .font(.system(size: 12, weight: .medium))
+                            .frame(width: 26, height: 26)
+                            .foregroundStyle(Color.secondary)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(page.total <= 1)
+                    .opacity(page.total <= 1 ? 0.3 : 1)
+                    .help(Text(verbatim: "Delete page (⌘⌫)"))
+                }
             }
 
             divider

@@ -145,8 +145,16 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         }
         let pointer = PreferencesMigration.migratedPointerStyle(in: store)
         let general = PreferencesMigration.migratedGeneralPreferences(in: store)
-        if pointer != nil || general != nil {
-            return AppPreferences(pointer: pointer ?? .standard, general: general ?? .standard)
+        // The whiteboard's own legacy keys (whiteboard-2): a build that
+        // stored the board choices per key keeps them; the blob's own field
+        // defaults take over for anything not stored.
+        let whiteboard = PreferencesMigration.migratedWhiteboardDefaults(in: store)
+        if pointer != nil || general != nil || whiteboard != nil {
+            return AppPreferences(
+                pointer: pointer ?? .standard,
+                general: general ?? .standard,
+                whiteboard: whiteboard ?? .standard
+            )
         }
         return .standard
     }
@@ -237,6 +245,15 @@ public enum PreferencesMigration {
     /// Legacy key holding the laser lifetime in seconds.
     public static let legacyLifetimeKey = "laserLifetime"
 
+    /// Legacy keys carrying the whiteboard's board choices (whiteboard-2):
+    /// the page-colour choice (`"system"|"white"|"black"`), the display scope
+    /// (`"all"|"active"`) and whether the border is drawn. These were the
+    /// board's only persistence before the one blob owned them; they are read
+    /// during migration and never written.
+    public static let legacyBoardBackgroundKey = "boardPageBackground"
+    public static let legacyBoardScopeKey = "boardScope"
+    public static let legacyBoardBorderKey = "boardShowBorder"
+
     /// Builds the general preferences the legacy keys describe, or nil when
     /// none of them is stored. A missing legacy key keeps today's default, an
     /// unknown string maps to the field's default like today's renderer —
@@ -266,5 +283,32 @@ public enum PreferencesMigration {
             ) ?? .twoPointFive
         }
         return general
+    }
+
+    /// Builds the whiteboard defaults the legacy board keys describe, or nil
+    /// when none of them is stored. A user who ran a per-key build keeps the
+    /// choice those keys carried: the stored page colour (an unknown value
+    /// falls back to following the system, the documented per-key default),
+    /// the stored scope, and the stored border flag. The legacy keys are
+    /// never deleted or rewritten.
+    public static func migratedWhiteboardDefaults(in store: PreferenceStore) -> WhiteboardDefaults? {
+        let hasBackground = store.object(forKey: legacyBoardBackgroundKey) != nil
+        let hasScope = store.object(forKey: legacyBoardScopeKey) != nil
+        let hasBorder = store.object(forKey: legacyBoardBorderKey) != nil
+        guard hasBackground || hasScope || hasBorder else { return nil }
+
+        var whiteboard = WhiteboardDefaults.standard
+        if hasBackground {
+            whiteboard.background = store.string(forKey: legacyBoardBackgroundKey)
+                .flatMap(WhiteboardBackgroundChoice.init(rawValue:)) ?? .system
+        }
+        if hasScope {
+            whiteboard.scope = store.string(forKey: legacyBoardScopeKey)
+                .flatMap(OverlayScope.init(rawValue:)) ?? .all
+        }
+        if hasBorder {
+            whiteboard.showsBorder = store.bool(forKey: legacyBoardBorderKey, default: true)
+        }
+        return whiteboard
     }
 }

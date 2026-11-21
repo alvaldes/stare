@@ -35,9 +35,9 @@ public enum WhiteboardBackgroundChoice: String, CaseIterable, Equatable, Sendabl
     }
 }
 
-/// Persisted whiteboard defaults (T3/S6, T13/S8): what a fresh whiteboard
-/// opens with. `.standard` reproduces today's behaviour exactly — one page on
-/// a white background.
+/// Persisted whiteboard defaults (T3/S6, T13/S8, whiteboard-2/S2-S3): what a
+/// fresh whiteboard opens with — page background, page count, which displays
+/// it covers and whether its border is drawn.
 ///
 /// `pagesOnOpen` is clamped to 1...10 on every path (init, assignment and
 /// decoding), so a malformed blob or UI value can never yield zero pages or a
@@ -58,13 +58,29 @@ public struct WhiteboardDefaults: Codable, Equatable, Sendable {
         didSet { pagesOnOpen = Self.clamped(pagesOnOpen) }
     }
 
+    /// Which displays the board covers: every one, or only the active display
+    /// (whiteboard-2/S3). Same rule and values the drawing overlay's scope
+    /// uses; a change applies while the board is open.
+    public var scope: OverlayScope
+
+    /// Whether the board draws its border frame (whiteboard-2/S2), decided
+    /// independently of the drawing overlay's armed frame (`showArmedFrame`).
+    public var showsBorder: Bool
+
     /// The whiteboard defaults a fresh install gets, matching today's board.
     public static let standard = WhiteboardDefaults()
 
     /// Creates defaults, clamping `pagesOnOpen` into `pageRange`.
-    public init(background: WhiteboardBackgroundChoice = .white, pagesOnOpen: Int = 1) {
+    public init(
+        background: WhiteboardBackgroundChoice = .white,
+        pagesOnOpen: Int = 1,
+        scope: OverlayScope = .all,
+        showsBorder: Bool = true
+    ) {
         self.background = background
         self.pagesOnOpen = Self.clamped(pagesOnOpen)
+        self.scope = scope
+        self.showsBorder = showsBorder
     }
 
     /// Resolves the stored choice into a board page colour: `system` becomes
@@ -89,28 +105,36 @@ public struct WhiteboardDefaults: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case background, pagesOnOpen
+        case background, pagesOnOpen, scope, showsBorder
     }
 
     /// Lenient decoding: a missing or unknown background falls back to white,
-    /// and a missing or out-of-range page count takes the default of 1 or
-    /// clamps into range. The same raw string also carries the pre-System
-    /// shapes (`"white"`, `"black"`), so old blobs migrate without a reset.
+    /// a missing or out-of-range page count takes the default of 1 or clamps
+    /// into range, a missing or unknown scope falls back to every display,
+    /// and a missing border flag falls back to shown. The same raw string
+    /// also carries the pre-System shapes (`"white"`, `"black"`), so old
+    /// blobs migrate without a reset.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let rawBackground = try? container.decode(String.self, forKey: .background)
         self.background = rawBackground.flatMap(WhiteboardBackgroundChoice.init(rawValue:)) ?? .white
         let decodedCount = (try? container.decodeIfPresent(Int.self, forKey: .pagesOnOpen)) ?? 1
         self.pagesOnOpen = Self.clamped(decodedCount)
+        let rawScope = try? container.decode(String.self, forKey: .scope)
+        self.scope = rawScope.flatMap(OverlayScope.init(rawValue:)) ?? .all
+        self.showsBorder = (try? container.decodeIfPresent(Bool.self, forKey: .showsBorder)) ?? true
     }
 
     /// Encodes the background as its raw string (`"white"`, `"black"` or
     /// `"system"` — the same key and shape older writers used, so the
-    /// document stays understandable to future readers).
+    /// document stays understandable to future readers) and the scope the
+    /// same way, matching the overlay's persisted strings.
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(background.rawValue, forKey: .background)
         try container.encode(pagesOnOpen, forKey: .pagesOnOpen)
+        try container.encode(scope.rawValue, forKey: .scope)
+        try container.encode(showsBorder, forKey: .showsBorder)
     }
 
     private static func clamped(_ count: Int) -> Int {

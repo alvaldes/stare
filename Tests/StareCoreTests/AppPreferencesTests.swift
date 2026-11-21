@@ -254,6 +254,56 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertEqual(prefs.whiteboard.resolvedBackground(isDarkAppearance: true), .black)
     }
 
+    // MARK: Whiteboard migration from the per-key build (whiteboard-2)
+
+    /// A user who ran the build that stored the board choices per key keeps
+    /// every choice: the page colour, the scope and the border flag land in
+    /// the blob, and the legacy keys are only read, never rewritten.
+    func testMigrationFromLegacyBoardKeysCarriesBackgroundScopeAndBorder() {
+        let store = InMemoryPreferenceStore()
+        store.set("system", forKey: PreferencesMigration.legacyBoardBackgroundKey)
+        store.set("active", forKey: PreferencesMigration.legacyBoardScopeKey)
+        store.set(false, forKey: PreferencesMigration.legacyBoardBorderKey)
+
+        let prefs = AppPreferences(store: store)
+        XCTAssertEqual(prefs.whiteboard.background, WhiteboardBackgroundChoice.system)
+        XCTAssertEqual(prefs.whiteboard.scope, OverlayScope.active)
+        XCTAssertFalse(prefs.whiteboard.showsBorder)
+        XCTAssertFalse(prefs.hasCompletedOnboarding)
+    }
+
+    func testUnknownLegacyBoardValuesFallBackToTheirDefaults() {
+        let store = InMemoryPreferenceStore()
+        store.set("sepia", forKey: PreferencesMigration.legacyBoardBackgroundKey)
+        store.set("someOther", forKey: PreferencesMigration.legacyBoardScopeKey)
+        store.set(true, forKey: PreferencesMigration.legacyBoardBorderKey)
+
+        let prefs = AppPreferences(store: store)
+        XCTAssertEqual(prefs.whiteboard.background, WhiteboardBackgroundChoice.system)
+        XCTAssertEqual(prefs.whiteboard.scope, OverlayScope.all)
+        XCTAssertTrue(prefs.whiteboard.showsBorder)
+    }
+
+    func testBoardKeysWithoutMarkerDoNotMigrate() {
+        let store = InMemoryPreferenceStore()
+        let prefs = AppPreferences(store: store)
+        XCTAssertEqual(prefs.whiteboard, WhiteboardDefaults.standard)
+    }
+
+    /// The blob wins: once the one document exists the per-key board choices
+    /// are no longer read, so a later Settings change survives a restart and
+    /// is never clobbered by stale keys.
+    func testBlobOverridesLegacyBoardKeys() {
+        let store = InMemoryPreferenceStore()
+        store.set("black", forKey: PreferencesMigration.legacyBoardBackgroundKey)
+        var saved = AppPreferences()
+        saved.whiteboard.background = .white
+        saved.save(to: store)
+
+        let prefs = AppPreferences(store: store)
+        XCTAssertEqual(prefs.whiteboard.background, WhiteboardBackgroundChoice.white)
+    }
+
     func testCorruptSubFieldFallsBackToStandardAndKeepsTheRestOfTheBlob() {
         let store = InMemoryPreferenceStore()
         // "capture" is undecodable garbage; the pointer and the other new

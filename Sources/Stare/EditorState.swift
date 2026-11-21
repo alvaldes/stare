@@ -124,6 +124,33 @@ final class EditorState: ObservableObject {
             }
         }
     }
+    /// Mirror of the first page's colour: "system" follows the appearance
+    /// (light → white, dark → black), "white" and "black" fix it. New pages
+    /// inherit the page they came from; ⌘B still flips the current page.
+    /// Persisted in the one blob's whiteboard defaults, never as its own key.
+    @Published var boardPageBackground: String {
+        didSet {
+            writeIfNotSyncing {
+                $0.whiteboard.background = WhiteboardBackgroundChoice(rawValue: boardPageBackground) ?? .system
+            }
+        }
+    }
+    /// Mirror of where the whiteboard opens: "all" covers every display,
+    /// "active" only the one under the pointer — the same rule the drawing
+    /// overlay uses. Persisted in the one blob's whiteboard defaults.
+    @Published var boardScope: String {
+        didSet {
+            writeIfNotSyncing {
+                $0.whiteboard.scope = OverlayScope(rawValue: boardScope) ?? .all
+            }
+        }
+    }
+    /// Mirror of whether the whiteboard draws its border. The board's own
+    /// preference, decided independently of the drawing frame
+    /// (`showArmedFrame`); persisted in the one blob's whiteboard defaults.
+    @Published var boardShowBorder: Bool {
+        didSet { writeIfNotSyncing { $0.whiteboard.showsBorder = boardShowBorder } }
+    }
     /// Whiteboard pages indicator for the toolbar: nil hides the page controls.
     @Published var whiteboardPage: (current: Int, total: Int)? = nil
 
@@ -178,6 +205,7 @@ final class EditorState: ObservableObject {
             let scope = MainActor.assumeIsolated { preferences.scope }
             let placement = MainActor.assumeIsolated { preferences.palettePlacement }
             let lifetime = MainActor.assumeIsolated { preferences.laserLifetime }
+            let whiteboard = MainActor.assumeIsolated { preferences.whiteboard }
             pointerSize = CGFloat(style.size)
             pointerShape = style.preset == .squircle ? "squircle" : "circle"
             pointerGlow = style.glowIntensity > 0
@@ -195,6 +223,9 @@ final class EditorState: ObservableObject {
             overlayScope = scope.rawValue
             palettePlacement = placement.rawValue
             laserLifetime = lifetime.rawValue
+            boardPageBackground = whiteboard.background.rawValue
+            boardScope = whiteboard.scope.rawValue
+            boardShowBorder = whiteboard.showsBorder
             MainActor.assumeIsolated {
                 self.tool = preferences.tool
                 self.ink = preferences.ink
@@ -213,6 +244,9 @@ final class EditorState: ObservableObject {
             overlayScope = OverlayScope.all.rawValue
             palettePlacement = PalettePlacement.cursor.rawValue
             laserLifetime = LaserLifetime.twoPointFive.rawValue
+            boardPageBackground = WhiteboardDefaults.standard.background.rawValue
+            boardScope = WhiteboardDefaults.standard.scope.rawValue
+            boardShowBorder = WhiteboardDefaults.standard.showsBorder
         }
         if let preferences {
             MainActor.assumeIsolated { subscribeToModel(preferences) }
@@ -261,6 +295,13 @@ final class EditorState: ObservableObject {
         model.$toolShortcuts.dropFirst().sink { [weak self] value in
             self?.syncFromModel { $0.toolShortcuts = value }
         }.store(in: &preferenceCancellables)
+        model.$whiteboard.dropFirst().sink { [weak self] defaults in
+            self?.syncFromModel {
+                $0.boardPageBackground = defaults.background.rawValue
+                $0.boardScope = defaults.scope.rawValue
+                $0.boardShowBorder = defaults.showsBorder
+            }
+        }.store(in: &preferenceCancellables)
     }
 
     /// Writes a value into the preferences model unless the write came from
@@ -277,5 +318,12 @@ final class EditorState: ObservableObject {
         syncingFromModel = true
         update(self)
         syncingFromModel = false
+    }
+
+    /// The board's page-colour choice, parsed from the mirror above. An
+    /// unknown value falls back to following the system, the documented
+    /// default.
+    var boardBackgroundChoice: BoardBackground {
+        BoardBackground(rawValue: boardPageBackground) ?? .system
     }
 }

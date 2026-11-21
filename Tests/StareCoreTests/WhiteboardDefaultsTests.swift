@@ -68,6 +68,28 @@ final class WhiteboardDefaultsTests: XCTestCase {
         XCTAssertEqual(decoded.pagesOnOpen, 1)
     }
 
+    func testDecodeMissingScopeAndBorderTakeTodayDefaults() throws {
+        let decoded = try decode(#"{"background":"black","pagesOnOpen":2}"#)
+        XCTAssertEqual(decoded.scope, OverlayScope.all)
+        XCTAssertTrue(decoded.showsBorder)
+    }
+
+    func testDecodeCarriesScopeAndBorderAndUnknownScopeFallsBack() throws {
+        let decoded = try decode(#"{"scope":"active","showsBorder":false}"#)
+        XCTAssertEqual(decoded.scope, OverlayScope.active)
+        XCTAssertFalse(decoded.showsBorder)
+        let unknown = try decode(#"{"scope":"some-other"}"#)
+        XCTAssertEqual(unknown.scope, OverlayScope.all)
+    }
+
+    func testScopeAndBorderRoundTripThroughJSON() throws {
+        var saved = WhiteboardDefaults.standard
+        saved.scope = .active
+        saved.showsBorder = false
+        let data = try JSONEncoder().encode(saved)
+        XCTAssertEqual(try JSONDecoder().decode(WhiteboardDefaults.self, from: data), saved)
+    }
+
     func testUnknownBackgroundFallsBackToWhiteAndKeepsTheRest() throws {
         let decoded = try decode(#"{"background":"sepia","pagesOnOpen":4}"#)
         XCTAssertEqual(decoded.background, .white)

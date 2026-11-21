@@ -93,8 +93,9 @@ final class OverlayController {
         self.state = EditorState(preferences: preferences)
         wireEditor()
         // Interest is asked from the canvases, so it is whatever the sessions
-        // actually hold: only capture while the overlay is active and at least
-        // one display has a visible blur mark.
+        // actually hold: only capture while the drawing overlay is active and
+        // at least one display has a visible blur mark. The board never asks
+        // for frames (S1): its blur diffs the board's own content.
         liveFrames.displaysNeedingFrames = { [weak self] in
             guard let self, self.isActive else { return [] }
             return self.canvases.values
@@ -138,6 +139,22 @@ final class OverlayController {
                 self.repaintCanvases()
             }
             .store(in: &cancellables)
+        // S3: the board scope is decided in Settings and takes effect while
+        // the board is open — the canvases rebuild, the pages of the displays
+        // that stay are kept (they live in `boards`, keyed by display). The
+        // emitted value is used directly: @Published fires on willSet, so
+        // `state.boardScope` still holds the old value here.
+        state.$boardScope
+            .dropFirst()
+            .sink { [weak self] scope in
+                guard let self, self.isBoardActive else { return }
+                self.rebuildBoardCanvases(scope: scope)
+            }
+            .store(in: &cancellables)
+        // S2: the border preference repaints the open board at once.
+        state.$boardShowBorder.map { _ in () }.eraseToAnyPublisher()
+            .sink { [weak self] in self?.repaintBoardCanvases() }
+            .store(in: &cancellables)
     }
 
     /// At most one mark is selected in the whole app: this drops every view's
@@ -153,6 +170,13 @@ final class OverlayController {
         isBoardActive ? boardCanvases : canvases
     }
 
+    /// The drawing layers the controller owns right now, exposed for
+    /// `--selftest`: it has to drive the real views through the real
+    /// ⌘Z/⇧⌘Z routing, which a StareCore unit test cannot reach.
+    var selfTestViews: [OverlayView] {
+        activeCanvases.values.map(\.view)
+    }
+
     private func activeCanvasUnderPointer() -> DisplayCanvas? {
         isBoardActive ? boardCanvasUnderPointer() : canvasUnderPointer()
     }
@@ -162,6 +186,16 @@ final class OverlayController {
             canvas.view.finishPendingTextEditing()
             canvas.view.syncPreferences()
             canvas.view.syncPointerFromScreen()
+            canvas.view.needsDisplay = true
+        }
+    }
+
+    /// Same repaint the drawing canvases get, for the open board: preference
+    /// changes (the border, for one) reach every board display at once.
+    private func repaintBoardCanvases() {
+        for canvas in boardCanvases.values {
+            canvas.view.finishPendingTextEditing()
+            canvas.view.syncPreferences()
             canvas.view.needsDisplay = true
         }
     }
@@ -495,7 +529,13 @@ final class OverlayController {
     }
 
     /// Whiteboard capture: marks over a solid image of the page's background
-    /// colour at the display's pixel size.
+    /// colour at the display's pixel size — never transparent, never a bare
+    /// background-coloured image with nothing drawn.
+    ///
+    /// S1: a blur mark here diffs the board's own content — the page colour
+    /// and the marks painted before it — so `diffusesContent` is on and no
+    /// live frame is involved: the board never needs Screen Recording for its
+    /// blur, and the desktop behind the board never shows through a patch.
     private func captureBoardMarks(_ canvas: DisplayCanvas, displayID: CGDirectDisplayID, area: CGRect?) {
         guard let boardView = canvas.boardView else { return }
         let frameSize = canvas.panel.frame.size
@@ -508,7 +548,8 @@ final class OverlayController {
 
         guard let base = boardView.board.currentPage.background.captureBase(
             width: Int(pixelSize.width),
-            height: Int(pixelSize.height)
+            height: Int(pixelSize.height),
+            isDark: boardView.isDarkAppearance
         ) else {
             Diag.log("board capture failed: background base image")
             return
@@ -516,7 +557,13 @@ final class OverlayController {
         guard let composed = MarkCompositor.composite(
             marks: canvas.view.session.strokes,
             over: base,
-            scale: scale
+            scale: scale,
+            diffusesContent: true,
+            // The marks are stored in page space; the capture copies what the
+            // board shows — the same pan and the same zoom (T5/S5), so the
+            // page transform moves them into view space.
+            offset: boardView.board.currentPage.offset,
+            zoom: boardView.board.currentPage.zoom
         ) else {
             Diag.log("board capture failed: composition returned nil")
             return
@@ -657,14 +704,7 @@ final class OverlayController {
     @objc private func screenParametersChanged() {
         guard isActive || isBoardActive else { return }
         if isBoardActive {
-            for canvas in boardCanvases.values { canvas.panel.orderOut(nil) }
-            boardCanvases.removeAll()
-            buildBoardCanvases()
-            for canvas in boardCanvases.values {
-                canvas.panel.orderFrontRegardless()
-                canvas.panel.makeFirstResponder(canvas.view)
-            }
-            boardCanvasUnderPointer()?.panel.makeKey()
+            rebuildBoardCanvases()
             return
         }
         tearDownCanvases()
@@ -744,6 +784,18 @@ final class OverlayController {
             redoOrder.removeAll { $0.strokeID == id }
             redoOrder.append((displayID, id))
         }
+        view.onClearMarks = { [weak self, weak view] in
+            guard let self, let view else { return }
+            // Escape with nothing selected: this display's marks (the current
+            // whiteboard page in board mode) are cleared and drawing keeps
+            // going there. The display's entries leave the global history, so
+            // undo and redo cannot resurrect what Escape just erased — the
+            // same rule an erase follows.
+            let ids = Set(view.session.strokes.map(\.id))
+            historyOrder.removeAll { ids.contains($0.strokeID) }
+            redoOrder.removeAll { ids.contains($0.strokeID) }
+            view.clear()
+        }
         view.onErase = { [weak self] ids in
             guard let self else { return }
             let erased = Set(ids)
@@ -767,6 +819,29 @@ final class OverlayController {
         liveFrames.stop()
     }
 
+    /// Orders out every board canvas and builds the set again from scratch.
+    /// The scope preference and display-parameter changes both land here.
+    /// `scope` overrides the stored preference — Combine delivers the new
+    /// value on willSet, before the property itself has changed. The pages
+    /// live in `boards`, keyed by display and shared by identity, so a
+    /// rebuild never loses the marks of the displays that stay — and a
+    /// display that leaves the scope keeps its pages in memory for the
+    /// session (the same rule closing the board follows); nothing is drawn
+    /// away.
+    private func rebuildBoardCanvases(scope: String? = nil) {
+        for canvas in boardCanvases.values { canvas.panel.orderOut(nil) }
+        boardCanvases.removeAll()
+        buildBoardCanvases(scope: scope)
+        for canvas in boardCanvases.values {
+            canvas.view.syncPreferences()
+            canvas.panel.orderFrontRegardless()
+            canvas.panel.makeFirstResponder(canvas.view)
+        }
+        boardCanvasUnderPointer()?.panel.makeKey()
+        syncBoardIndicator()
+        Diag.log("board rebuild displays=\(boardCanvases.count) scope=\(scope ?? state.boardScope)")
+    }
+
     // MARK: - Board canvases
 
     private func board(for displayID: CGDirectDisplayID) -> WhiteboardPages {
@@ -777,7 +852,8 @@ final class OverlayController {
         // The System choice (T13/S8) is resolved at board-open time, from the
         // app's effective appearance; the board is cached per display until it
         // closes, so a system theme change later never repaints an already open
-        // board — it applies to the next board.
+        // board — it applies to the next board. The scope and the border live
+        // in the same blob's defaults and are read while the board is open.
         let defaults = whiteboardDefaults()
         let fresh = WhiteboardPages(background: defaults.resolvedBackground(isDarkAppearance: isDarkAppearance()))
         for _ in 1..<max(defaults.pagesOnOpen, 1) {
@@ -787,8 +863,19 @@ final class OverlayController {
         return fresh
     }
 
-    private func buildBoardCanvases() {
-        for screen in NSScreen.screens {
+    /// `scope` overrides the stored preference for this build only; nil means
+    /// "read the preference", which is what opening the board does.
+    private func buildBoardCanvases(scope: String? = nil) {
+        // S3: the board scope is its own preference — every display, or only
+        // the one under the pointer, the same rule the drawing overlay uses.
+        let effectiveScope = scope ?? state.boardScope
+        let screens: [NSScreen]
+        if effectiveScope == "active", let active = screenUnderPointer() {
+            screens = [active]
+        } else {
+            screens = NSScreen.screens
+        }
+        for screen in screens {
             guard let displayID = DisplayCanvas.displayID(of: screen),
                   let canvas = DisplayCanvas(
                     screen: screen,
@@ -801,10 +888,9 @@ final class OverlayController {
             canvas.view.onCaptureRequest = { [weak self] area in
                 self?.capture(displayID: displayID, area: area)
             }
-            canvas.view.onBlurMarksChanged = nil
-            // The board covers the screen, so a blur mark cannot show the
-            // desktop: no live frames are fed here and the neutral fallback
-            // shows where the mark is.
+            // S1: nothing on the board asks for frames or Screen Recording —
+            // a board canvas never gets a live frame source or a display id;
+            // its blur diffs the board's own content.
             canvas.boardView?.onPageChanged = { [weak self] in
                 self?.syncBoardIndicator(for: displayID)
             }
@@ -821,6 +907,38 @@ final class OverlayController {
             return
         }
         state.whiteboardPage = (current: board.currentIndex + 1, total: board.count)
+    }
+
+    // MARK: - Board page actions (T12/S9)
+
+    /// The current page and total of the display the pointer is on, nil when
+    /// the board is closed. The menu and the toolbar read this to enable and
+    /// disable the page actions.
+    var boardPageState: (current: Int, total: Int)? {
+        guard isBoardActive,
+              let view = boardCanvasUnderPointer()?.boardView else { return nil }
+        return (current: view.board.currentIndex + 1, total: view.board.count)
+    }
+
+    /// ⌘⌫ — deletes the current page on the display the pointer is on. Refused
+    /// while one page remains, so the board never goes empty.
+    func deleteBoardPage() {
+        boardCanvasUnderPointer()?.boardView?.deleteCurrentPage()
+    }
+
+    /// ⌥← — moves the current page one slot to the left.
+    func moveBoardPageLeft() {
+        boardCanvasUnderPointer()?.boardView?.moveCurrentPageLeft()
+    }
+
+    /// ⌥→ — moves the current page one slot to the right.
+    func moveBoardPageRight() {
+        boardCanvasUnderPointer()?.boardView?.moveCurrentPageRight()
+    }
+
+    /// ⌘0 — resets the current page's pan and zoom together (T5/S5).
+    func resetBoardPan() {
+        boardCanvasUnderPointer()?.boardView?.resetPageView()
     }
 
     private func boardCanvasUnderPointer() -> DisplayCanvas? {
@@ -877,6 +995,11 @@ final class OverlayController {
                 },
                 onNextPage: { [weak self] in
                     self?.boardCanvasUnderPointer()?.boardView?.selectNextPage()
+                },
+                // The board bar alone carries the delete affordance; the
+                // drawing bar is built without it (nil hides the button).
+                onDeletePage: { [weak self] in
+                    self?.boardCanvasUnderPointer()?.boardView?.deleteCurrentPage()
                 }
             )
             : ToolbarPanel(

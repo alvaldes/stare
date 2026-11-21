@@ -13,7 +13,9 @@ user gets.
 - Every global shortcut and tool key is rebindable from Settings, with conflict checks and a visible refusal
 - Captures can go to a folder instead of the clipboard, saved as PNG or JPEG with a name prefix you choose
 - The whiteboard can open with black pages and a chosen page count
-- Whiteboard: a System default that opens pages white in light mode and black in dark mode, resolved when the board opens
+- The board's blur diffuses the board's own content, not the screen behind it — the board never asks for Screen Recording
+- The board opens on System (white in light mode, black in dark mode, resolved when the board opens), White or Black pages, and you choose its display scope (every display or only the active one) and its own border toggle in Settings
+- The board zooms with the pan (pinch, `⌘+`/`⌘−`, `⌘0` resets both) under a Freeform-style dot grid
 - Launch at login, with the login item's real status shown
 - Update check that names the latest release and links to it — Stare is not notarized, so it never installs anything itself
 

@@ -36,8 +36,9 @@ their measured extents, and the front-window display mapping with the window
 frame and display frames it used.
 
 Its checked sections each end in one `result=` line, expected `PASS`:
-`select`, `board`, `blur` and `pointer pulse` for the drawing and capture
-core; `settings panes … areas=8` and `settings window` for the settings shell
+`select`, `board`, `board pages`, `board blur`, `board prefs`, `board zoom`,
+`board dots`, `number`, `number undo`, `escape`, `blur` and `pointer pulse` for
+the drawing, board and capture core `settings panes … areas=8` and `settings window` for the settings shell
 (every pane rendered in light and dark; the window visible, resizable and
 wider than the old fixed 420-pt form); `tools pane` (a tool-shortcut rebind
 as the overlay's router sees it, with conflict and unsupported-key refusals
