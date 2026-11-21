@@ -8,10 +8,12 @@ user gets.
 
 - First run: a setup guide opens System Settings at the Screen Recording pane, notices the grant when you come back, and continues into Settings
 - Rebuilt Settings window: a resizable sidebar of sections — General, Tools, Shortcuts, Pointer Highlight, Capture, Whiteboard, Permissions, About — with every change applied live
-- Pointer highlight styles: five presets (Ring, Squircle, Dot, Marker tip, Spotlight) with size, colour, band and glow, plus a live preview drawn by the overlay's own renderer
+- Pointer highlight styles: six shapes (Ring, Squircle, Dot, Marker tip, Spotlight, Rhombus) with size, colour, band, glow, plus a live preview drawn by the overlay's own renderer
+- Pointer highlight extras: a Solid or Dashed border, an adjustable opacity, and a Rotate click animation next to the existing Scale pulse
 - Every global shortcut and tool key is rebindable from Settings, with conflict checks and a visible refusal
 - Captures can go to a folder instead of the clipboard, saved as PNG or JPEG with a name prefix you choose
 - The whiteboard can open with black pages and a chosen page count
+- Whiteboard: a System default that opens pages white in light mode and black in dark mode, resolved when the board opens
 - Launch at login, with the login item's real status shown
 - Update check that names the latest release and links to it — Stare is not notarized, so it never installs anything itself
 

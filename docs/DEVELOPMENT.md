@@ -48,8 +48,11 @@ modifier-less key refused while the previous binding stays); `general pane`
 `capture pane` (a folder-destination capture lands as a correctly named,
 decodable file through the real delivery tail, and the clipboard path writes
 nothing); `whiteboard pane` (a fresh board opens with the persisted
-background and page count); `marker styles … presets=5` (all five pointer
-presets drawn through the Settings preview, with painted-pixel checks); and
+background and page count, and the System background resolves to
+`system-light=white` in the light appearance and `system-dark=black` in the
+dark one); `marker styles … presets=6` (all six pointer presets drawn through
+the Settings preview, with painted-pixel checks, plus one dashed-border and
+one rotated-click render reported as `dashed=1 rotated=1`); and
 `onboarding` (the guide's window can become key from the accessory app, and
 any close marks the guide as seen). The scratch directories the capture and
 whiteboard sections create are removed before the report returns.

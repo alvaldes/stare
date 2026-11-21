@@ -120,9 +120,9 @@ applies immediately. The sections:
 - **General** — the drawing frame, which displays to draw on, where the palette opens, how long the laser lasts, launch at login, and update checks.
 - **Tools** — the ink drawing starts with, a shortcut for each tool, and the palette's position reset.
 - **Shortcuts** — the four global shortcuts (`⌥⇧A`, `⌥⇧M`, `⌥⇧P`, `⌥⇧W`) with a key recorder and conflict checks.
-- **Pointer Highlight** — the style of the `⌥⇧M` highlight: five presets (Ring, Squircle, Dot, Marker tip, Spotlight), size, band width, glow, colour and idle fade, with a live preview drawn by the same renderer the overlay uses.
+- **Pointer Highlight** — the style of the `⌥⇧M` highlight: six shapes (Ring, Squircle, Dot, Marker tip, Spotlight, Rhombus), size, band width, border style (Solid or Dashed), opacity, glow, the click animation (Scale or Rotate), colour and idle fade, with a live preview drawn by the same renderer the overlay uses.
 - **Capture** — where captures go (the clipboard or a folder), the file format for folder saves, and the file-name prefix.
-- **Whiteboard** — the background and how many pages a new board opens with.
+- **Whiteboard** — the background — White, Black or System, which opens pages white in light mode and black in dark mode — and how many pages a new board opens with.
 - **Permissions** — the live Screen Recording status, with a link to System Settings.
 - **About** — the version and one line about the app.
 
