@@ -1,6 +1,7 @@
 import { HeroBackdrop } from '../components/Backdrop'
 import { Demo } from '../components/Demo'
 import { Shortcuts } from '../components/Keyboard'
+import { PointerSection } from '../components/Pointer'
 import { Download, Faq, Footer, Hero, Nav, Principles } from '../components/sections'
 import { Steps } from '../components/Steps'
 
@@ -14,6 +15,7 @@ export function Home() {
         <Demo />
         <Steps />
         <Shortcuts />
+        <PointerSection />
         <Principles />
         <Download />
         <Faq />

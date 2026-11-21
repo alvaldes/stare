@@ -4,6 +4,7 @@ import { fitLivePage } from './browser'
 import { playCreatorNote } from './creatorNote'
 import { mountDemo } from './demo'
 import { mountKeyboardPanel } from './keyboard'
+import { mountPointer } from './pointer'
 import { enableDownloads } from './download'
 import { lightUpShortcuts, revealOnScroll, trackSpotlights } from './effects'
 
@@ -18,6 +19,9 @@ const shortcuts = document.getElementById('shortcuts')
 if (keyPreview && shortcuts) mountKeyboardPanel(keyPreview, shortcuts)
 
 playCreatorNote()
+
+const pointerControls = document.getElementById('pointer-controls')
+if (pointerControls) mountPointer(pointerControls)
 
 const livePage = document.getElementById('demo-page')
 if (livePage instanceof HTMLIFrameElement) fitLivePage(livePage)

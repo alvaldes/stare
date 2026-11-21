@@ -72,7 +72,9 @@ export function Hero() {
           Try it in your browser
         </a>
       </div>
-      <p class="mt-5 text-[14px] text-muted">Requires {site.minimumMacOS} or later.</p>
+      <p class="mt-5 text-[14px] text-muted motion-safe:animate-blur-in" style={{ animationDelay: "900ms" }}>
+        Requires {site.minimumMacOS} or later.
+      </p>
       </div>
 
       <HeroScene />
