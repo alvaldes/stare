@@ -13,6 +13,9 @@ final class EditorState: ObservableObject {
     private static let pointerShapeKey = "pointerShape"
     private static let pointerGlowKey = "pointerGlow"
     private static let pointerFadeKey = "pointerFadeWhenIdle"
+    private static let boardBackgroundKey = "boardPageBackground"
+    private static let boardScopeKey = "boardScope"
+    private static let boardBorderKey = "boardShowBorder"
 
     @Published var tool: Tool = .pen {
         didSet { Diag.log("tool=\(tool.rawValue)") }
@@ -51,6 +54,23 @@ final class EditorState: ObservableObject {
     @Published var laserLifetime: TimeInterval {
         didSet { UserDefaults.standard.set(laserLifetime, forKey: Self.laserLifetimeKey) }
     }
+    /// The default background of a whiteboard page's first page: "system"
+    /// follows the appearance (light → white, dark → black), "white" and
+    /// "black" fix it. New pages inherit the page they came from; ⌘B still
+    /// flips the current page.
+    @Published var boardPageBackground: String {
+        didSet { UserDefaults.standard.set(boardPageBackground, forKey: Self.boardBackgroundKey) }
+    }
+    /// Where the whiteboard opens: "all" covers every display, "active" only
+    /// the one under the pointer — the same rule the drawing overlay uses.
+    @Published var boardScope: String {
+        didSet { UserDefaults.standard.set(boardScope, forKey: Self.boardScopeKey) }
+    }
+    /// Whether the whiteboard draws its border. The board's own preference,
+    /// decided independently of the drawing frame (`showArmedFrame`).
+    @Published var boardShowBorder: Bool {
+        didSet { UserDefaults.standard.set(boardShowBorder, forKey: Self.boardBorderKey) }
+    }
     /// Whiteboard pages indicator for the toolbar: nil hides the page controls.
     @Published var whiteboardPage: (current: Int, total: Int)? = nil
 
@@ -82,5 +102,24 @@ final class EditorState: ObservableObject {
         pointerFadeWhenIdle = defaults.bool(forKey: Self.pointerFadeKey)
         overlayScope = defaults.string(forKey: Self.overlayScopeKey) ?? "all"
         palettePlacement = defaults.string(forKey: Self.palettePlacementKey) ?? "cursor"
+        if defaults.object(forKey: Self.boardBackgroundKey) == nil {
+            defaults.set("system", forKey: Self.boardBackgroundKey)
+        }
+        if defaults.object(forKey: Self.boardScopeKey) == nil {
+            defaults.set("all", forKey: Self.boardScopeKey)
+        }
+        if defaults.object(forKey: Self.boardBorderKey) == nil {
+            defaults.set(true, forKey: Self.boardBorderKey)
+        }
+        boardPageBackground = defaults.string(forKey: Self.boardBackgroundKey) ?? "system"
+        boardScope = defaults.string(forKey: Self.boardScopeKey) ?? "all"
+        boardShowBorder = defaults.bool(forKey: Self.boardBorderKey)
+    }
+
+    /// The board's page-colour choice, parsed from the stored preference. An
+    /// unknown value falls back to following the system, the documented
+    /// default.
+    var boardBackgroundChoice: BoardBackground {
+        BoardBackground(rawValue: boardPageBackground) ?? .system
     }
 }

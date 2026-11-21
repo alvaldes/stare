@@ -268,6 +268,69 @@ final class WhiteboardPagesTests: XCTestCase {
         XCTAssertEqual(board.currentPage.session, replacement)
     }
 
+    // T4/S4: the follow-the-system choice is a value of the page background
+    // itself, resolved against the appearance wherever a concrete colour is
+    // consumed (paint, capture, ⌘B).
+    func testSystemResolvesWhiteInLightAndBlackInDark() {
+        XCTAssertEqual(BoardBackground.system.resolved(isDark: false), .white, "light mode shows a white page")
+        XCTAssertEqual(BoardBackground.system.resolved(isDark: true), .black, "dark mode shows a black page")
+    }
+
+    func testExplicitChoicesIgnoreTheAppearance() {
+        XCTAssertEqual(BoardBackground.white.resolved(isDark: true), .white)
+        XCTAssertEqual(BoardBackground.black.resolved(isDark: false), .black)
+    }
+
+    func testSystemCaptureBaseFollowsTheAppearance() throws {
+        let light = try XCTUnwrap(BoardBackground.system.captureBase(width: 8, height: 8, isDark: false))
+        let dark = try XCTUnwrap(BoardBackground.system.captureBase(width: 8, height: 8, isDark: true))
+        for (image, expectBlack) in [(light, false), (dark, true)] {
+            let representation = NSBitmapImageRep(cgImage: image)
+            let colour = representation.colorAt(x: 0, y: 0)?.usingColorSpace(.deviceRGB)
+            var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+            colour?.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+            XCTAssertEqual(alpha, 1, accuracy: 0.01, "the base must be opaque, never transparent")
+            let sum = red + green + blue
+            if expectBlack {
+                XCTAssertEqual(sum, 0, accuracy: 0.01, "a system page in dark mode captures black")
+            } else {
+                XCTAssertEqual(sum, 3, accuracy: 0.01, "a system page in light mode captures white")
+            }
+        }
+    }
+
+    func testToggleBackgroundOnSystemPageStartsFromTheVisibleColour() {
+        // ⌘B keeps flipping between white and black: a system page resolves
+        // against the appearance first, so the flip starts from the colour the
+        // user actually sees and lands on the opposite explicit choice.
+        let darkBoard = WhiteboardPages(background: .system)
+        darkBoard.toggleBackground(isDark: true)
+        XCTAssertEqual(darkBoard.currentPage.background, .white, "dark mode shows black, ⌘B flips it to white")
+
+        let lightBoard = WhiteboardPages(background: .system)
+        lightBoard.toggleBackground(isDark: false)
+        XCTAssertEqual(lightBoard.currentPage.background, .black, "light mode shows white, ⌘B flips it to black")
+    }
+
+    func testSystemPageKeepsItsChoiceWhileOthersFlip() {
+        // The page keeps its identity: flipping other pages and moving between
+        // pages never turns a system page into an explicit colour.
+        let board = WhiteboardPages(background: .system)
+        board.selectNext()
+        board.toggleBackground(isDark: false) // page 2 becomes explicitly black
+        XCTAssertEqual(board.currentPage.background, .black)
+        board.selectPrevious()
+        XCTAssertEqual(board.currentPage.background, .system, "page 1 still follows the system")
+        board.toggleBackground(isDark: true) // ⌘B on page 1 makes it explicit
+        XCTAssertEqual(board.currentPage.background, .white)
+    }
+
+    func testNewPageInheritsTheSystemChoice() {
+        let board = WhiteboardPages(background: .system)
+        board.selectNext()
+        XCTAssertEqual(board.currentPage.background, .system, "a new page inherits the page it came from")
+    }
+
     func testCaptureBaseIsASolidOpaqueImageOfTheBackground() throws {
         let base = try XCTUnwrap(
             BoardBackground.black.captureBase(width: 20, height: 10),

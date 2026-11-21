@@ -29,6 +29,25 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Whiteboard") {
+                Picker("Page colour", selection: $state.boardPageBackground) {
+                    Text("Follow the system").tag("system")
+                    Text("White").tag("white")
+                    Text("Black").tag("black")
+                }
+                Text("New boards start on the system theme (white in light mode, black in dark mode); ⌘B flips the page you are on.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker("Open on", selection: $state.boardScope) {
+                    Text("Every display").tag("all")
+                    Text("Only the active display").tag("active")
+                }
+                Toggle("Show border", isOn: $state.boardShowBorder)
+                Text("The border is the board's own choice, whatever the drawing frame does; the scope applies while the board is open.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Laser") {
                 Picker("Laser lasts", selection: $state.laserLifetime) {
                     // 2.5 is the stored default: leaving it out showed an empty picker.

@@ -151,6 +151,12 @@ enum SelfTest {
         // capture shows the same result.
         report.append(contentsOf: boardBlurReport())
 
+        // Board preferences (T2/T3/T4): the page colour follows the system
+        // theme, the scope opens the expected canvases while keeping pages,
+        // and the border is its own preference, independent of the drawing
+        // frame in both directions.
+        report.append(contentsOf: boardPreferencesReport())
+
         // Palette in both system appearances: the same view must read on a light
         // and on a dark system, which a screenshot of one theme cannot prove.
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
@@ -791,6 +797,175 @@ enum SelfTest {
 
         let passed = noFrameSource && contentOk && captureOk
         report.append("board blur result=\(passed ? "PASS" : "FAIL")")
+        return report
+    }
+
+    // MARK: - Board preferences (T2/T3/T4)
+
+    /// The three board preferences end to end:
+    ///
+    /// - S4: a page with no explicit choice (`.system`) renders white under a
+    ///   light appearance and black under a dark one, keeps following (its
+    ///   stored value never becomes explicit), and ⌘B resolves the visible
+    ///   colour and lands on the opposite explicit choice.
+    /// - S3: the scope opens one canvas on the pointer's display or one per
+    ///   display, and switching while the board is open keeps the pages of the
+    ///   displays that stay — the same board object, marks included.
+    /// - S2: the border renders with the drawing frame off and vanishes with
+    ///   it on: two independent preferences, both directions proven.
+    private static func boardPreferencesReport() -> [String] {
+        var report: [String] = []
+        let size = CGSize(width: 900, height: 600)
+
+        func borderlessWindow(_ view: NSView, appearance: NSAppearance?) -> NSWindow {
+            let window = NSWindow(
+                contentRect: CGRect(origin: .zero, size: size),
+                styleMask: [.borderless],
+                backing: .buffered,
+                defer: false
+            )
+            window.appearance = appearance
+            window.contentView = view
+            window.orderFrontRegardless()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            return window
+        }
+
+        // --- S4: the page colour follows the system ---
+        let colourState = EditorState()
+        colourState.boardPageBackground = "system"
+        let board = WhiteboardPages(background: colourState.boardBackgroundChoice)
+        let colourView = WhiteboardView(
+            frame: CGRect(origin: .zero, size: size), state: colourState, board: board, onEscape: {}
+        )
+        let lightWindow = borderlessWindow(colourView, appearance: NSAppearance(named: .aqua))
+        let startsSystem = board.currentPage.background == .system
+        func backgroundSample(_ image: CGImage?) -> (red: Int, green: Int, blue: Int) {
+            guard let image else { return (-1, -1, -1) }
+            let scale = CGFloat(image.width) / max(colourView.bounds.width, 1)
+            return rgb(image, at: CGPoint(x: 600, y: 300), scale: scale)
+        }
+        let lightRender = renderView(colourView, to: "/tmp/stare-board-system-light.png")
+        let lightBg = backgroundSample(lightRender)
+
+        lightWindow.appearance = NSAppearance(named: .darkAqua)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        let darkRender = renderView(colourView, to: "/tmp/stare-board-system-dark.png")
+        let darkBg = backgroundSample(darkRender)
+        let stillSystem = board.currentPage.background == .system
+        let lightOk = lightBg.red >= 245 && lightBg.green >= 245 && lightBg.blue >= 245
+        let darkOk = darkBg.red <= 15 && darkBg.green <= 15 && darkBg.blue <= 15
+        // ⌘B in dark mode: the page shows black, so the flip lands on white —
+        // an explicit choice from now on.
+        colourView.togglePageBackground()
+        let flipped = board.currentPage.background == .white
+        lightWindow.orderOut(nil)
+        let colourOk = startsSystem && stillSystem && lightOk && darkOk && flipped
+        report.append(
+            "board prefs colour startsSystem=\(startsSystem) stillSystem=\(stillSystem) "
+                + "light=\(lightBg) expect 255/255/255 dark=\(darkBg) expect 0/0/0 "
+                + "flip-in-dark=\(flipped) expect white "
+                + "png=/tmp/stare-board-system-light.png,/tmp/stare-board-system-dark.png ok=\(colourOk)"
+        )
+
+        // --- S3: the scope opens the expected canvases and keeps the pages ---
+        let controller = OverlayController(captureService: CaptureService())
+        controller.state.boardScope = "active"
+        // The pointer decides the active display; warp it to the main screen's
+        // centre so the probe is deterministic on any machine.
+        let main = NSScreen.screens[0]
+        let warpOk = CGWarpMouseCursorPosition(
+            CGPoint(x: main.frame.midX, y: main.frame.midY)
+        ) == .success
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        controller.toggleBoard()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+
+        let activeViews = controller.selfTestViews
+        let activeCount = activeViews.count
+        // A mark on the active display's board, through the real event path.
+        controller.state.tool = .pen
+        controller.state.ink = .red
+        if let activeView = activeViews.first as? WhiteboardView, let panel = activeView.window {
+            sendDrag(to: panel, from: CGPoint(x: 200, y: 200), to: CGPoint(x: 400, y: 200))
+        }
+        let boardBefore = (controller.selfTestViews.first as? WhiteboardView)?.board
+        let drewMark = boardBefore?.currentPage.session.strokes.isEmpty == false
+
+        // Switch the scope while the board is open: every display.
+        controller.state.boardScope = "all"
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        let allViews = controller.selfTestViews
+        let allCount = allViews.count
+        let sameBoardKept = allViews.contains { ($0 as? WhiteboardView)?.board === boardBefore }
+        let marksKept = allViews.contains {
+            ($0 as? WhiteboardView)?.board.currentPage.session.strokes.isEmpty == false
+        }
+        let allOk = allCount == NSScreen.screens.count && sameBoardKept && marksKept
+        report.append(
+            "board prefs scope active canvases=\(activeCount) expect 1 (warp=\(warpOk)) mark=\(drewMark), "
+                + "all canvases=\(allCount) expect \(NSScreen.screens.count) "
+                + "sameBoard=\(sameBoardKept) marksKept=\(marksKept) ok=\(allOk && drewMark)"
+        )
+
+        // And back to the active display only: the mark is still there.
+        controller.state.boardScope = "active"
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        let backViews = controller.selfTestViews
+        let backCount = backViews.count
+        let backKept = backViews.contains {
+            ($0 as? WhiteboardView)?.board === boardBefore
+                && $0.session.strokes.isEmpty == false
+        }
+        let backOk = backCount == 1 && backKept
+        report.append(
+            "board prefs scope back canvases=\(backCount) expect 1 markKept=\(backKept) ok=\(backOk)"
+        )
+
+        controller.toggleBoard()
+        controller.deactivate(restoringFocus: false)
+
+        // --- S2: the border is its own preference, both directions ---
+        let borderState = EditorState()
+        borderState.ink = .red
+        borderState.showArmedFrame = true
+        borderState.boardShowBorder = false
+        let borderView = WhiteboardView(
+            frame: CGRect(origin: .zero, size: size), state: borderState,
+            board: WhiteboardPages(), onEscape: {}
+        )
+        let borderWindow = borderlessWindow(borderView, appearance: nil)
+        func edgeSample() -> (red: Int, green: Int, blue: Int) {
+            guard let image = renderView(borderView, to: "/tmp/stare-board-border.png") else {
+                return (-1, -1, -1)
+            }
+            let scale = CGFloat(image.width) / max(borderView.bounds.width, 1)
+            // The frame strokes a 3pt line 3pt inside the edge; its midpoint
+            // is far from the rounded corners.
+            return rgb(image, at: CGPoint(x: size.width / 2, y: 3), scale: scale)
+        }
+        let hiddenSample = edgeSample()
+        let hiddenOk = borderState.boardShowBorder == false
+            && borderState.showArmedFrame == true
+            && hiddenSample.green >= 245 && hiddenSample.red >= 245
+        borderState.boardShowBorder = true
+        let shownSample = edgeSample()
+        // Red ink at 0.45 alpha over white: red stays high, green drops.
+        let shownOk = shownSample.red >= 200 && shownSample.green < 240
+        // And with the drawing frame off, the board's border must still draw.
+        borderState.showArmedFrame = false
+        let frameOffSample = edgeSample()
+        let frameOffOk = frameOffSample.red >= 200 && frameOffSample.green < 240
+        borderWindow.orderOut(nil)
+        let borderOk = hiddenOk && shownOk && frameOffOk
+        report.append(
+            "board prefs border drawingFrame=on border=off edge=\(hiddenSample) expect white, "
+                + "border=on edge=\(shownSample) expect red-tinted, drawingFrame=off border=on "
+                + "edge=\(frameOffSample) expect red-tinted ok=\(borderOk)"
+        )
+
+        let passed = colourOk && drewMark && allOk && backOk && borderOk
+        report.append("board prefs result=\(passed ? "PASS" : "FAIL")")
         return report
     }
 

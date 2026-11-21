@@ -1154,10 +1154,15 @@ class OverlayView: NSView {
         context.restoreGState()
     }
 
+    /// Which preference decides the frame at this layer's edges: the drawing
+    /// overlay follows the drawing frame, the whiteboard its own border
+    /// preference (S2) — the two are never coupled.
+    var showsEdgeFrame: Bool { state.showArmedFrame }
+
     /// A thin frame in the current ink marks every armed display for the whole
     /// drawing session, so it is always clear which screens will take a mark.
     func drawDrawingFrame(in context: CGContext) {
-        guard state.showArmedFrame else { return }
+        guard showsEdgeFrame else { return }
         let rect = bounds.insetBy(dx: 3, dy: 3)
         context.setStrokeColor(state.ink.cgColor(alpha: 0.45))
         context.setLineWidth(3)

@@ -1,22 +1,52 @@
 import CoreGraphics
 import Foundation
 
-/// A whiteboard page's solid background. Only white and black by design: the
-/// user picks per page and flips with ⌘B while on it; inks are never remapped,
-/// so a mark colour that vanishes against the background is the user's call.
+/// A whiteboard page's solid background. Three choices: white, black, or
+/// follow the system — white in light mode, black in dark mode. The choice is
+/// a value of the page itself, so the page keeps its own identity (⌘B knows
+/// whether the user picked a colour or the page still follows the theme); the
+/// concrete colour is resolved against the appearance wherever one is
+/// consumed — paint, capture base, beneath-blur image. Inks are never
+/// remapped, so a mark colour that vanishes against the background is the
+/// user's call.
 public enum BoardBackground: String, CaseIterable, Equatable, Sendable {
+    /// Follows the system appearance: light → white, dark → black.
+    case system
     case white
     case black
 
+    /// The concrete page colour: a system page resolves against `isDark`, an
+    /// explicit choice is itself.
+    public func resolved(isDark: Bool) -> BoardBackground {
+        switch self {
+        case .system: isDark ? .black : .white
+        case .white: .white
+        case .black: .black
+        }
+    }
+
+    /// The colour this background paints with `isDark` as the appearance.
+    public func cgColor(isDark: Bool) -> CGColor {
+        resolved(isDark: isDark).cgColor
+    }
+
+    /// The explicit colour of a white or black page. A `.system` page has no
+    /// colour of its own: production callers pass the appearance through
+    /// `cgColor(isDark:)`; this parameterless form resolves `.system` as white
+    /// (light mode) only so explicit-choice call sites keep compiling.
     public var cgColor: CGColor {
         switch self {
-        case .white: CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
+        case .system, .white: CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
         case .black: CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)
         }
     }
 
     public var displayName: String {
-        self == .white ? "White" : "Black"
+        switch self {
+        case .system: "Follow the system"
+        case .white: "White"
+        case .black: "Black"
+        }
     }
 
     public var toggled: BoardBackground {
@@ -25,7 +55,14 @@ public enum BoardBackground: String, CaseIterable, Equatable, Sendable {
 
     /// A solid, opaque image at display pixel size: the base a page's capture
     /// composes over, so a whiteboard capture is never transparent and never
-    /// shows the desktop hidden behind the board.
+    /// shows the desktop hidden behind the board. A `.system` page resolves
+    /// against `isDark` at capture time, so the result is always concrete.
+    public func captureBase(width: Int, height: Int, isDark: Bool) -> CGImage? {
+        resolved(isDark: isDark).captureBase(width: width, height: height)
+    }
+
+    /// The explicit-choice form of the capture base; `.system` resolves as
+    /// white (light mode). See `cgColor` for why this form exists.
     public func captureBase(width: Int, height: Int) -> CGImage? {
         guard width >= 1, height >= 1,
               let space = CGColorSpace(name: CGColorSpace.sRGB),
@@ -76,7 +113,9 @@ public final class WhiteboardPages {
     public private(set) var pages: [BoardPage]
     public private(set) var currentIndex: Int
 
-    /// Starts with a single page on the given background.
+    /// Starts with a single page on the given background. The default stays
+    /// `.white` here; the controller passes the page-colour preference so a
+    /// fresh board starts on the user's choice (system by default).
     public init(background: BoardBackground = .white) {
         pages = [BoardPage(background: background)]
         currentIndex = 0
@@ -162,9 +201,12 @@ public final class WhiteboardPages {
         return true
     }
 
-    /// ⌘B — flips only the current page between white and black.
-    public func toggleBackground() {
-        pages[currentIndex].background = pages[currentIndex].background.toggled
+    /// ⌘B — flips only the current page between white and black. A page that
+    /// follows the system resolves against `isDark` first, so the flip starts
+    /// from the colour the user actually sees and lands on the opposite
+    /// explicit choice; an explicit page just flips.
+    public func toggleBackground(isDark: Bool = false) {
+        pages[currentIndex].background = pages[currentIndex].background.resolved(isDark: isDark).toggled
     }
 
     /// Shifts the current page's pan offset. `pan` adds to the offset: after

@@ -101,6 +101,22 @@ final class OverlayController {
                 self.repaintCanvases()
             }
             .store(in: &cancellables)
+        // S3: the board scope is decided in Settings and takes effect while
+        // the board is open — the canvases rebuild, the pages of the displays
+        // that stay are kept (they live in `boards`, keyed by display). The
+        // emitted value is used directly: @Published fires on willSet, so
+        // `state.boardScope` still holds the old value here.
+        state.$boardScope
+            .dropFirst()
+            .sink { [weak self] scope in
+                guard let self, self.isBoardActive else { return }
+                self.rebuildBoardCanvases(scope: scope)
+            }
+            .store(in: &cancellables)
+        // S2: the border preference repaints the open board at once.
+        state.$boardShowBorder.map { _ in () }.eraseToAnyPublisher()
+            .sink { [weak self] in self?.repaintBoardCanvases() }
+            .store(in: &cancellables)
     }
 
     /// At most one mark is selected in the whole app: this drops every view's
@@ -132,6 +148,16 @@ final class OverlayController {
             canvas.view.finishPendingTextEditing()
             canvas.view.syncPreferences()
             canvas.view.syncPointerFromScreen()
+            canvas.view.needsDisplay = true
+        }
+    }
+
+    /// Same repaint the drawing canvases get, for the open board: preference
+    /// changes (the border, for one) reach every board display at once.
+    private func repaintBoardCanvases() {
+        for canvas in boardCanvases.values {
+            canvas.view.finishPendingTextEditing()
+            canvas.view.syncPreferences()
             canvas.view.needsDisplay = true
         }
     }
@@ -479,7 +505,8 @@ final class OverlayController {
 
         guard let base = boardView.board.currentPage.background.captureBase(
             width: Int(pixelSize.width),
-            height: Int(pixelSize.height)
+            height: Int(pixelSize.height),
+            isDark: boardView.isDarkAppearance
         ) else {
             Diag.log("board capture failed: background base image")
             return
@@ -587,14 +614,7 @@ final class OverlayController {
     @objc private func screenParametersChanged() {
         guard isActive || isBoardActive else { return }
         if isBoardActive {
-            for canvas in boardCanvases.values { canvas.panel.orderOut(nil) }
-            boardCanvases.removeAll()
-            buildBoardCanvases()
-            for canvas in boardCanvases.values {
-                canvas.panel.orderFrontRegardless()
-                canvas.panel.makeFirstResponder(canvas.view)
-            }
-            boardCanvasUnderPointer()?.panel.makeKey()
+            rebuildBoardCanvases()
             return
         }
         tearDownCanvases()
@@ -709,17 +729,54 @@ final class OverlayController {
         liveFrames.stop()
     }
 
+    /// Orders out every board canvas and builds the set again from scratch.
+    /// The scope preference and display-parameter changes both land here.
+    /// `scope` overrides the stored preference — Combine delivers the new
+    /// value on willSet, before the property itself has changed. The pages
+    /// live in `boards`, keyed by display and shared by identity, so a
+    /// rebuild never loses the marks of the displays that stay — and a
+    /// display that leaves the scope keeps its pages in memory for the
+    /// session (the same rule closing the board follows); nothing is drawn
+    /// away.
+    private func rebuildBoardCanvases(scope: String? = nil) {
+        for canvas in boardCanvases.values { canvas.panel.orderOut(nil) }
+        boardCanvases.removeAll()
+        buildBoardCanvases(scope: scope)
+        for canvas in boardCanvases.values {
+            canvas.view.syncPreferences()
+            canvas.panel.orderFrontRegardless()
+            canvas.panel.makeFirstResponder(canvas.view)
+        }
+        boardCanvasUnderPointer()?.panel.makeKey()
+        syncBoardIndicator()
+        Diag.log("board rebuild displays=\(boardCanvases.count) scope=\(scope ?? state.boardScope)")
+    }
+
     // MARK: - Board canvases
 
     private func board(for displayID: CGDirectDisplayID) -> WhiteboardPages {
         if let existing = boards[displayID] { return existing }
-        let fresh = WhiteboardPages()
+        // S4: a fresh board starts on the page-colour preference — the system
+        // theme by default, white or black when fixed in Settings. Later pages
+        // inherit the page they came from.
+        let fresh = WhiteboardPages(background: state.boardBackgroundChoice)
         boards[displayID] = fresh
         return fresh
     }
 
-    private func buildBoardCanvases() {
-        for screen in NSScreen.screens {
+    /// `scope` overrides the stored preference for this build only; nil means
+    /// "read the preference", which is what opening the board does.
+    private func buildBoardCanvases(scope: String? = nil) {
+        // S3: the board scope is its own preference — every display, or only
+        // the one under the pointer, the same rule the drawing overlay uses.
+        let effectiveScope = scope ?? state.boardScope
+        let screens: [NSScreen]
+        if effectiveScope == "active", let active = screenUnderPointer() {
+            screens = [active]
+        } else {
+            screens = NSScreen.screens
+        }
+        for screen in screens {
             guard let displayID = DisplayCanvas.displayID(of: screen),
                   let canvas = DisplayCanvas(
                     screen: screen,

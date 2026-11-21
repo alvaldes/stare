@@ -28,6 +28,12 @@ class WhiteboardView: OverlayView {
         self.board = board
         super.init(frame: frame, state: state, onEscape: onEscape)
         boardSink = { [weak self] session in self?.board.adopt(session) }
+        // A canvas can join a board that already has pages — a scope change
+        // (S3) or a display change rebuilds the canvases while the board is
+        // open, and reopening the board finds the session's pages. Present
+        // what the board holds, never an empty page; later changes flow back
+        // through the sink, so the page stays authoritative.
+        session = board.currentPage.session
     }
 
     @available(*, unavailable)
@@ -68,6 +74,7 @@ class WhiteboardView: OverlayView {
     private struct BeneathKey: Equatable {
         let strokes: [Stroke]
         let background: BoardBackground
+        let isDark: Bool
         let offset: CGSize
         let scale: CGFloat
         let size: CGSize
@@ -95,9 +102,11 @@ class WhiteboardView: OverlayView {
         }
         guard bounds.width >= 1, bounds.height >= 1 else { return nil }
         let scale = boardBlurScale
+        let isDark = isDarkAppearance
         let key = BeneathKey(
             strokes: beneath,
             background: board.currentPage.background,
+            isDark: isDark,
             offset: board.currentPage.offset,
             scale: scale,
             size: bounds.size
@@ -105,7 +114,8 @@ class WhiteboardView: OverlayView {
         if let cached = beneathCache, cached.key == key { return cached.image }
         guard let base = board.currentPage.background.captureBase(
             width: Int(bounds.width * scale),
-            height: Int(bounds.height * scale)
+            height: Int(bounds.height * scale),
+            isDark: isDark
         ) else { return nil }
         guard let image = MarkCompositor.composite(
             marks: beneath,
@@ -118,12 +128,36 @@ class WhiteboardView: OverlayView {
         return image
     }
 
+    // MARK: - Appearance (S4)
+
+    /// Whether the effective appearance is dark: what a `.system` page colour
+    /// resolves against. Exposed for the controller's capture path.
+    var isDarkAppearance: Bool {
+        effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+    }
+
+    /// A page that follows the system changes colour with the theme: the
+    /// repaint happens on the next frame, and the beneath-blur cache — keyed
+    /// by the resolved colours of its time — cannot survive the flip.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        beneathCache = nil
+        needsDisplay = true
+    }
+
     // MARK: - Painting
 
     override func drawBackground(in context: CGContext) {
-        context.setFillColor(board.currentPage.background.cgColor)
+        context.setFillColor(board.currentPage.background.cgColor(isDark: isDarkAppearance))
         context.fill(bounds)
     }
+
+    // MARK: - Border (S2)
+
+    /// The border is the board's own preference (S2): it is decided here,
+    /// independently of the drawing frame — it can be on while the drawing
+    /// frame is off and the other way round.
+    override var showsEdgeFrame: Bool { state.boardShowBorder }
 
     override func showIntroHint() {
         showHint(
@@ -196,9 +230,11 @@ class WhiteboardView: OverlayView {
         Diag.log("board pan reset page=\(board.currentIndex + 1)")
     }
 
-    /// ⌘B — the current page's background flips between white and black.
+    /// ⌘B — the current page's background flips between white and black. A
+    /// page that follows the system resolves against the appearance first, so
+    /// the flip starts from the colour the user actually sees.
     func togglePageBackground() {
-        board.toggleBackground()
+        board.toggleBackground(isDark: isDarkAppearance)
         needsDisplay = true
         Diag.log("board background=\(board.currentPage.background.rawValue)")
     }
