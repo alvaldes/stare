@@ -1,0 +1,174 @@
+import Foundation
+import XCTest
+
+@testable import StareCore
+
+/// Tests for the persisted capture preferences (T3/S6): today's capture is a
+/// PNG written to the clipboard with the suggested name "Stare.png", so the
+/// defaults must reproduce exactly that, and every unsafe value the blob or a
+/// setter can produce must fall back instead of reaching the filesystem.
+
+/// Gregorian UTC calendar and fixed dates, so time-dependent code has nothing
+/// to inject from the environment.
+private let calendar: Calendar = {
+    var c = Calendar(identifier: .gregorian)
+    c.timeZone = TimeZone(identifier: "UTC")!
+    return c
+}()
+
+private func date(_ year: Int, _ month: Int, _ day: Int, _ hour: Int, _ minute: Int, _ second: Int) -> Date {
+    calendar.date(from: DateComponents(year: year, month: month, day: day, hour: hour, minute: minute, second: second))!
+}
+
+private func decode(_ json: String) throws -> CapturePreference {
+    try JSONDecoder().decode(CapturePreference.self, from: Data(json.utf8))
+}
+
+final class CapturePreferenceTests: XCTestCase {
+    // MARK: Formats
+
+    func testFormatsArePngAndJpegWithTitlesAndExtensions() {
+        XCTAssertEqual(CaptureFormat.allCases, [.png, .jpeg])
+        XCTAssertEqual(CaptureFormat.png.title, "PNG")
+        XCTAssertEqual(CaptureFormat.png.fileExtension, "png")
+        XCTAssertEqual(CaptureFormat.jpeg.title, "JPEG")
+        XCTAssertEqual(CaptureFormat.jpeg.fileExtension, "jpg")
+    }
+
+    // MARK: Defaults reproduce today's behaviour (S6/S7)
+
+    func testStandardIsPngToClipboardWithStarePrefix() {
+        XCTAssertEqual(CapturePreference.standard.format, .png)
+        XCTAssertEqual(CapturePreference.standard.destination, .clipboard)
+        XCTAssertEqual(CapturePreference.standard.fileNamePrefix, "Stare")
+        XCTAssertEqual(CapturePreference.standard, CapturePreference())
+    }
+
+    // MARK: File name shape
+
+    func testFileNameHasPinnedShapeAndExtensionPerFormat() {
+        let at = date(2026, 11, 21, 14, 5, 33)
+        XCTAssertEqual(CapturePreference.standard.fileName(at: at, calendar: calendar), "Stare-2026-11-21-at-14-05-33.png")
+
+        var jpeg = CapturePreference.standard
+        jpeg.format = .jpeg
+        XCTAssertEqual(jpeg.fileName(at: at, calendar: calendar), "Stare-2026-11-21-at-14-05-33.jpg")
+    }
+
+    func testFileNameGroupNameStaysStableWithCustomPrefix() {
+        var prefs = CapturePreference.standard
+        prefs.fileNamePrefix = "Shots"
+        XCTAssertEqual(prefs.fileName(at: date(2026, 1, 2, 3, 4, 5), calendar: calendar), "Shots-2026-01-02-at-03-04-05.png")
+    }
+
+    func testFileNameIsNeverDefeatedByUnsafeValues() {
+        // Whatever garbage produced the preference, the produced name carries
+        // only the escaped-safe character set: prefix alphanumerics, "-", "_",
+        // "." and the date's digits, so no character ever needs quoting.
+        let at = date(2026, 11, 21, 14, 5, 33)
+        var prefs = CapturePreference(format: .png, destination: .clipboard, fileNamePrefix: "a/b c\u{301}")
+        let name = prefs.fileName(at: at, calendar: calendar)
+        XCTAssertEqual(name, "Stare-2026-11-21-at-14-05-33.png")
+        XCTAssertEqual(name, name.filter { $0.isASCII })
+    }
+
+    // MARK: Prefix sanitisation
+
+    func testPrefixSanitisationFallsBackToStareOnUnsafeValues() {
+        func prefix(_ raw: String) -> String {
+            CapturePreference(format: .png, destination: .clipboard, fileNamePrefix: raw).fileNamePrefix
+        }
+        XCTAssertEqual(prefix(""), "Stare")
+        XCTAssertEqual(prefix("   "), "Stare")
+        XCTAssertEqual(prefix("My Shots"), "Stare") // space needs quoting
+        XCTAssertEqual(prefix("a/b"), "Stare") // path separator
+        XCTAssertEqual(prefix("a:b"), "Stare") // classic macOS separator
+        XCTAssertEqual(prefix("main.swift"), "main.swift")
+        XCTAssertEqual(prefix("Shots-2026"), "Shots-2026")
+        XCTAssertEqual(prefix("fotos_é"), "Stare") // non-ASCII needs escaping
+    }
+
+    func testAssignedPrefixIsSanitisedToo() {
+        var prefs = CapturePreference.standard
+        prefs.fileNamePrefix = "a/b"
+        XCTAssertEqual(prefs.fileNamePrefix, "Stare")
+        prefs.fileNamePrefix = "Boards"
+        XCTAssertEqual(prefs.fileNamePrefix, "Boards")
+    }
+
+    // MARK: Destination
+
+    func testUsableFolderPathsSurvive() {
+        XCTAssertEqual(
+            CapturePreference(format: .png, destination: .folder(path: "~/Pictures/Screenshots"), fileNamePrefix: "Stare").destination,
+            .folder(path: "~/Pictures/Screenshots")
+        )
+        XCTAssertEqual(
+            CapturePreference(format: .png, destination: .folder(path: "/tmp/shots"), fileNamePrefix: "Stare").destination,
+            .folder(path: "/tmp/shots")
+        )
+    }
+
+    func testUnusableDestinationFallsBackToClipboard() {
+        func destination(_ path: String) -> CaptureDestination {
+            CapturePreference(format: .png, destination: .folder(path: path), fileNamePrefix: "Stare").destination
+        }
+        XCTAssertEqual(destination(""), .clipboard)
+        XCTAssertEqual(destination("   "), .clipboard)
+        // A relative path has no meaning for capture output: it must resolve
+        // from an absolute root or the home directory.
+        XCTAssertEqual(destination("relative/shots"), .clipboard)
+        XCTAssertEqual(destination("Downloads"), .clipboard)
+    }
+
+    // MARK: Lenient decoding
+
+    func testUnknownFormatFallsBackToPngAndKeepsTheRestOfTheDocument() throws {
+        let decoded = try decode(
+            #"{"format":"heic","destination":{"folder":"/tmp/shots"},"fileNamePrefix":"Shots"}"#
+        )
+        XCTAssertEqual(decoded.format, .png)
+        XCTAssertEqual(decoded.destination, .folder(path: "/tmp/shots"))
+        XCTAssertEqual(decoded.fileNamePrefix, "Shots")
+    }
+
+    func testUnusableDestinationInBlobFallsBackToClipboardAndKeepsTheRest() throws {
+        let decoded = try decode(
+            #"{"format":"jpeg","destination":{"folder":"   "},"fileNamePrefix":"Shots"}"#
+        )
+        XCTAssertEqual(decoded.format, .jpeg)
+        XCTAssertEqual(decoded.destination, .clipboard)
+        XCTAssertEqual(decoded.fileNamePrefix, "Shots")
+    }
+
+    func testUnsafePrefixInBlobFallsBackToStareAndKeepsTheRest() throws {
+        let decoded = try decode(
+            #"{"format":"jpeg","destination":{"clipboard":true},"fileNamePrefix":"a/b"}"#
+        )
+        XCTAssertEqual(decoded.format, .jpeg)
+        XCTAssertEqual(decoded.destination, .clipboard)
+        XCTAssertEqual(decoded.fileNamePrefix, "Stare")
+    }
+
+    func testMissingFieldsTakeStandard() throws {
+        let decoded = try decode(#"{}"#)
+        XCTAssertEqual(decoded, CapturePreference.standard)
+    }
+
+    // MARK: Round trip
+
+    func testRoundTripsThroughJSON() throws {
+        let saved = CapturePreference(
+            format: .jpeg,
+            destination: .folder(path: "/Users/al/Pictures/Stare"),
+            fileNamePrefix: "Shots"
+        )
+        let data = try JSONEncoder().encode(saved)
+        XCTAssertEqual(try JSONDecoder().decode(CapturePreference.self, from: data), saved)
+    }
+
+    func testStandardRoundTripsThroughJSON() throws {
+        let data = try JSONEncoder().encode(CapturePreference.standard)
+        XCTAssertEqual(try JSONDecoder().decode(CapturePreference.self, from: data), CapturePreference.standard)
+    }
+}
