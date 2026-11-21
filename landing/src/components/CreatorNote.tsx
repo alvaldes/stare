@@ -3,20 +3,23 @@
 // bubble that types itself and links to the portfolio. The ring and stroke are
 // drawn by client/creatorNote.ts, which measures where the URL sits; the
 // bubble is a plain link, so it works without JavaScript.
+import { withoutEmoji } from '../demo/text'
 import { PORTFOLIO_HOST, PORTFOLIO_URL } from './DemoScreen'
 
 // No "up there" / "down there": the note sits above the demo on desktop and
 // below it on phones, so a direction would be wrong on one of them.
-export const CREATOR_MESSAGE = "I built Stare, and that's my site in the Safari window. Come say hi!"
+// The line break is kept on screen (whitespace-pre-line) and typed like any
+// other character; screen readers get the sentence on one line.
+export const CREATOR_MESSAGE = "Hey there 👋🏻\nStare's creator here. Come check out my other projects!"
 
 export function CreatorNote() {
   return (
     <>
-      {/* Ring and connector, laid over the whole section on wide screens. */}
+      {/* Ring and connector, laid over the whole section from 1280px, where there is room beside the title. */}
       <svg
         id="creator-ink"
         aria-hidden="true"
-        class="pointer-events-none absolute inset-0 z-20 hidden h-full w-full overflow-visible lg:block"
+        class="pointer-events-none absolute inset-0 z-20 hidden h-full w-full overflow-visible xl:block"
         fill="none"
         stroke="var(--color-ink-red)"
         stroke-linecap="round"
@@ -31,8 +34,8 @@ export function CreatorNote() {
         href={PORTFOLIO_URL}
         target="_blank"
         rel="noopener"
-        aria-label={`${CREATOR_MESSAGE} Visit ${PORTFOLIO_HOST}, opens in a new tab`}
-        class="group/note relative z-30 mt-6 flex w-full max-w-[340px] flex-col gap-3 rounded-3xl rounded-bl-md border border-white/80 bg-paper/80 p-4 font-mac shadow-glass backdrop-blur-xl transition-transform hover:-translate-y-0.5 lg:absolute lg:top-4 lg:right-8 lg:mt-0"
+        aria-label={`${withoutEmoji(CREATOR_MESSAGE)} Visit ${PORTFOLIO_HOST}, opens in a new tab`}
+        class="group/note relative z-30 mt-6 flex w-full max-w-[340px] flex-col gap-3 rounded-3xl rounded-bl-md border border-white/80 bg-paper/80 p-4 font-mac shadow-glass backdrop-blur-xl transition-transform hover:-translate-y-0.5 xl:absolute xl:top-4 xl:right-8 xl:mt-0 xl:max-w-[440px]"
       >
         <span class="flex items-center gap-3">
           {/* Head-and-shoulders crop of the portfolio's own photo (portfolio/src/assets/images/angel.webp). */}
@@ -52,7 +55,7 @@ export function CreatorNote() {
         </span>
         {/* The full text is here for no-JS and screen readers; the client
             retypes it letter by letter when the note appears. */}
-        <span id="creator-text" class="min-h-[2.6em] text-[15px] leading-snug text-graphite">
+        <span id="creator-text" class="min-h-[2.6em] whitespace-pre-line text-[15px] leading-snug text-graphite">
           {CREATOR_MESSAGE}
         </span>
         <span class="inline-flex items-center gap-1.5 self-start rounded-full bg-graphite px-3 py-1.5 text-[13px] font-semibold text-paper transition-colors group-hover/note:bg-ink-blue">

@@ -3,11 +3,14 @@
 // the message typed letter by letter. Geometry is measured from the layout,
 // so the ink follows the URL at any width.
 import { SCREEN_HEIGHT, SCREEN_WIDTH } from '../demo/model'
+import { graphemes } from '../demo/text'
 
 /** Where the domain sits in the demo screen's 1200×720 space (see DemoScreen). */
 const URL_CENTER = { x: 599.4, y: 60 }
 const RING_RADIUS = { x: 44, y: 11 }
 const TYPE_MS = 32
+/** A beat after these, like someone typing a greeting. */
+const PAUSE_AFTER = new Set([',', '.', '👋🏻'])
 
 export function playCreatorNote(): void {
   const section = document.getElementById('try')
@@ -20,7 +23,8 @@ export function playCreatorNote(): void {
   if (!section || !screen || !svg || !ring || !line || !note || !text) return
 
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  const message = text.textContent?.trim() ?? ''
+  // By grapheme, so the emoji appears whole instead of as broken halves.
+  const message = graphemes(text.textContent?.trim() ?? '')
 
   const layout = () => {
     const origin = section.getBoundingClientRect()
@@ -63,7 +67,7 @@ export function playCreatorNote(): void {
     const tick = () => {
       caret.before(message[i])
       i += 1
-      if (i < message.length) setTimeout(tick, TYPE_MS + (message[i - 1] === ',' ? 180 : 0))
+      if (i < message.length) setTimeout(tick, TYPE_MS + (PAUSE_AFTER.has(message[i - 1]) ? 220 : 0))
       else setTimeout(() => caret.remove(), 1600)
     }
     setTimeout(tick, 250)
