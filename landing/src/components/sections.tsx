@@ -9,7 +9,7 @@ export const sectionTitle = 'text-[clamp(1.75rem,3.2vw,2.5rem)] leading-[1.1] fo
 export function Nav() {
   return (
     // Same container as the page content, so the pill's edges line up with it.
-    <header class={`${container} sticky top-3 z-30`}>
+    <header class={`${container} sticky top-3 z-50`}>
       <nav
         aria-label="Main"
         class="flex h-14 items-center gap-6 rounded-full border border-white/70 bg-paper/55 pr-2 pl-5 shadow-glass backdrop-blur-xl backdrop-saturate-150"
