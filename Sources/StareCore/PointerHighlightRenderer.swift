@@ -90,12 +90,13 @@ public enum PointerHighlightRenderer {
 
         switch appearance.geometry {
         case .ring, .squircle, .rhombus:
-            // The band is a filled coloured ring between the two boundary
-            // lines: fill the outer shape with the band colour, then punch
-            // the middle out with `.clear` — even-odd left the interior
-            // painted, which read as a dark disc instead of a ring. The fill
-            // stays underneath the outer line's dashes, so a dash gap never
-            // shows a hole through the highlight.
+            // The band is a translucent filled ring: fill the outer shape
+            // with the band colour, then punch the middle out with `.clear`
+            // — even-odd left the interior painted, which read as a dark disc
+            // instead of a ring. The fill stays underneath the outer line's
+            // dashes, so a dash gap never shows a hole through the highlight,
+            // and the band's inner edge is just the fill's own edge: there is
+            // no line on the inner boundary.
             let path = shapePath(center: center, radius: radius, appearance: appearance)
             let hole = shapePath(center: center, radius: holeRadius, appearance: appearance)
             context.setFillColor(ink.cgColor(alpha: CGFloat(appearance.bandFillAlpha)))
@@ -107,16 +108,12 @@ public enum PointerHighlightRenderer {
             context.fillPath()
             context.restoreGState()
 
-            // The band carries a thin bright line on both boundaries. The
-            // inner one is always continuous; the outer one is a solid line,
-            // or dashes for the dashed style — everything else about the
-            // drawing is identical between the two styles.
+            // Exactly one bright line, on the outer boundary: continuous for
+            // the solid style, dashes for the dashed one — everything else
+            // about the drawing is identical between the two styles.
             if appearance.edgeWidth > 0 {
                 context.setStrokeColor(ink.cgColor(alpha: CGFloat(appearance.edgeAlpha)))
                 context.setLineWidth(CGFloat(appearance.edgeWidth))
-                context.setLineCap(.round)
-                context.addPath(hole)
-                context.strokePath()
                 if appearance.dashed {
                     // Butt caps so each dash reads as a crisp segment of the
                     // thin line instead of a rounded blob; the rhythm is
@@ -167,6 +164,29 @@ public enum PointerHighlightRenderer {
     /// and a 4 pt gap. Pinned by the renderer tests.
     public static func dashPattern(lineWidth: CGFloat) -> [CGFloat] {
         [lineWidth * 3, lineWidth * 2]
+    }
+
+    /// Scale that fits a highlight whose extent covers `extentSide` points
+    /// into a fixed `canvasSide` point square canvas: exactly 1 when it
+    /// already fits, otherwise `canvasSide / extentSide` below 1. The
+    /// Settings preview uses this to shrink oversized highlights into its
+    /// fixed tile instead of letting the pane resize with the chosen size.
+    /// Pinned by the renderer tests.
+    public static func fitScale(extentSide: Double, canvasSide: Double) -> Double {
+        guard extentSide > 0, canvasSide > 0 else { return 1 }
+        return min(1, canvasSide / extentSide)
+    }
+
+    /// Caption the Settings preview shows under its fixed tiles, derived from
+    /// the same fit scale it draws with so it can never lie about what it is
+    /// showing: a scaled-down highlight names the percentage and the real
+    /// size, a full-size one says exactly that. English only, matching the
+    /// pane's copy.
+    public static func previewFitCaption(scale: Double, size: Double) -> String {
+        let size = Int(size.rounded())
+        if scale >= 1 { return "Shown at real size · \(size) pt" }
+        let percent = Int((scale * 100).rounded())
+        return "Shown at \(percent) % · \(size) pt"
     }
 
     /// Outer boundary of the banded shapes: an ellipse for `.ring`, a rounded

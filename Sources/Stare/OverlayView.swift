@@ -918,7 +918,12 @@ class OverlayView: NSView {
         let appearance = style.appearance(ink: state.ink)
         // The pulse grows and settles even while the pointer stands still, so
         // the rotation rides the same envelope as the scale animation.
-        let rotation: CGFloat = style.clickAnimation == .rotate
+        // Rotate tilts the shape and leaves the size alone: a rotate click that
+        // also grew read as a jump next to the reference, where the shape only
+        // turns. Scale keeps the pulse's growth and never turns.
+        let tilts = style.clickAnimation == .rotate
+        let pulseScale: CGFloat = tilts ? 1 : pointerPulseScale
+        let rotation: CGFloat = tilts
             ? (pointerPulseScale - 1) * Self.clickRotateRadiansPerScale
             : 0
         let alpha = idleAlpha
@@ -927,7 +932,7 @@ class OverlayView: NSView {
                 in: context,
                 center: point,
                 appearance: appearance,
-                pulseScale: pointerPulseScale,
+                pulseScale: pulseScale,
                 rotation: rotation
             )
             return
@@ -938,15 +943,16 @@ class OverlayView: NSView {
             in: context,
             center: point,
             appearance: appearance,
-            pulseScale: pointerPulseScale,
+            pulseScale: pulseScale,
             rotation: rotation
         )
         context.restoreGState()
     }
 
     /// Radians of click-rotate turn per unit of pulse scale past 1: the peak
-    /// pulse (1.35×) turns the shape ≈0.42 rad ≈ 24°.
-    private static let clickRotateRadiansPerScale: CGFloat = 1.2
+    /// pulse (1.35×) turns the shape ≈0.21 rad ≈ 12°, the tilt the reference
+    /// shows, while the size stays where the user put it.
+    private static let clickRotateRadiansPerScale: CGFloat = 0.6
 
     /// Fades the highlight down when the pointer has been still, so a shared
     /// screen is not permanently framed.

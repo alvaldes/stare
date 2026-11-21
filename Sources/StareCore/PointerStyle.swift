@@ -29,15 +29,16 @@ public enum PointerStylePreset: String, Codable, CaseIterable, Sendable {
     }
 }
 
-/// How the outer boundary line of a banded shape is drawn. The band itself
-/// is always a filled coloured ring carrying a thin line on both of its
-/// boundaries; this choice turns only the outer one into dashes. Raw values
-/// are what the preferences blob persists; decoding an unknown string falls
-/// back to `.solid`.
+/// How the outer boundary line of a banded shape is drawn. The band itself is
+/// always a translucent filled ring with no line of its own on the inner
+/// boundary — its inner edge is just the fill's own edge — and the outer
+/// boundary carries exactly one bright line; this choice turns that line from
+/// continuous into dashes. Raw values are what the preferences blob
+/// persists; decoding an unknown string falls back to `.solid`.
 public enum PointerBorderStyle: String, Codable, CaseIterable, Sendable {
-    /// Today's filled band with its bright edges.
+    /// A filled band with one continuous bright line on the outer edge.
     case solid
-    /// The outline stroked as dashes instead of a filled band.
+    /// The same filled band, with the outer edge's line turned into dashes.
     case dashed
 
     /// English label shown in Settings.
@@ -285,8 +286,8 @@ public struct PointerAppearance: Equatable, Sendable {
     /// `radius`: the style's band for ring, squircle and rhombus, and 0 for
     /// the filled dot and the edge-less spotlight.
     public var bandWidth: Double
-    /// Width of the bright edge stroked on the boundaries, in points; 0 when
-    /// the shape has no hard edge.
+    /// Width of the single bright line on the outer boundary, in points;
+    /// there is no inner line, and 0 when the shape has no hard edge.
     public var edgeWidth: Double
     /// Corner radius as a factor of `radius` for the squircle; nil otherwise.
     public var cornerRadiusFactor: Double?
@@ -382,5 +383,20 @@ public struct PointerAppearance: Equatable, Sendable {
             && zip(lhs.glowStops, rhs.glowStops).allSatisfy {
                 $0.location == $1.location && $0.alpha == $1.alpha
             }
+    }
+
+    /// A uniformly scaled copy: every distance in points — radius, edge line
+    /// width, glow margin — multiplies by the factor, while ratios and
+    /// relative values (band ratio, corner factor, glow extent and stops)
+    /// stay put, so it draws exactly the same look at a smaller size. An
+    /// extent derived from the result scales by the same factor. The
+    /// Settings preview uses this to draw an oversized highlight inside its
+    /// fixed canvas instead of resizing the pane.
+    public func scaled(by factor: Double) -> PointerAppearance {
+        var copy = self
+        copy.radius = radius * factor
+        copy.edgeWidth = edgeWidth * factor
+        copy.glowMargin = glowMargin * factor
+        return copy
     }
 }

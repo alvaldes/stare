@@ -708,7 +708,11 @@ enum SelfTest {
     /// preset per appearance), and checks the preview's own transparent
     /// bitmap against the pulse report's extent measurement so a render is
     /// proven to have painted real pixels, not an empty tile. T14 adds one
-    /// dashed-border render and one rotated click-pulse render to the proofs.
+    /// dashed-border render and one rotated click-pulse render to the proofs,
+    /// and the fixed preview canvas proof: a 240 pt highlight is scaled into
+    /// the tile, its render stays inside the tile it writes to /tmp, and the
+    /// preview view's size is identical for a small and a huge style — the
+    /// pane never resizes with the size value.
     @MainActor
     private static func markerStylesReport() -> [String] {
         var report: [String] = []
@@ -722,7 +726,7 @@ enum SelfTest {
             // bitmap before any hosting render: the extent must be non-empty
             // for every preset.
             let extent = PointerHighlightPreview
-                .cgImage(for: style, ink: .red, scale: 1)
+                .cgImage(for: style.appearance(ink: .red), scale: 1)
                 .flatMap(opaqueExtentPixels)
             if let extent, extent.width > 20, extent.height > 20 {
                 painted += 1
@@ -739,7 +743,7 @@ enum SelfTest {
         var dashed = PointerStyle.standard
         dashed.borderStyle = .dashed
         var dashedPainted = false
-        if let image = PointerHighlightPreview.cgImage(for: dashed, ink: .red, scale: 1),
+        if let image = PointerHighlightPreview.cgImage(for: dashed.appearance(ink: .red), scale: 1),
             let extent = opaqueExtentPixels(image), extent.width > 20, extent.height > 20 {
             dashedPainted = writePNG(image, to: "/tmp/stare-marker-dashed.png")
         }
@@ -751,22 +755,57 @@ enum SelfTest {
         let peakScale = pulse.peakScale
         var rotatedPainted = false
         if let image = PointerHighlightPreview.cgImage(
-            for: rotating,
-            ink: .red,
+            for: rotating.appearance(ink: .red),
             scale: 1,
             pulseScale: peakScale,
             rotation: (peakScale - 1) * 1.2
         ), let extent = opaqueExtentPixels(image), extent.width > 20, extent.height > 20 {
             rotatedPainted = writePNG(image, to: "/tmp/stare-marker-rotated.png")
         }
+        // Fixed preview canvas: a 240 pt highlight must scale below 1 into
+        // the tile, its honest scaled render must fit inside the tile-sized
+        // PNG the selftest writes to /tmp, and the hosted preview view must
+        // occupy exactly the same space for the 72 pt default and the 240 pt
+        // style — the pane never zooms with the size value.
+        var large = PointerStyle.standard
+        large.size = 240
+        let largeAppearance = large.appearance(ink: .red)
+        let largeScale = PointerHighlightRenderer.fitScale(
+            extentSide: Double(PointerHighlightPreview.side(for: largeAppearance)),
+            canvasSide: Double(PointerPreviewView.tileSide)
+        )
+        var largeFits = false
+        let scaledLarge = largeScale < 1 ? largeAppearance.scaled(by: largeScale) : largeAppearance
+        if let image = PointerHighlightPreview.cgImage(for: scaledLarge, scale: 1),
+            let extent = opaqueExtentPixels(image),
+            extent.width <= PointerPreviewView.tileSide,
+            extent.height <= PointerPreviewView.tileSide,
+            writePNG(image, to: "/tmp/stare-marker-large-240pt.png") {
+            largeFits = true
+        }
+        var canvasStable = false
+        // Proven through the real hosting path: the same borderless window
+        // pattern the settings render uses, sized by the live view itself.
+        let standardHosting = NSHostingView(rootView: PointerPreviewView(style: PointerStyle.standard, ink: .red))
+        standardHosting.sizingOptions = [.intrinsicContentSize]
+        let largeHosting = NSHostingView(rootView: PointerPreviewView(style: large, ink: .red))
+        largeHosting.sizingOptions = [.intrinsicContentSize]
+        standardHosting.layoutSubtreeIfNeeded()
+        largeHosting.layoutSubtreeIfNeeded()
+        canvasStable = abs(standardHosting.fittingSize.width - largeHosting.fittingSize.width) < 0.5
+            && abs(standardHosting.fittingSize.height - largeHosting.fittingSize.height) < 0.5
+        let largeHosted = renderMarkerPreview(style: large, appearanceName: NSAppearance.Name.aqua, to: "/tmp/stare-marker-large.png")
         let passed = written == total && painted == PointerStylePreset.allCases.count
-            && dashedPainted && rotatedPainted
+            && dashedPainted && rotatedPainted && largeFits && canvasStable && largeHosted
         report.append(
             "marker styles result=\(passed ? "PASS" : "FAIL") presets=\(PointerStylePreset.allCases.count) "
                 + "previewPainted=\(painted)/\(PointerStylePreset.allCases.count) pngs=\(written)/\(total) "
                 + "dashed=\(dashedPainted ? 1 : 0) rotated=\(rotatedPainted ? 1 : 0) "
+                + "previewTile=\(Int(PointerPreviewView.tileSide)) previewScaledAt240=\(String(format: "%.2f", largeScale)) "
+                + "previewFits240=\(largeFits ? 1 : 0) previewSizeStable=\(canvasStable ? 1 : 0) "
                 + "path=/tmp/stare-marker-<preset>-<light|dark>.png "
-                + "dashed=/tmp/stare-marker-dashed.png rotated=/tmp/stare-marker-rotated.png"
+                + "dashed=/tmp/stare-marker-dashed.png rotated=/tmp/stare-marker-rotated.png "
+                + "large=/tmp/stare-marker-large.png large240pt=/tmp/stare-marker-large-240pt.png"
         )
         return report
     }

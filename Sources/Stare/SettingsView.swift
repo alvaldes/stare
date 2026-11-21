@@ -775,8 +775,10 @@ private struct MarkerPane: View {
                 VStack(spacing: 10) {
                     PointerPreviewView(style: model.pointer, ink: sampleInk)
                         .frame(maxWidth: .infinity, alignment: .center)
-                    Text("Drawn live by the same renderer the overlay uses, at the real chosen size. "
-                        + "Shown in red; with “Follow the current ink” the highlight takes the active ink while drawing.")
+                    Text("Drawn live by the same renderer the overlay uses. The preview canvas is fixed, so a size "
+                        + "too large for it is scaled down and the line under the tiles says the percentage; the "
+                        + "Size value above stays the real one. Shown in red; with “Follow the current ink” the "
+                        + "highlight takes the active ink while drawing.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -808,7 +810,7 @@ private struct MarkerPane: View {
 
     private var borderDetail: String? {
         borderApplies
-            ? "Solid draws the band filled with a solid line on both edges; dashed turns the outer edge into dashes."
+            ? "Solid draws the band filled with one line on the outer edge; dashed turns that line into dashes."
             : "The \(model.pointer.preset.title) style has no border; border style is ignored."
     }
 

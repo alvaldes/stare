@@ -204,26 +204,28 @@ final class PointerHighlightRendererTests: XCTestCase {
     // MARK: - The corrected border model (T14 rework)
 
     /// Samples along the ray at `degrees` for the three sample families of
-    /// the border model — the band's middle, the inner boundary and the
-    /// outer boundary — taking the strongest pixel inside each 2 pt line's
-    /// annulus (radius 36, band 9.36: the fill spans 26.64...36 and the
-    /// lines sit centred on 26.64 and 36).
+    /// the corrected border model — the band's middle, the outer boundary
+    /// and a point just inside the inner boundary (on the band's side of it)
+    /// — (radius 36, band 9.36: the fill spans 26.64...36 and the outer
+    /// line sits centred on 36).
     private func borderSamples(_ canvas: Canvas, degrees: Double) -> (fill: Double, inner: Double, outer: Double) {
         func value(_ radius: Double) -> Double {
             let radians = degrees * .pi / 180
             return canvas.alpha(atX: CGFloat(200 + radius * cos(radians)), atY: CGFloat(200 + radius * sin(radians)))
         }
         let fill = max(value(31), value(32))
-        let inner = max(value(25), value(26), value(27))
+        let inner = max(value(27), value(28))
         let outer = max(value(35), value(36), value(37))
         return (fill, inner, outer)
     }
 
-    /// Solid: the band is a filled coloured ring that carries a thin bright
-    /// line on both of its boundaries. A sample in the middle of the band is
-    /// the band fill, a sample on the inner boundary and one on the outer
-    /// boundary are both brighter than that fill — three distinct families.
-    func testSolidBorderFillsTheBandWithALineOnBothBoundaries() {
+    /// The corrected model: the band is a translucent filled ring whose inner
+    /// edge is just the fill's own edge, and exactly one bright line runs on
+    /// the outer edge. A sample in the middle of the band is the band fill, a
+    /// sample just inside the inner boundary is that same fill — the
+    /// regression that proves the old inner line is gone — and the outer
+    /// boundary is bright.
+    func testSolidBorderFillsTheBandWithOneContinuousLineOnTheOuterEdge() {
         var style = PointerStyle(preset: .ring, bandWidth: 0.26, glowIntensity: 0)
         style.borderStyle = .solid
         let canvas = render(style)
@@ -231,21 +233,23 @@ final class PointerHighlightRendererTests: XCTestCase {
             let sample = borderSamples(canvas, degrees: degrees)
             XCTAssertGreaterThan(sample.fill, 0.45, "the band is filled at \(degrees)°")
             XCTAssertLessThan(sample.fill, 0.65, "the middle of the band is the fill, not a line, at \(degrees)°")
-            XCTAssertGreaterThan(sample.inner, 0.85, "the inner boundary carries a line at \(degrees)°")
             XCTAssertGreaterThan(sample.outer, 0.85, "the outer boundary carries a line at \(degrees)°")
-            XCTAssertLessThan(sample.fill, sample.inner, "the inner line is brighter than the band fill at \(degrees)°")
-            XCTAssertLessThan(sample.fill, sample.outer, "the outer line is brighter than the band fill at \(degrees)°")
+            XCTAssertLessThan(sample.inner, 0.75, "no bright line on the inner boundary at \(degrees)°")
+            XCTAssertLessThan(
+                abs(sample.inner - sample.fill), 0.15,
+                "just inside the inner boundary the pixels are the fill itself at \(degrees)°"
+            )
         }
         // Inside the hole and past the outer line nothing is painted.
         XCTAssertLessThan(canvas.alpha(atX: 200, atY: 220), 0.03, "the hole stays clear")
         XCTAssertLessThan(canvas.alpha(atX: 245, atY: 200), 0.03, "nothing beyond the outer line")
     }
 
-    /// The regression that pins the corrected model against the previous
-    /// one: the dashed style is the solid one with only the outer boundary
-    /// line turned into dashes — the band stays filled under every gap (no
-    /// hole shows through) and the inner line stays continuous.
-    func testDashedBorderKeepsTheBandFilledUnderGapsAndTheInnerLineContinuous() {
+    /// The dashed style is the solid one with only the outer boundary line
+    /// turned into dashes: the band stays filled under every gap (no hole
+    /// shows through), the inner edge keeps being the fill's own edge with no
+    /// bright line, and the outer samples alternate bright and not.
+    func testDashedBorderKeepsTheBandFilledUnderGapsWithNoInnerLine() {
         var style = PointerStyle(preset: .ring, bandWidth: 0.26, glowIntensity: 0)
         style.borderStyle = .dashed
         let canvas = render(style)
@@ -254,7 +258,7 @@ final class PointerHighlightRendererTests: XCTestCase {
         for degrees in stride(from: 0.0, to: 360, by: 3) {
             let sample = borderSamples(canvas, degrees: degrees)
             XCTAssertGreaterThan(sample.fill, 0.45, "the band fill holds under the outer line at \(degrees)°")
-            XCTAssertGreaterThan(sample.inner, 0.85, "the inner line is continuous at \(degrees)°")
+            XCTAssertLessThan(sample.inner, 0.75, "no bright line on the inner boundary at \(degrees)°")
             if sample.outer > 0.8 {
                 dashAngles += 1
             } else if sample.outer < 0.7 {
@@ -349,5 +353,94 @@ final class PointerHighlightRendererTests: XCTestCase {
         XCTAssertGreaterThan(strongSample, 0.05, "the strong glow paints the halo")
         XCTAssertGreaterThan(weakSample, 0.01, "the weak glow still paints the halo")
         XCTAssertLessThan(weakSample, strongSample, "a weaker glow paints a dimmer halo")
+    }
+
+    // MARK: - Fixed preview canvas (T14 second rework)
+
+    /// The Settings preview's tile is a fixed canvas that must never grow with
+    /// the style's size. These tests exercise the seam that tells the view how
+    /// to draw: 168 pt, matching `PointerPreviewView.tileSide`.
+    private let previewCanvasSide = 168.0
+
+    /// Scale output is at most 1, and exactly 1 when the highlight already
+    /// fits the canvas.
+    func testFitScaleNeverExceedsOneAndIsOneWhenTheHighlightFits() {
+        let side = PointerHighlightRenderer
+            .extent(for: PointerStyle.standard.appearance(ink: .red), pulseScale: 1).width
+        XCTAssertGreaterThan(side, 0)
+        XCTAssertLessThanOrEqual(PointerHighlightRenderer.fitScale(extentSide: side, canvasSide: previewCanvasSide), 1)
+        XCTAssertEqual(
+            PointerHighlightRenderer.fitScale(extentSide: side, canvasSide: previewCanvasSide),
+            1, accuracy: 0.0001,
+            "the 72 pt default fits the preview canvas without scaling"
+        )
+        XCTAssertEqual(PointerHighlightRenderer.fitScale(extentSide: 100, canvasSide: 168), 1)
+    }
+
+    /// A 240 pt highlight must scale below 1 while the 72 pt default stays 1,
+    /// and the scaled appearance's own extent must then cover exactly the
+    /// canvas the fit scale was computed against.
+    func test240PtScalesBelowOneWhile72PtStaysAtOne() {
+        var big = PointerStyle.standard
+        big.size = 240
+        let bigSide = PointerHighlightRenderer
+            .extent(for: big.appearance(ink: .red), pulseScale: 1).width
+        let bigScale = PointerHighlightRenderer
+            .fitScale(extentSide: bigSide, canvasSide: previewCanvasSide)
+        XCTAssertLessThan(bigScale, 1, "240 pt is too large for the fixed canvas")
+
+        let scaledAppearance = big.appearance(ink: .red).scaled(by: bigScale)
+        let scaledSide = PointerHighlightRenderer
+            .extent(for: scaledAppearance, pulseScale: 1).width
+        XCTAssertEqual(scaledSide, previewCanvasSide, accuracy: 0.0001, "the scaled highlight fits the canvas exactly")
+    }
+
+    /// Scaling an appearance is a uniform shrink: distances multiply, ratios
+    /// and relative stops stay put, so the drawing is identical pixels at a
+    /// smaller size.
+    func testScaledAppearanceShrinksDistancesAndKeepsRatios() {
+        let appearance = PointerStyle.standard.appearance(ink: .red)
+        let scaled = appearance.scaled(by: 0.35)
+        XCTAssertEqual(scaled.radius, appearance.radius * 0.35, accuracy: 0.0001)
+        XCTAssertEqual(scaled.edgeWidth, appearance.edgeWidth * 0.35, accuracy: 0.0001)
+        XCTAssertEqual(scaled.glowMargin, appearance.glowMargin * 0.35, accuracy: 0.0001)
+        XCTAssertEqual(scaled.bandWidth, appearance.bandWidth)
+        XCTAssertEqual(scaled.bandFillAlpha, appearance.bandFillAlpha, accuracy: 0.0001)
+        XCTAssertEqual(scaled.edgeAlpha, appearance.edgeAlpha, accuracy: 0.0001)
+        XCTAssertEqual(scaled.glowExtent, appearance.glowExtent)
+        XCTAssertEqual(scaled.glowStops.count, appearance.glowStops.count)
+        XCTAssertEqual(scaled.geometry, appearance.geometry)
+        XCTAssertEqual(scaled.cornerRadiusFactor, appearance.cornerRadiusFactor)
+        // The extent — the invalidation surface — scales by the same factor:
+        let originalSide = PointerHighlightRenderer.extent(for: appearance, pulseScale: 1).width
+        let scaledSide = PointerHighlightRenderer.extent(for: scaled, pulseScale: 1).width
+        XCTAssertEqual(scaledSide, originalSide * 0.35, accuracy: 0.0001)
+    }
+
+    /// The caption never lies about what it shows: a scaled-down highlight
+    /// names the percentage and the real size, and one drawn full size says
+    /// exactly that.
+    func testPreviewCaptionReportsTheScaleAndTheRealSize() {
+        XCTAssertEqual(
+            PointerHighlightRenderer.previewFitCaption(scale: 0.35, size: 240),
+            "Shown at 35 % · 240 pt"
+        )
+        XCTAssertEqual(
+            PointerHighlightRenderer.previewFitCaption(scale: 1, size: 72),
+            "Shown at real size · 72 pt"
+        )
+        // The percentage the caption carries comes from the same scale the
+        // view draws with:
+        var big = PointerStyle.standard
+        big.size = 240
+        let bigScale = PointerHighlightRenderer.fitScale(
+            extentSide: PointerHighlightRenderer
+                .extent(for: big.appearance(ink: .red), pulseScale: 1).width,
+            canvasSide: previewCanvasSide
+        )
+        XCTAssertEqual(
+            PointerHighlightRenderer.previewFitCaption(scale: bigScale, size: big.size),
+            "Shown at 35 % · 240 pt"
+        )
     }
 }
