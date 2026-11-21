@@ -152,4 +152,62 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertEqual(prefs.toolShortcuts, ToolShortcutMap.standard)
         XCTAssertEqual(prefs.hotkeys, HotkeyBindings.standard)
     }
+
+    // MARK: Capture, whiteboard and update fields (T3/S6)
+
+    func testStandardCarriesStandardCaptureWhiteboardAndUpdateFields() {
+        XCTAssertEqual(AppPreferences.standard.capture, CapturePreference.standard)
+        XCTAssertEqual(AppPreferences.standard.whiteboard, WhiteboardDefaults.standard)
+        XCTAssertEqual(AppPreferences.standard.updates, UpdateSchedulePreference.standard)
+    }
+
+    func testRoundTripsCaptureWhiteboardAndUpdatesThroughStore() {
+        let store = InMemoryPreferenceStore()
+        var saved = AppPreferences.standard
+        saved.capture.format = .jpeg
+        saved.capture.destination = .folder(path: "/Users/al/Pictures/Stare")
+        saved.capture.fileNamePrefix = "Shots"
+        saved.whiteboard.background = .black
+        saved.whiteboard.pagesOnOpen = 5
+        saved.updates.schedule = .daily
+        saved.updates.lastCheck = date(2026, 11, 21, 10)
+
+        saved.save(to: store)
+        XCTAssertEqual(AppPreferences(store: store), saved)
+    }
+
+    func testBlobPredatingTheNewFieldsLoadsStandardDefaultsForThem() {
+        let store = InMemoryPreferenceStore()
+        store.set(Data(#"{"pointer":{"preset":"dot","size":44}}"#.utf8), forKey: AppPreferences.storageKey)
+
+        let prefs = AppPreferences(store: store)
+        XCTAssertEqual(prefs.pointer.preset, .dot)
+        XCTAssertEqual(prefs.pointer.size, 44)
+        XCTAssertEqual(prefs.capture, CapturePreference.standard)
+        XCTAssertEqual(prefs.whiteboard, WhiteboardDefaults.standard)
+        XCTAssertEqual(prefs.updates, UpdateSchedulePreference.standard)
+    }
+
+    func testCorruptSubFieldFallsBackToStandardAndKeepsTheRestOfTheBlob() {
+        let store = InMemoryPreferenceStore()
+        // "capture" is undecodable garbage; the pointer and the other new
+        // fields must still load from the same document.
+        store.set(
+            Data(#"{"pointer":{"preset":"dot","size":44},"capture":"garbage","whiteboard":{"pagesOnOpen":3},"updates":{"schedule":"daily"}}"#.utf8),
+            forKey: AppPreferences.storageKey
+        )
+
+        let prefs = AppPreferences(store: store)
+        XCTAssertEqual(prefs.pointer.preset, .dot)
+        XCTAssertEqual(prefs.pointer.size, 44)
+        XCTAssertEqual(prefs.capture, CapturePreference.standard)
+        XCTAssertEqual(prefs.whiteboard.pagesOnOpen, 3)
+        XCTAssertEqual(prefs.updates.schedule, .daily)
+    }
+}
+
+private func date(_ year: Int, _ month: Int, _ day: Int, _ hour: Int = 0, _ minute: Int = 0) -> Date {
+    var c = Calendar(identifier: .gregorian)
+    c.timeZone = TimeZone(identifier: "UTC")!
+    return c.date(from: DateComponents(year: year, month: month, day: day, hour: hour, minute: minute))!
 }

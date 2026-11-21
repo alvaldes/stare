@@ -18,20 +18,36 @@ public struct AppPreferences: Codable, Equatable, Sendable {
     /// The four global hotkeys (⌥⇧A/M/P/W) as data.
     public var hotkeys: HotkeyBindings
 
+    /// Capture format, destination and file name prefix.
+    public var capture: CapturePreference
+
+    /// What a whiteboard opens with: background and page count.
+    public var whiteboard: WhiteboardDefaults
+
+    /// Update check schedule and the last successful check.
+    public var updates: UpdateSchedulePreference
+
     /// The preferences a fresh install gets, matching the look the app ships
     /// today.
     public static let standard = AppPreferences()
 
-    /// Creates preferences with the given pointer style, tool shortcuts, and
-    /// hotkeys; each unset parameter takes its shipped default.
+    /// Creates preferences with the given pointer style, tool shortcuts,
+    /// hotkeys, capture, whiteboard and update settings; each unset parameter
+    /// takes its shipped default.
     public init(
         pointer: PointerStyle = .standard,
         toolShortcuts: ToolShortcutMap = .standard,
-        hotkeys: HotkeyBindings = .standard
+        hotkeys: HotkeyBindings = .standard,
+        capture: CapturePreference = .standard,
+        whiteboard: WhiteboardDefaults = .standard,
+        updates: UpdateSchedulePreference = .standard
     ) {
         self.pointer = pointer
         self.toolShortcuts = toolShortcuts
         self.hotkeys = hotkeys
+        self.capture = capture
+        self.whiteboard = whiteboard
+        self.updates = updates
     }
 
     /// Loads preferences from `store`. A corrupt or absent blob falls back to
@@ -42,17 +58,21 @@ public struct AppPreferences: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case pointer, toolShortcuts, hotkeys
+        case pointer, toolShortcuts, hotkeys, capture, whiteboard, updates
     }
 
-    /// Lenient decoding: a missing or undecodable pointer style falls back to
+    /// Lenient decoding: a missing or undecodable field falls back to its
     /// `standard` instead of failing the whole document, and blobs written
-    /// before the shortcut fields existed load complete defaults for them.
+    /// before the shortcut or capture/whiteboard/update fields existed load
+    /// complete defaults for them.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.pointer = (try? container.decode(PointerStyle.self, forKey: .pointer)) ?? .standard
         self.toolShortcuts = (try? container.decode(ToolShortcutMap.self, forKey: .toolShortcuts)) ?? .standard
         self.hotkeys = (try? container.decode(HotkeyBindings.self, forKey: .hotkeys)) ?? .standard
+        self.capture = (try? container.decode(CapturePreference.self, forKey: .capture)) ?? .standard
+        self.whiteboard = (try? container.decode(WhiteboardDefaults.self, forKey: .whiteboard)) ?? .standard
+        self.updates = (try? container.decode(UpdateSchedulePreference.self, forKey: .updates)) ?? .standard
     }
 
     /// Encodes the preferences as JSON under the versioned key. Legacy keys
@@ -74,6 +94,41 @@ public struct AppPreferences: Codable, Equatable, Sendable {
             return AppPreferences(pointer: pointer)
         }
         return .standard
+    }
+}
+
+/// Persisted update-check settings (T3/S6): how often to check and when one
+/// last succeeded. The schedule's raw value is what the blob persists; the
+/// timestamp is only ever written by a successful check, never guessed.
+public struct UpdateSchedulePreference: Codable, Equatable, Sendable {
+    /// How often to check for updates. Default `.weekly` — a sensible default
+    /// for a feature that did not exist before; the Settings pane exposes the
+    /// picker.
+    public var schedule: UpdateCheckSchedule
+
+    /// When the last successful check ran; nil until one does.
+    public var lastCheck: Date?
+
+    /// The update settings a fresh install gets.
+    public static let standard = UpdateSchedulePreference()
+
+    /// Creates the update settings.
+    public init(schedule: UpdateCheckSchedule = .weekly, lastCheck: Date? = nil) {
+        self.schedule = schedule
+        self.lastCheck = lastCheck
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schedule, lastCheck
+    }
+
+    /// Lenient decoding: a missing or unknown schedule falls back to the
+    /// standard one, and a missing timestamp stays nil.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let rawSchedule = try? container.decode(String.self, forKey: .schedule)
+        self.schedule = rawSchedule.flatMap(UpdateCheckSchedule.init(rawValue:)) ?? UpdateSchedulePreference.standard.schedule
+        self.lastCheck = try? container.decodeIfPresent(Date.self, forKey: .lastCheck)
     }
 }
 
