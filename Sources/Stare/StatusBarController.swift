@@ -13,8 +13,24 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let onOpenSettings: () -> Void
     /// Asked when the menu opens, so a checkmark never shows a stale pin state.
     private let isPinned: () -> Bool
+    /// Whiteboard page state for the page actions' enablement (T12/S9): nil
+    /// when the board is closed, otherwise (current, total) of the display the
+    /// pointer is on.
+    private let isBoardOpen: () -> Bool
+    private let boardPageState: () -> (current: Int, total: Int)?
+    private let onDeleteBoardPage: () -> Void
+    private let onMoveBoardPageLeft: () -> Void
+    private let onMoveBoardPageRight: () -> Void
+    private let onResetBoardPan: () -> Void
     private let pointerItem = NSMenuItem(title: "Pointer Highlight  ⌥⇧M", action: nil, keyEquivalent: "")
     private let pinItem = NSMenuItem(title: "Pin Drawing  ⌥⇧P", action: nil, keyEquivalent: "")
+    // Whiteboard page actions (T12/S9): their shortcuts exist in the board view
+    // itself; the menu items carry the same keys and are enabled only when the
+    // action can apply.
+    private let deletePageItem = NSMenuItem(title: "Delete Page", action: nil, keyEquivalent: "")
+    private let movePageLeftItem = NSMenuItem(title: "Move Page Left", action: nil, keyEquivalent: "")
+    private let movePageRightItem = NSMenuItem(title: "Move Page Right", action: nil, keyEquivalent: "")
+    private let resetPanItem = NSMenuItem(title: "Reset Pan", action: nil, keyEquivalent: "")
 
     init(
         onDraw: @escaping () -> Void,
@@ -23,7 +39,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         onPinToggle: @escaping () -> Void,
         onBoardToggle: @escaping () -> Void,
         onOpenSettings: @escaping () -> Void,
-        isPinned: @escaping () -> Bool
+        isPinned: @escaping () -> Bool,
+        isBoardOpen: @escaping () -> Bool = { false },
+        boardPageState: @escaping () -> (current: Int, total: Int)? = { nil },
+        onDeleteBoardPage: @escaping () -> Void = {},
+        onMoveBoardPageLeft: @escaping () -> Void = {},
+        onMoveBoardPageRight: @escaping () -> Void = {},
+        onResetBoardPan: @escaping () -> Void = {}
     ) {
         self.onDraw = onDraw
         self.onClear = onClear
@@ -32,6 +54,12 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         self.onBoardToggle = onBoardToggle
         self.onOpenSettings = onOpenSettings
         self.isPinned = isPinned
+        self.isBoardOpen = isBoardOpen
+        self.boardPageState = boardPageState
+        self.onDeleteBoardPage = onDeleteBoardPage
+        self.onMoveBoardPageLeft = onMoveBoardPageLeft
+        self.onMoveBoardPageRight = onMoveBoardPageRight
+        self.onResetBoardPan = onResetBoardPan
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
@@ -53,6 +81,15 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(menuItem(title: "Whiteboard  \(HotkeyDefaults.whiteboardDisplayName)", action: #selector(toggleBoard)))
 
+        // Page actions (T12/S9): the equivalent draws the same shortcut the
+        // board view itself answers to. The Delete key press delivers
+        // "\u{7F}" (keyCode 51) — a "\u{8}" binding never fires, which the
+        // selftest's menu-key probe proves with a synthetic key event.
+        menu.addItem(pageItem(deletePageItem, key: "\u{7F}", modifiers: .command, action: #selector(deleteBoardPage)))
+        menu.addItem(pageItem(movePageLeftItem, key: "\u{F702}", modifiers: .option, action: #selector(moveBoardPageLeft)))
+        menu.addItem(pageItem(movePageRightItem, key: "\u{F703}", modifiers: .option, action: #selector(moveBoardPageRight)))
+        menu.addItem(pageItem(resetPanItem, key: "0", modifiers: .command, action: #selector(resetBoardPan)))
+
         menu.addItem(menuItem(title: "Clear Drawing", action: #selector(clear)))
         menu.addItem(.separator())
         menu.addItem(menuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ","))
@@ -67,6 +104,45 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         pinItem.state = isPinned() ? .on : .off
     }
+
+    /// The page actions only make sense while the board is open, and only
+    /// where they can apply: delete is refused on the last remaining page and
+    /// a move is refused at the ends, so those cases stay disabled.
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem {
+        case deletePageItem:
+            return isBoardOpen() && (boardPageState()?.total ?? 1) > 1
+        case movePageLeftItem:
+            return boardPageState().map { $0.current > 1 } ?? false
+        case movePageRightItem:
+            return boardPageState().map { $0.current < $0.total } ?? false
+        case resetPanItem:
+            return boardPageState() != nil
+        default:
+            return true
+        }
+    }
+
+    /// Wires a page item's key equivalent, target and action once, at build
+    /// time. The target is the controller, so `validateMenuItem` sees the
+    /// enablement queries.
+    private func pageItem(
+        _ item: NSMenuItem,
+        key: String,
+        modifiers: NSEvent.ModifierFlags,
+        action: Selector
+    ) -> NSMenuItem {
+        item.keyEquivalent = key
+        item.keyEquivalentModifierMask = modifiers
+        item.target = self
+        item.action = action
+        return item
+    }
+
+    @objc private func deleteBoardPage() { onDeleteBoardPage() }
+    @objc private func moveBoardPageLeft() { onMoveBoardPageLeft() }
+    @objc private func moveBoardPageRight() { onMoveBoardPageRight() }
+    @objc private func resetBoardPan() { onResetBoardPan() }
 
     private func menuItem(
         title: String,

@@ -21,7 +21,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onPinToggle: { [weak self] in self?.overlay.togglePin() },
             onBoardToggle: { [weak self] in self?.overlay.toggleBoard() },
             onOpenSettings: { [weak self] in self?.settings.show() },
-            isPinned: { [weak self] in self?.overlay.isPinned ?? false }
+            isPinned: { [weak self] in self?.overlay.isPinned ?? false },
+            // Whiteboard page actions (T12/S9): the enablement queries and the
+            // actions all route through the controller to the display under
+            // the pointer.
+            isBoardOpen: { [weak self] in self?.overlay.isBoardActive ?? false },
+            boardPageState: { [weak self] in self?.overlay.boardPageState },
+            onDeleteBoardPage: { [weak self] in self?.overlay.deleteBoardPage() },
+            onMoveBoardPageLeft: { [weak self] in self?.overlay.moveBoardPageLeft() },
+            onMoveBoardPageRight: { [weak self] in self?.overlay.moveBoardPageRight() },
+            onResetBoardPan: { [weak self] in self?.overlay.resetBoardPan() }
         )
 
         hotkey = GlobalHotkey(

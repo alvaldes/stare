@@ -44,7 +44,7 @@ final class WhiteboardView: OverlayView {
 
     override func showIntroHint() {
         showHint(
-            "Whiteboard · ⌘← ⌘→ pages · ⌘B background · space-drag pan · esc to leave",
+            "Whiteboard · ⌘← ⌘→ pages · ⌘⌫ delete · ⌥← ⌥→ move · ⌘0 recentre · ⌘B background · space-drag pan · esc to leave",
             seconds: 3.2
         )
     }
@@ -65,6 +65,52 @@ final class WhiteboardView: OverlayView {
         board.selectPrevious()
         loadCurrentPage()
         Diag.log("board previous page=\(board.currentIndex + 1)/\(board.count)")
+    }
+
+    /// ⌘⌫ — deletes the current page. The board never goes empty: with a single
+    /// page the model refuses and the board stays as it was.
+    @discardableResult
+    func deleteCurrentPage() -> Bool {
+        board.adopt(session)
+        let deleted = board.deleteCurrentPage()
+        if deleted {
+            loadCurrentPage()
+        }
+        Diag.log("board delete page deleted=\(deleted) pages=\(board.count) current=\(board.currentIndex + 1)")
+        return deleted
+    }
+
+    /// ⌥← / ⌥→ — reorders: the current page swaps with its neighbour and stays
+    /// current. Refused at the ends, exactly like ‹ at the first page.
+    @discardableResult
+    func moveCurrentPageLeft() -> Bool {
+        board.adopt(session)
+        let moved = board.moveCurrentPageLeft()
+        if moved {
+            loadCurrentPage()
+        }
+        Diag.log("board move left moved=\(moved) current=\(board.currentIndex + 1)/\(board.count)")
+        return moved
+    }
+
+    @discardableResult
+    func moveCurrentPageRight() -> Bool {
+        board.adopt(session)
+        let moved = board.moveCurrentPageRight()
+        if moved {
+            loadCurrentPage()
+        }
+        Diag.log("board move right moved=\(moved) current=\(board.currentIndex + 1)/\(board.count)")
+        return moved
+    }
+
+    /// ⌘0 — recentres the current page: the pan offset goes back to zero. The
+    /// marks never move (their stored points are page space), so nothing else
+    /// changes.
+    func resetPagePan() {
+        board.setOffset(.zero)
+        needsDisplay = true
+        Diag.log("board pan reset page=\(board.currentIndex + 1)")
     }
 
     /// ⌘B — the current page's background flips between white and black.
@@ -141,6 +187,19 @@ final class WhiteboardView: OverlayView {
             return
         }
         let modifiers = event.modifierFlags
+        // ⌥← / ⌥→ reorder the current page inside the board.
+        if modifiers.contains(.option), !modifiers.contains(.command) {
+            switch event.charactersIgnoringModifiers {
+            case "\u{F702}": // ⌥←
+                moveCurrentPageLeft()
+                return
+            case "\u{F703}": // ⌥→
+                moveCurrentPageRight()
+                return
+            default:
+                break
+            }
+        }
         if modifiers.contains(.command), let characters = event.charactersIgnoringModifiers {
             switch characters {
             case "\u{F702}": // ⌘←
@@ -148,6 +207,12 @@ final class WhiteboardView: OverlayView {
                 return
             case "\u{F703}": // ⌘→
                 selectNextPage()
+                return
+            case "\u{7F}": // ⌘⌫
+                deleteCurrentPage()
+                return
+            case "0": // ⌘0
+                resetPagePan()
                 return
             case "b", "B": // ⌘B
                 togglePageBackground()

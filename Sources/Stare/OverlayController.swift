@@ -55,16 +55,20 @@ final class OverlayController {
         self.liveFrames = liveFrames
         wireEditor()
         // Interest is asked from the canvases, so it is whatever the sessions
-        // actually hold: only capture while the overlay is active and at least
-        // one display has a visible blur mark.
+        // actually hold: only capture while the drawing overlay or the
+        // whiteboard is active and at least one display has a visible blur mark.
         liveFrames.displaysNeedingFrames = { [weak self] in
-            guard let self, self.isActive else { return [] }
-            return self.canvases.values
+            guard let self else { return [] }
+            let liveCanvases = self.isBoardActive ? self.boardCanvases.values : self.canvases.values
+            guard self.isActive || self.isBoardActive else { return [] }
+            return liveCanvases
                 .filter { $0.view.hasLiveBlurMarks }
                 .map { $0.displayID }
         }
         liveFrames.onFrame = { [weak self] displayID in
-            guard let self, self.isActive, let canvas = self.canvases[displayID] else { return }
+            guard let self else { return }
+            let canvas = self.isBoardActive ? self.boardCanvases[displayID] : self.canvases[displayID]
+            guard self.isActive || self.isBoardActive, let canvas else { return }
             canvas.view.invalidateLiveBlurMarks()
         }
         NotificationCenter.default.addObserver(
@@ -452,7 +456,15 @@ final class OverlayController {
     }
 
     /// Whiteboard capture: marks over a solid image of the page's background
-    /// colour at the display's pixel size.
+    /// colour at the display's pixel size — never transparent, never a bare
+    /// background-coloured image with nothing drawn.
+    ///
+    /// A blur mark must show what the board's view blurs (T12/S9): the live
+    /// frame, not the page colour. The frame is captured with Stare's own
+    /// windows excluded, so it is the desktop behind the board; the compositor
+    /// samples it at its own scale, and blur marks alone render over it. When
+    /// Screen Recording is missing there is no frame and the capture composites
+    /// the blur over the page colour, the same fallback the view shows.
     private func captureBoardMarks(_ canvas: DisplayCanvas, displayID: CGDirectDisplayID, area: CGRect?) {
         guard let boardView = canvas.boardView else { return }
         let frameSize = canvas.panel.frame.size
@@ -473,7 +485,13 @@ final class OverlayController {
         guard let composed = MarkCompositor.composite(
             marks: canvas.view.session.strokes,
             over: base,
-            scale: scale
+            scale: scale,
+            blurBase: liveFrames.frame(for: displayID),
+            // The marks are stored in page space; the capture is what the
+            // board shows, so the page's pan moves them to view space
+            // (pagePoint - offset), and a blur mark samples the frame at the
+            // panned rectangle.
+            offset: boardView.board.currentPage.offset
         ) else {
             Diag.log("board capture failed: composition returned nil")
             return
@@ -701,10 +719,15 @@ final class OverlayController {
             canvas.view.onCaptureRequest = { [weak self] area in
                 self?.capture(displayID: displayID, area: area)
             }
-            canvas.view.onBlurMarksChanged = nil
-            // The board covers the screen, so a blur mark cannot show the
-            // desktop: no live frames are fed here and the neutral fallback
-            // shows where the mark is.
+            // Real pixels for the board's blur (T12/S9): the frame is captured
+            // with Stare's own windows excluded, so it is the desktop behind
+            // the board — what a blur mark there is supposed to reveal. Without
+            // Screen Recording no frame ever lands and the neutral fallback
+            // shows, exactly as before. Nothing else on the board needs the
+            // permission.
+            canvas.view.displayID = displayID
+            canvas.view.liveFrameSource = liveFrames
+            canvas.view.onBlurMarksChanged = { [weak self] in self?.liveFrames.wake() }
             canvas.boardView?.onPageChanged = { [weak self] in
                 self?.syncBoardIndicator(for: displayID)
             }
@@ -721,6 +744,38 @@ final class OverlayController {
             return
         }
         state.whiteboardPage = (current: board.currentIndex + 1, total: board.count)
+    }
+
+    // MARK: - Board page actions (T12/S9)
+
+    /// The current page and total of the display the pointer is on, nil when
+    /// the board is closed. The menu and the toolbar read this to enable and
+    /// disable the page actions.
+    var boardPageState: (current: Int, total: Int)? {
+        guard isBoardActive,
+              let view = boardCanvasUnderPointer()?.boardView else { return nil }
+        return (current: view.board.currentIndex + 1, total: view.board.count)
+    }
+
+    /// ⌘⌫ — deletes the current page on the display the pointer is on. Refused
+    /// while one page remains, so the board never goes empty.
+    func deleteBoardPage() {
+        boardCanvasUnderPointer()?.boardView?.deleteCurrentPage()
+    }
+
+    /// ⌥← — moves the current page one slot to the left.
+    func moveBoardPageLeft() {
+        boardCanvasUnderPointer()?.boardView?.moveCurrentPageLeft()
+    }
+
+    /// ⌥→ — moves the current page one slot to the right.
+    func moveBoardPageRight() {
+        boardCanvasUnderPointer()?.boardView?.moveCurrentPageRight()
+    }
+
+    /// ⌘0 — recentres the current page's pan.
+    func resetBoardPan() {
+        boardCanvasUnderPointer()?.boardView?.resetPagePan()
     }
 
     private func boardCanvasUnderPointer() -> DisplayCanvas? {
@@ -777,6 +832,11 @@ final class OverlayController {
                 },
                 onNextPage: { [weak self] in
                     self?.boardCanvasUnderPointer()?.boardView?.selectNextPage()
+                },
+                // The board bar alone carries the delete affordance; the
+                // drawing bar is built without it (nil hides the button).
+                onDeletePage: { [weak self] in
+                    self?.boardCanvasUnderPointer()?.boardView?.deleteCurrentPage()
                 }
             )
             : ToolbarPanel(

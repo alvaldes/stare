@@ -33,7 +33,8 @@ final class ToolbarPanel: NSPanel {
         onClear: @escaping () -> Void,
         onDone: @escaping () -> Void,
         onPreviousPage: (() -> Void)? = nil,
-        onNextPage: (() -> Void)? = nil
+        onNextPage: (() -> Void)? = nil,
+        onDeletePage: (() -> Void)? = nil
     ) {
         let hosting = ToolbarHostingView(
             rootView: ToolbarView(
@@ -43,7 +44,8 @@ final class ToolbarPanel: NSPanel {
                 onClear: onClear,
                 onDone: onDone,
                 onPreviousPage: onPreviousPage,
-                onNextPage: onNextPage
+                onNextPage: onNextPage,
+                onDeletePage: onDeletePage
             )
         )
         hosting.sizingOptions = [.intrinsicContentSize]

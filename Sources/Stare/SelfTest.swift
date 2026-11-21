@@ -142,6 +142,10 @@ enum SelfTest {
         // board canvas and its view.
         report.append(contentsOf: boardReport())
 
+        // Board pages (T12/S9): delete, reorder, index select and pan reset
+        // through the real view path, plus real blur pixels on the board.
+        report.append(contentsOf: boardPagesReport())
+
         // Palette in both system appearances: the same view must read on a light
         // and on a dark system, which a screenshot of one theme cannot prove.
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
@@ -482,6 +486,221 @@ enum SelfTest {
         let passed = page1Ok && page2Ok && captureOk && panOk && inherited && board.count == 2
         report.append("board result=\(passed ? "PASS" : "FAIL")")
         return report
+    }
+
+    // MARK: - Board pages (T12/S9)
+
+    /// Page management end to end through the real board view: adding pages,
+    /// deleting the current one (which keeps the remaining pages and their
+    /// marks), refusing to delete the last page, moving left/right (which keeps
+    /// the moved page current, with its marks), resetting the pan, and a blur
+    /// mark showing the real frame's pixels instead of the neutral fallback.
+    private static func boardPagesReport() -> [String] {
+        var report: [String] = []
+        guard let screen = NSScreen.screens.first else {
+            report.append("FAIL: board pages no screens")
+            return report
+        }
+        let state = EditorState()
+        let board = WhiteboardPages()
+        guard let canvas = DisplayCanvas(screen: screen, state: state, onEscape: {}, board: board),
+              let view = canvas.boardView else {
+            report.append("FAIL: board pages canvas could not be created")
+            return report
+        }
+        let panel = canvas.panel
+        panel.orderFrontRegardless()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        defer { panel.orderOut(nil) }
+
+        func markID(on pageIndex: Int) -> UUID? {
+            board.pages[pageIndex].session.strokes.first?.id
+        }
+
+        // Adding pages: page 2 is created past the last one and gets a mark.
+        state.tool = .pen
+        state.ink = .red
+        sendDrag(to: panel, from: CGPoint(x: 150, y: 150), to: CGPoint(x: 350, y: 150))
+        let page1Mark = markID(on: 0)
+        view.selectNextPage()
+        state.ink = .blue
+        sendDrag(to: panel, from: CGPoint(x: 200, y: 400), to: CGPoint(x: 400, y: 400))
+        let addOk = board.count == 2 && board.currentIndex == 1
+            && page1Mark != nil && markID(on: 1) != nil
+        report.append(
+            "board pages add count=\(board.count) current=\(board.currentIndex + 1) "
+                + "page1Mark=\(page1Mark != nil) page2Mark=\(markID(on: 1) != nil) ok=\(addOk)"
+        )
+
+        // Deleting the current page keeps the remaining pages and their marks.
+        let deleted = view.deleteCurrentPage()
+        let deleteKeepsOthers = deleted && board.count == 1 && board.currentIndex == 0
+            && board.pages[0].session.strokes.first?.id == page1Mark
+            && !board.pages[0].session.strokes.isEmpty
+        report.append(
+            "board pages delete deleted=\(deleted) count=\(board.count) "
+                + "page1MarkKept=\(board.pages[0].session.strokes.first?.id == page1Mark) ok=\(deleteKeepsOthers)"
+        )
+
+        // The last page cannot be deleted: the board never goes empty.
+        let refused = !view.deleteCurrentPage() && board.count == 1
+            && !board.pages[0].session.strokes.isEmpty
+        report.append(
+            "board pages last-page-refused count=\(board.count) marks=\(board.pages[0].session.strokes.count) ok=\(refused)"
+        )
+
+        // Rebuild three pages with distinct marks for the reorder checks.
+        view.selectNextPage()
+        state.ink = .blue
+        sendDrag(to: panel, from: CGPoint(x: 200, y: 400), to: CGPoint(x: 400, y: 400))
+        view.selectNextPage()
+        state.ink = .green
+        sendDrag(to: panel, from: CGPoint(x: 300, y: 250), to: CGPoint(x: 500, y: 250))
+        let page1 = markID(on: 0), page2 = markID(on: 1), page3 = markID(on: 2)
+        let rebuilt = board.count == 3 && page1 != nil && page2 != nil && page3 != nil
+        report.append("board pages rebuilt count=\(board.count) marksDistinct=\(Set([page1, page2, page3]).count == 3) ok=\(rebuilt)")
+
+        // ⌥← on page 3: it swaps with page 2 and stays current, marks intact.
+        let movedLeft = view.moveCurrentPageLeft()
+        let leftOk = movedLeft && board.count == 3 && board.currentIndex == 1
+            && markID(on: 1) == page3 && markID(on: 2) == page2 && markID(on: 0) == page1
+            && !board.currentPage.session.strokes.isEmpty
+        func pageIndex(of id: UUID?) -> Int {
+            guard let id else { return -1 }
+            return board.pages.firstIndex { $0.session.strokes.first?.id == id } ?? -1
+        }
+        let order = [page1, page2, page3].map(pageIndex(of:)).map(String.init).joined(separator: ",")
+        report.append(
+            "board pages move-left moved=\(movedLeft) current=\(board.currentIndex + 1) "
+                + "order=[\(order)] ok=\(leftOk)"
+        )
+
+        // ⌥→ twice: page 3 walks back to the end. At the end a further ⌥→ and
+        // at the start a ⌥← are refused.
+        view.moveCurrentPageRight()
+        let refusedRight = !view.moveCurrentPageRight()
+        view.moveCurrentPageLeft()
+        let moveOk = leftOk && refusedRight
+            && view.moveCurrentPageLeft()
+            && board.currentIndex == 0 && markID(on: 0) == page3
+            && !view.moveCurrentPageLeft()
+            && board.currentIndex == 0 && board.count == 3
+        report.append(
+            "board pages move-right boundaryRefused=\(refusedRight) "
+                + "current=\(board.currentIndex + 1)/\(board.count) ok=\(moveOk)"
+        )
+
+        // ⌘0: pan first through the real view path (the same translation a
+        // space-drag produces), then the reset must return the offset to zero.
+        // Asserting the pan before resetting is what makes a broken reset fail.
+        view.pan(byPointerDelta: CGSize(width: -80, height: -50))
+        let panned = board.currentPage.offset == CGSize(width: 80, height: 50)
+        view.resetPagePan()
+        let panReset = panned && board.currentPage.offset == .zero
+        report.append(
+            "board pages pan-reset panned=\(panned) offset=\(board.currentPage.offset) ok=\(panReset)"
+        )
+
+        // ⌘⌫ menu item: the key equivalent has to match what a real Delete key
+        // press delivers ("\u{7F}", keyCode 51 — the same key the view
+        // answers), which a synthetic key event through the real menu
+        // machinery proves. A "\u{8}" binding never fires.
+        let menuKeyReport = menuKeyProbe()
+        report.append(contentsOf: menuKeyReport)
+        let menuKeyOk = menuKeyReport.contains { $0.contains("ok=true") }
+
+        // Blur on the board: with a live frame fed through the real frame
+        // source path, the mark shows the frame's pixels (left of the pattern
+        // edge bright, right dark), not the neutral fallback, which would be
+        // uniform in both halves.
+        state.tool = .blur
+        // Straddle the pattern's sharp edge (the view's centre): the mark has
+        // to mix both halves, which the uniform neutral fallback cannot.
+        sendDrag(to: panel,
+                 from: CGPoint(x: view.bounds.midX - 200, y: 350),
+                 to: CGPoint(x: view.bounds.midX + 200, y: 550))
+        guard let blurMark = board.currentPage.session.strokes.last, blurMark.tool == .blur,
+              view.hasLiveBlurMarks else {
+            report.append("FAIL: board pages blur mark was not committed")
+            return report
+        }
+        let displayID = CGDirectDisplayID(1)
+        guard let pattern = syntheticScreenPattern(size: view.bounds.size, scale: 1) else {
+            report.append("FAIL: board pages blur pattern could not be built")
+            return report
+        }
+        let live = LiveFrameSource(capture: { _, _ in pattern })
+        live.displaysNeedingFrames = { [displayID] }
+        view.displayID = displayID
+        view.liveFrameSource = live
+        live.wake()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        defer { live.stop() }
+        let rendered = renderView(view, to: "/tmp/stare-board-blur.png")
+        guard let rendered, let first = blurMark.points.first, let last = blurMark.points.last else {
+            report.append("FAIL: board pages blur render failed")
+            return report
+        }
+        let rect = PathBuilder.normalizedRect(from: first, to: last)
+        let scale = CGFloat(rendered.width) / max(view.bounds.width, 1)
+        let midY = (rect.minY + rect.maxY) / 2
+        let left = rgb(rendered, at: view.viewPoint(fromPage: CGPoint(x: rect.midX - rect.width * 0.2, y: midY)), scale: scale)
+        let right = rgb(rendered, at: view.viewPoint(fromPage: CGPoint(x: rect.midX + rect.width * 0.2, y: midY)), scale: scale)
+        // The pattern is white left of centre, black right of it; the blurred
+        // patch must carry that contrast. The fallback (uniform gray over the
+        // page colour) cannot.
+        let contrast = left.red - right.red
+        let blurOk = contrast > 60
+        report.append(
+            "board pages blur left=\(left.red) right=\(right.red) contrast=\(contrast) expect>60 "
+                + "png=/tmp/stare-board-blur.png ok=\(blurOk)"
+        )
+
+        let passed = addOk && deleteKeepsOthers && refused && rebuilt && leftOk && moveOk && panReset && blurOk && menuKeyOk
+        report.append("board pages result=\(passed ? "PASS" : "FAIL")")
+        return report
+    }
+
+    /// Which character a real Delete key press has to be bound to in an
+    /// NSMenuItem for the item to fire: the probe sends the exact key event a
+    /// ⌘⌫ press produces (characters "\u{7F}", keyCode 51) through the real
+    /// menu key-equivalent machinery with each candidate binding.
+    private static func menuKeyProbe() -> [String] {
+        final class ProbeTarget: NSObject {
+            var fired = false
+            @objc func hit() { fired = true }
+        }
+
+        func fires(with key: String) -> Bool {
+            let target = ProbeTarget()
+            let item = NSMenuItem(title: "probe", action: #selector(ProbeTarget.hit), keyEquivalent: key)
+            item.keyEquivalentModifierMask = .command
+            item.target = target
+            let menu = NSMenu()
+            menu.addItem(item)
+            guard let event = NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: .command,
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: "\u{7F}",
+                charactersIgnoringModifiers: "\u{7F}",
+                isARepeat: false,
+                keyCode: 51
+            ) else { return false }
+            _ = menu.performKeyEquivalent(with: event)
+            return target.fired
+        }
+
+        let backspaceBindingFires = fires(with: "\u{8}")
+        let deleteBindingFires = fires(with: "\u{7F}")
+        let ok = deleteBindingFires && !backspaceBindingFires
+        return [
+            "board pages menu-key backspace(\\u{8})-fires=\(backspaceBindingFires) "
+                + "delete(\\u{7F})-fires=\(deleteBindingFires) ok=\(ok)",
+        ]
     }
 
     // MARK: - Select (T11/S6)
