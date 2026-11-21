@@ -2,44 +2,9 @@ import AppKit
 import SwiftUI
 import StareCore
 
-/// Observable shell over `ScreenRecordingPermission` for the guide's SwiftUI
-/// view. `ScreenRecordingPermission` is a plain `@MainActor` class with an
-/// `onChange` callback, so the window keeps publishing `access` from it and
-/// the UI updates without polling races.
-@MainActor
-final class OnboardingModel: ObservableObject {
-    let permission: ScreenRecordingPermission
-
-    @Published private(set) var access: ScreenRecordingAccess = .denied
-
-    /// Also read by the window controller, which stops refreshing once the
-    /// state is terminal for this session.
-    var onAccessChanged: ((ScreenRecordingAccess) -> Void)?
-
-    init(permission: ScreenRecordingPermission) {
-        self.permission = permission
-        permission.onChange = { [weak self] access in
-            self?.access = access
-            self?.onAccessChanged?(access)
-        }
-    }
-
-    /// Forwards to the permission model: re-reads the three TCC answers.
-    @discardableResult
-    func refresh() -> ScreenRecordingAccess {
-        permission.refresh()
-    }
-
-    /// The guide's primary button: prompt the system, then land the user on
-    /// the Screen Recording pane so they only have to flip the switch (S1).
-    func requestAccess() {
-        permission.requestAccess()
-    }
-
-    func openSettings() {
-        permission.openSettings()
-    }
-}
+/// `OnboardingModel`, the observable shell over `ScreenRecordingPermission`
+/// the guide's view binds to, lives in StareCore so its mirroring rules are
+/// covered by tests. This file owns the window itself.
 
 /// Owns the onboarding window (T5/S1–S3). Follows the pattern an `.accessory`
 /// app needs to open a real key window (`NSApp.activate()` +
