@@ -39,7 +39,8 @@ both are dev dependencies that only run in the build, never in the Worker.
 On the Workers Free plan, requests that run Worker code are capped at 100,000
 per day, but static asset requests are free and unlimited. Every page is
 prerendered into static assets, so visiting the landing never runs the Worker.
-Only unknown paths reach it.
+Only unknown paths reach it, and it answers them with the 404 page
+(`src/pages/notfound.tsx`, status 404, `noindex`).
 
 The demo runs entirely in the browser. The download button asks the GitHub API
 for the latest release from the visitor's browser and shows "Coming soon" until

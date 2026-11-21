@@ -2,13 +2,25 @@ import { jsxRenderer } from 'hono/jsx-renderer'
 import { Link, Script, ViteClient } from 'vite-ssr-components/hono'
 import { site } from './site'
 
-export const renderer = jsxRenderer(({ children }) => {
+const DEFAULT_TITLE = 'Stare: draw on your screen, capture it, paste it'
+
+/** Per-page head values; pages pass them as c.render's second argument. */
+type PageHead = { title?: string; robots?: string }
+
+declare module 'hono' {
+  interface ContextRenderer {
+    (content: string | Promise<string>, head?: PageHead): Response | Promise<Response>
+  }
+}
+
+export const renderer = jsxRenderer(({ children, title, robots }: { children?: unknown } & PageHead) => {
   return (
     <html lang="en">
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Stare: draw on your screen, capture it, paste it</title>
+        <title>{title ?? DEFAULT_TITLE}</title>
+        {robots && <meta name="robots" content={robots} />}
         <meta name="description" content={site.description} />
         <meta property="og:title" content="Stare" />
         <meta property="og:description" content={site.description} />

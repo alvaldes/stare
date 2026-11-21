@@ -29,3 +29,11 @@ revealOnScroll()
 trackSpotlights()
 lightUpShortcuts()
 void enableDownloads()
+
+// 404 page: Esc leaves, the same key that clears and leaves in the app.
+const escHome = document.querySelector<HTMLAnchorElement>('[data-esc-home]')
+if (escHome) {
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !event.defaultPrevented) location.assign(escHome.href)
+  })
+}

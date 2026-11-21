@@ -9,7 +9,8 @@ export const sectionTitle = 'text-[clamp(1.75rem,3.2vw,2.5rem)] leading-[1.1] fo
 export function Nav() {
   return (
     // Same container as the page content, so the pill's edges line up with it.
-    <header class={`${container} sticky top-3 z-50`}>
+    // w-full keeps it at max-width when a page lays it out as a flex item.
+    <header class={`${container} sticky top-3 z-50 w-full`}>
       <nav
         aria-label="Main"
         class="flex h-14 items-center gap-6 rounded-full border border-white/70 bg-paper/55 pr-2 pl-5 shadow-glass backdrop-blur-xl backdrop-saturate-150"
@@ -21,9 +22,9 @@ export function Nav() {
         </a>
         <div class="ml-auto hidden items-center gap-1 text-[15px] text-muted sm:flex">
           {[
-            ['#try', 'Try it'],
-            ['#shortcuts', 'Shortcuts'],
-            ['#faq', 'FAQ'],
+            ['/#try', 'Try it'],
+            ['/#shortcuts', 'Shortcuts'],
+            ['/#faq', 'FAQ'],
             [repoUrl, 'GitHub'],
           ].map(([href, label]) => (
             <a href={href} class="rounded-full px-3 py-1.5 transition-colors hover:bg-graphite/6 hover:text-graphite">
@@ -32,7 +33,7 @@ export function Nav() {
           ))}
         </div>
         <a
-          href="#download"
+          href="/#download"
           class="ml-auto inline-flex h-10 items-center rounded-full bg-graphite px-4 text-[14px] font-semibold text-paper transition-colors hover:bg-graphite/90 sm:ml-0"
         >
           Download
@@ -214,7 +215,7 @@ export function Faq() {
 
 export function Footer() {
   return (
-    <footer class={`${container} relative pt-10 pb-12`}>
+    <footer class={`${container} relative w-full pt-10 pb-12`}>
       <div class="flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-rule pt-8 text-[14px] text-muted">
         <Logo />
         <span>Open source, made for macOS.</span>
