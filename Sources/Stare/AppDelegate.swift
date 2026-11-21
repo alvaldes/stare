@@ -14,7 +14,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         preferences: preferences
     )
     private var statusBar: StatusBarController?
-    private lazy var settings = SettingsWindowController(state: overlay.state)
+    /// The Settings shell now observes the single preferences owner and the
+    /// shared permission model directly (T6 slice 2); it no longer goes
+    /// through the overlay editor's mirrored state.
+    @MainActor private lazy var settings = SettingsWindowController(
+        model: preferences,
+        permission: screenRecording
+    )
     /// One permission model for the whole app; the onboarding guide drives it.
     @MainActor private lazy var screenRecording = ScreenRecordingPermission(
         client: SystemScreenRecordingClient(captureService: captureService)

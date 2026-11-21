@@ -1,46 +1,79 @@
 import AppKit
 import SwiftUI
+import StareCore
 
-/// Owns the settings window. It is a normal window, so this is the one place
-/// where activating Stare is correct.
+/// Owns the settings window: a resizable sidebar + panes shell. It is a normal
+/// window, so this is the one place where activating Stare is correct.
+@MainActor
 final class SettingsWindowController {
     private var window: NSWindow?
-    private let state: EditorState
+    private let model: PreferencesModel
+    private let permissionProbe: PermissionProbe
 
-    init(state: EditorState) {
-        self.state = state
+    /// Default open size; the shell itself shrinks to 720x480 and stretches
+    /// with the window (`contentMinSize`).
+    private static let defaultSize = CGSize(width: 880, height: 560)
+    private static let minSize = CGSize(width: 720, height: 480)
+
+    init(model: PreferencesModel, permission: ScreenRecordingPermission) {
+        self.model = model
+        self.permissionProbe = PermissionProbe(permission: permission)
     }
 
     func show() {
         let window = self.window ?? makeWindow()
         self.window = window
+        // The selected area lives in SwiftUI `@State`, and every open starts on
+        // General (netty's behaviour): `show()` recreates the hosting view, so
+        // the state and pane scroll position reset deterministically even
+        // though closing the window does not tear the SwiftUI tree down.
+        window.contentView = makeHostingView()
 
         if self.window === window, window.isVisible == false, window.frame.origin == .zero {
             window.center()
         }
+        // An `.accessory` app opens a real key window by activating first,
+        // ordering front regardless, and re-asserting once the activation
+        // settles (next runloop turn) — the same pattern the guide uses.
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let window = self.window, window.isVisible else { return }
+            NSApp.activate()
+            window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
+        }
         Diag.log("settings opened")
     }
 
     private func makeWindow() -> NSWindow {
-        // A fixed content size: NSHostingView.fittingSize is zero before a layout
-        // pass, and a zero-sized window is created but never seen.
-        let size = CGSize(width: 420, height: 560)
-        let hosting = NSHostingView(rootView: SettingsView(state: state))
-        hosting.frame = CGRect(origin: .zero, size: size)
-
         let window = NSWindow(
-            contentRect: CGRect(origin: .zero, size: size),
-            styleMask: [.titled, .closable],
+            contentRect: CGRect(origin: .zero, size: Self.defaultSize),
+            styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "Stare Settings"
         window.isReleasedWhenClosed = false
-        window.contentView = hosting
-        window.setContentSize(size)
+        window.contentMinSize = Self.minSize
+        window.contentView = makeHostingView()
+        window.setContentSize(Self.defaultSize)
         return window
+    }
+
+    private func makeHostingView() -> NSHostingView<SettingsView> {
+        // The root view carries the flexible `.frame(minWidth:minHeight:)`, but
+        // self-sizing stays off so the window — not the view's fitting size —
+        // owns the geometry (see the guide, and the DEVELOPMENT.md note that
+        // `fittingSize` is zero before layout).
+        let hosting = NSHostingView(rootView: SettingsView(
+            model: model,
+            permission: permissionProbe
+        ))
+        hosting.sizingOptions = []
+        hosting.autoresizingMask = [.width, .height]
+        hosting.frame = CGRect(origin: .zero, size: Self.defaultSize)
+        return hosting
     }
 }
