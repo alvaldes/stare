@@ -50,7 +50,7 @@ decodable file through the real delivery tail, and the clipboard path writes
 nothing); `whiteboard pane` (a fresh board opens with the persisted
 background and page count, and the System background resolves to
 `system-light=white` in the light appearance and `system-dark=black` in the
-dark one); `marker styles … presets=6` (all six pointer presets drawn through
+dark one); `marker styles … presets=5` (all five pointer presets drawn through
 the Settings preview, with painted-pixel checks, plus one dashed-border and
 one rotated-click render reported as `dashed=1 rotated=1`); and
 `onboarding` (the guide's window can become key from the accessory app, and
