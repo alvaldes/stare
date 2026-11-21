@@ -103,65 +103,14 @@ export function Hero() {
   )
 }
 
-const principles = [
-  {
-    title: 'Lives in the menu bar',
-    body: 'No Dock icon and no windows. Stare stays out of sight until you press ⌥⇧A.',
-    icon: 'M4 6.5h16M7 3.5v3M17 3.5v3M5.5 6.5h13v12h-13z',
-  },
-  {
-    title: 'Never steals focus',
-    body: 'Draw over Safari and keep scrolling in Safari. The app you are marking up stays in charge.',
-    icon: 'M12 5c5 0 8.5 4.5 9 7-.5 2.5-4 7-9 7s-8.5-4.5-9-7c.5-2.5 4-7 9-7zM12 9.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5z',
-  },
-  {
-    title: 'Every display, every Space',
-    body: 'The drawing sheet covers all your displays, including apps in full screen.',
-    icon: 'M3 5h11v8H3zM10 11h11v8H10z',
-  },
-  {
-    title: 'Asks only for what it needs',
-    body: 'Drawing works without any permission. Capturing needs Screen Recording, which macOS asks you to allow once.',
-    icon: 'M12 3.5l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9v-5l7-3zM9 12l2 2 4-4',
-  },
+// Each claim is backed elsewhere: menu bar app (LSUIElement), no sign-in
+// anywhere in the app, captures stay local (see FAQ), source on GitHub.
+const guarantees = [
+  { label: 'Lives in the menu bar', icon: 'M3 5.5h18M6.5 3v2.5M17.5 3v2.5M4.5 5.5h15v14h-15z' },
+  { label: 'No account to create', icon: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4.5 20.5c1.3-3.6 4.1-5.5 7.5-5.5s6.2 1.9 7.5 5.5' },
+  { label: 'Captures stay on your Mac', icon: 'M6.5 10V7.5a5.5 5.5 0 0 1 11 0V10M5 10h14v10.5H5zM12 14v3' },
+  { label: 'Open source', icon: 'M8.5 7.5L4 12l4.5 4.5M15.5 7.5L20 12l-4.5 4.5M13.5 5l-3 14' },
 ]
-
-export function Principles() {
-  return (
-    <section aria-labelledby="principles-title" class={`${container} py-20 md:py-28`}>
-      <h2 id="principles-title" data-reveal class={`${sectionTitle} max-w-[18ch]`}>
-        Out of your way until you need it
-      </h2>
-      <div class="mt-12 grid gap-4 sm:grid-cols-2">
-        {principles.map((item, i) => (
-          <div
-            data-reveal
-            data-spotlight
-            style={{ '--delay': `${(i % 2) * 120}ms` }}
-            class="spotlight group relative overflow-hidden rounded-2xl border border-white/80 bg-paper/60 p-7 shadow-glass backdrop-blur-sm transition-[border-color] hover:border-aurora-blue/50"
-          >
-            <svg
-              aria-hidden="true"
-              viewBox="0 0 24 24"
-              width="26"
-              height="26"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.7"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              class="text-graphite/70 transition-transform duration-300 group-hover:-translate-y-0.5 group-hover:text-ink-blue"
-            >
-              <path d={item.icon} />
-            </svg>
-            <h3 class="mt-5 text-[18px] font-bold tracking-tight">{item.title}</h3>
-            <p class="mt-2 max-w-[42ch] leading-relaxed text-muted">{item.body}</p>
-          </div>
-        ))}
-      </div>
-    </section>
-  )
-}
 
 export function Download() {
   return (
@@ -198,6 +147,18 @@ export function Download() {
           </a>
         </div>
         <p data-download-version class="relative mt-5 text-[14px] text-paper/60" />
+
+        {/* What you can count on, said where the install decision happens. */}
+        <ul aria-label="What to expect" class="relative mt-12 grid gap-x-8 gap-y-4 border-t border-paper/15 pt-8 text-[15px] text-paper/80 sm:grid-cols-2 lg:grid-cols-4">
+          {guarantees.map((item) => (
+            <li class="flex items-center gap-3">
+              <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" class="shrink-0 text-ink-sky" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d={item.icon} />
+              </svg>
+              {item.label}
+            </li>
+          ))}
+        </ul>
       </div>
     </section>
   )
