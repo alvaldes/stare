@@ -1,7 +1,14 @@
 // Draws the vector model onto a 2D canvas, following StareCore's MarkRenderer.
 import { arrowHeadBarbs, normalizedRect } from './geometry'
-import { BADGE_DIAMETER, ERASER_RADIUS, inkHex, isTransient, laserOpacity, lineWidth, type Mark, opacity } from './model'
+import { BADGE_DIAMETER, ERASER_RADIUS, inkHex, TEXT_SIZE, isTransient, laserOpacity, lineWidth, type Mark, opacity } from './model'
 import type { DrawingSession } from './session'
+
+/** The system font stack, standing in for the app's NSFont.systemFont. */
+export const TEXT_FONT_FAMILY = '-apple-system, BlinkMacSystemFont, "Helvetica Neue", system-ui, sans-serif'
+
+export function textFont(weight = 1): string {
+  return `400 ${TEXT_SIZE * weight}px ${TEXT_FONT_FAMILY}`
+}
 
 /** Inks light enough that a white step number would disappear on them. */
 const LIGHT_INKS = new Set(['white', 'yellow'])
@@ -97,6 +104,11 @@ export function drawMark(ctx: CanvasRenderingContext2D, mark: Mark, badge: numbe
     }
     case 'number':
       drawBadge(ctx, mark, badge ?? 1, weight)
+      break
+    case 'text':
+      ctx.font = textFont(weight)
+      ctx.textBaseline = 'top'
+      ctx.fillText(mark.text ?? '', start.x, start.y)
       break
     case 'eraser':
       // Only the shortcuts panel draws this: the path the eraser swept.

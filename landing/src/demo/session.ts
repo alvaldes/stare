@@ -8,6 +8,8 @@ import {
   type Mark,
   MINIMUM_SAMPLE_DISTANCE,
   type Point,
+  TEXT_PADDING,
+  TEXT_SIZE,
   type ToolId,
 } from './model'
 
@@ -73,6 +75,19 @@ export class DrawingSession {
   }
 
   /**
+   * Commits typed text at its top-left origin. Empty text never becomes a
+   * mark, as in the app. `width` is the measured width of the text in screen
+   * points. Returns whether a mark was added.
+   */
+  addText(origin: Point, text: string, ink: InkId, width: number, weight = 1): boolean {
+    if (text === '') return false
+    const mark: Mark = { tool: 'text', ink, points: [origin], text, size: { width, height: TEXT_SIZE * weight } }
+    if (weight !== 1) mark.weight = weight
+    this.marks.push(mark)
+    return true
+  }
+
+  /**
    * Removes every whole mark within `radius` of the point, as the app's eraser
    * does on each drag sample. Returns how many went. Not undoable, like the
    * app: undo afterwards takes back the last mark still on screen.
@@ -135,6 +150,13 @@ function hitTest(mark: Mark, point: Point, radius: number): boolean {
     case 'arrow': {
       const head = arrowHeadBarbs(start, end, weight).map((barb) => [end, barb])
       return [[start, end], ...head].some((segment) => distanceToPolyline(point, segment) <= reach)
+    }
+    case 'text': {
+      const pad = TEXT_PADDING * weight + radius
+      const { width, height } = mark.size ?? { width: 0, height: TEXT_SIZE * weight }
+      return (
+        point.x >= start.x - pad && point.x <= start.x + width + pad && point.y >= start.y - pad && point.y <= start.y + height + pad
+      )
     }
     case 'eraser':
       return false

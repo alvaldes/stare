@@ -6,8 +6,19 @@ import { render } from 'hono/jsx/dom'
 import { copyImage, renderCapture } from '../demo/capture'
 import { ACTION_ICONS, TOOL_ICONS } from '../demo/icons'
 import { type DemoAction, resolveKey } from '../demo/keymap'
-import { ERASER_RADIUS, INKS, type InkId, type Point, SCREEN_HEIGHT, SCREEN_WIDTH, TOOLS, type ToolId } from '../demo/model'
-import { drawSession } from '../demo/render'
+import {
+  ERASER_RADIUS,
+  INKS,
+  type InkId,
+  inkHex,
+  type Point,
+  SCREEN_HEIGHT,
+  SCREEN_WIDTH,
+  TEXT_SIZE,
+  TOOLS,
+  type ToolId,
+} from '../demo/model'
+import { drawSession, TEXT_FONT_FAMILY, textFont } from '../demo/render'
 import { DrawingSession } from '../demo/session'
 
 /** Capture cards leave on their own after this long, unless hovered. */
@@ -130,8 +141,69 @@ function Demo({ elements }: { elements: DemoElements }) {
       if (session.erase(toScreen(event), ERASER_RADIUS * strokeWeight()) > 0) scheduleRedraw()
     }
 
+    // The text tool types into a real field over the canvas, like the app's
+    // NSTextField: Return or clicking away keeps it, Esc drops it, and empty
+    // text never becomes a mark.
+    let field: { input: HTMLInputElement; origin: Point; weight: number } | null = null
+    const measure = document.createElement('canvas').getContext('2d')
+
+    const finishText = (keep: boolean) => {
+      if (!field) return
+      const { input, origin, weight } = field
+      field = null
+      input.remove()
+      if (keep && measure) {
+        measure.font = textFont(weight)
+        session.addText(origin, input.value, inkRef.current!, measure.measureText(input.value).width, weight)
+      }
+      scheduleRedraw()
+    }
+
+    const startText = (origin: Point) => {
+      const weight = strokeWeight()
+      const scale = canvas.getBoundingClientRect().width / SCREEN_WIDTH
+      const input = document.createElement('input')
+      input.type = 'text'
+      input.setAttribute('aria-label', 'Text to place on the screen')
+      input.autocomplete = 'off'
+      input.spellcheck = false
+      Object.assign(input.style, {
+        position: 'absolute',
+        left: `${canvas.offsetLeft + origin.x * scale}px`,
+        top: `${canvas.offsetTop + origin.y * scale}px`,
+        width: `${320 * scale}px`,
+        font: `400 ${TEXT_SIZE * weight * scale}px ${TEXT_FONT_FAMILY}`,
+        lineHeight: '1',
+        color: inkHex(inkRef.current!),
+        caretColor: inkHex(inkRef.current!),
+        background: 'transparent',
+        border: '0',
+        outline: 'none',
+        padding: '0',
+        margin: '0',
+      })
+      input.addEventListener('keydown', (event) => {
+        // Typed letters must not reach the demo's shortcuts.
+        event.stopPropagation()
+        if (event.key === 'Enter') finishText(true)
+        if (event.key === 'Escape') finishText(false)
+      })
+      input.addEventListener('blur', () => finishText(true))
+      canvas.parentElement!.append(input)
+      field = { input, origin, weight }
+      input.focus()
+    }
+
     const down = (event: PointerEvent) => {
       if (event.button !== 0) return
+      // Any click first commits the text being typed, as in the app.
+      finishText(true)
+      if (toolRef.current === 'text') {
+        // Keep the click from moving focus off the new field.
+        event.preventDefault()
+        startText(toScreen(event))
+        return
+      }
       canvas.setPointerCapture(event.pointerId)
       if (toolRef.current === 'eraser') {
         mode = 'erase'
@@ -175,13 +247,20 @@ function Demo({ elements }: { elements: DemoElements }) {
       canvas.removeEventListener('pointerup', up)
       canvas.removeEventListener('pointercancel', up)
       resize.disconnect()
+      field?.input.remove()
     }
   }, [])
+
+  // The app shows an I-beam over the screen while the text tool is active.
+  useEffect(() => {
+    canvas.style.cursor = tool === 'text' ? 'text' : ''
+  }, [tool])
 
   // Shortcuts apply while the pointer is over the demo or focus is inside it,
   // so typing elsewhere on the page is never hijacked.
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
       const armed = wrapper.matches(':hover') || wrapper.contains(document.activeElement)
       if (!armed || event.repeat) return
       const action = resolveKey(event)

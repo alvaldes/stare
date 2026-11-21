@@ -27,6 +27,9 @@ const LASER_PATH: Point[] = Array.from({ length: 40 }, (_, i) => {
   return { x: 44 + k * 232, y: 96 - Math.sin(k * Math.PI * 1.6) * 38 }
 })
 
+/** What the text sample types out, a note you might leave on a screen. */
+const SAMPLE_TEXT = 'Label is cut off'
+
 /** Three scribbles for the eraser to sweep away, left to right. */
 const SCRIBBLES: Point[][] = [92, 160, 228].map((cx) =>
   Array.from({ length: 14 }, (_, i) => ({ x: cx - 26 + i * 4, y: 82 + Math.sin(i * 1.3) * 14 })),
@@ -46,6 +49,11 @@ export function sampleMarks(tool: ToolId, ink: InkId, t: number): Mark[] {
   if (tool === 'laser') {
     const count = Math.max(2, Math.ceil(LASER_PATH.length * progress))
     return [{ tool, ink, points: LASER_PATH.slice(0, count) }]
+  }
+
+  if (tool === 'text') {
+    const count = Math.max(1, Math.ceil(SAMPLE_TEXT.length * progress))
+    return [{ tool, ink, points: [{ x: 60, y: 30 }], text: SAMPLE_TEXT.slice(0, count) }]
   }
 
   if (tool === 'eraser') {

@@ -1,7 +1,17 @@
 // The demo's drawing vocabulary, mirrored from the macOS app (StareCore Tool,
 // Ink and Stroke) so the browser behaves like the real thing.
 
-export type ToolId = 'pen' | 'highlighter' | 'arrow' | 'line' | 'rectangle' | 'ellipse' | 'number' | 'laser' | 'eraser'
+export type ToolId =
+  | 'pen'
+  | 'highlighter'
+  | 'arrow'
+  | 'line'
+  | 'rectangle'
+  | 'ellipse'
+  | 'text'
+  | 'number'
+  | 'laser'
+  | 'eraser'
 
 export interface ToolInfo {
   id: ToolId
@@ -17,6 +27,7 @@ export const TOOLS: readonly ToolInfo[] = [
   { id: 'line', name: 'Line', key: 'L' },
   { id: 'rectangle', name: 'Rectangle', key: 'R' },
   { id: 'ellipse', name: 'Ellipse', key: 'O' },
+  { id: 'text', name: 'Text', key: 'T' },
   { id: 'number', name: 'Numbered step', key: 'C' },
   { id: 'laser', name: 'Laser pointer', key: 'F' },
   { id: 'eraser', name: 'Eraser', key: 'E' },
@@ -60,12 +71,17 @@ export interface Mark {
   weight?: number
   /** When a transient mark (the laser) started, in milliseconds. */
   createdAt?: number
+  /** A text mark's content; its origin (points[0]) is the top-left. */
+  text?: string
+  /** A text mark's measured box, in screen points. */
+  size?: { width: number; height: number }
 }
 
 /** Stroke width in points, as in the app. */
 export function lineWidth(tool: ToolId): number {
   if (tool === 'highlighter') return 18
   if (tool === 'number') return 2
+  if (tool === 'text' || tool === 'eraser') return 0
   return 3
 }
 
@@ -87,6 +103,12 @@ export const MINIMUM_SAMPLE_DISTANCE = 0.75
 export function isTransient(tool: ToolId): boolean {
   return tool === 'laser'
 }
+
+/** The app's text: the regular system font at 20 points, in the ink colour. */
+export const TEXT_SIZE = 20
+
+/** Padding around a text mark's box, as StareCore's PathBuilder adds. */
+export const TEXT_PADDING = 2
 
 /** How far from the pointer the eraser reaches, in points (the app's 8). */
 export const ERASER_RADIUS = 8

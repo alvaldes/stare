@@ -48,7 +48,7 @@ const rows: KeySpec[][] = [
     plain('W'),
     tool('E'),
     tool('R'),
-    plain('T'),
+    tool('T'),
     plain('Y'),
     plain('U'),
     plain('I'),
