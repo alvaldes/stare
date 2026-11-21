@@ -159,3 +159,7 @@ full spec list (S1–S35) and the log of every correction.
    (scale pulse), and a real "front window's display" check beyond the current
    window-list heuristic. *(Done in T7: the click pulse and the z-order window
    lookup landed; see `odd/tasks/v0.2.md`.)*
+
+## License
+
+[MIT](LICENSE) © 2026 Angel Valdés
