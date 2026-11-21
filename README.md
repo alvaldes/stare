@@ -17,8 +17,8 @@ Stare needs macOS 26 or later.
    brew install --cask alvaldes/tap/stare
    ```
 
-2. Open Stare from Applications. Stare is not notarized (no Apple Developer account behind it), so macOS stops it the first time: choose **Done**, then open System Settings → Privacy & Security and click **Open Anyway** next to “Stare.app” was blocked. Removing the quarantine flag also works: `xattr -d com.apple.quarantine /Applications/Stare.app`.
-3. Allow Stare in **Screen Recording** when it asks (System Settings → Privacy & Security → Screen Recording). Only capturing needs it; drawing does not. Grant it once and updates keep it, because every release is signed with the same Apple Development identity and macOS keys the grant to that signature.
+2. Open Stare from Applications. Stare is not notarized (no Apple Developer account behind it), but only a browser download gets the Gatekeeper stop: Homebrew does not quarantine its downloads, so `brew install --cask` opens Stare without a prompt, while a browser-downloaded Stare.dmg is stopped the first time — choose **Done**, then open System Settings → Privacy & Security and click **Open Anyway** next to “Stare.app” was blocked. Removing the quarantine flag also works: `xattr -d com.apple.quarantine /Applications/Stare.app`.
+3. Allow Stare in **Screen Recording** when it asks (System Settings → Privacy & Security → Screen Recording). Only capturing needs it; drawing does not. Grant it once and updates keep it, because every release is signed with the same Apple Development identity and macOS keys the grant to that signature — but the certificate itself expires (2026-04-15), and renewing it resets the grant.
 4. Press `⌥⇧A` to draw over the screen.
 
 ## Build and run
@@ -148,9 +148,9 @@ full spec list (S1–S35) and the log of every correction.
    packed by `Scripts/release.sh` (`--upload` attaches it to the version tag,
    sets the release notes from `CHANGELOG.md` and rewrites the Homebrew cask),
    installed with `brew install --cask alvaldes/tap/stare`. There is no Apple
-   Developer account, so no notarization and no Developer ID: the first launch
-   needs the Privacy & Security confirmation, and updates keep the Screen
-   Recording grant only as long as the signing identity stays the same. See
+   Developer account, so no notarization and no Developer ID: a browser-downloaded DMG needs the Privacy & Security confirmation on first launch (a Homebrew
+   install does not), and updates keep the Screen Recording grant only as long
+   as the signing identity stays the same — a renewed certificate resets it. See
    [Install](#install). *(Done in T10; see `odd/tasks/v0.2.md`.)*
 2. **v0.2 features** — blur (needs screen pixels, so it joins the capture
    permission), pages with an endless whiteboard and blackboard, redo, and pin so

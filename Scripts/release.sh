@@ -12,7 +12,9 @@
 # With --upload it also attaches the .dmg to the GitHub release for that tag,
 # creating the release if it does not exist, sets the release notes to the
 # version's section of CHANGELOG.md, and rewrites the version and sha256 lines
-# of the Homebrew cask in alvaldes/homebrew-tap.
+# of the Homebrew cask in alvaldes/homebrew-tap. The cask is fetched and
+# validated before anything is published: if it is missing or its anchors
+# cannot be rewritten, the run stops with nothing published.
 #
 # Usage: Scripts/release.sh [--upload]
 #
@@ -23,9 +25,12 @@
 set -euo pipefail
 
 upload=false
-case "${1:-}" in
-  "") ;;
-  --upload) upload=true ;;
+case "$#" in
+  0) ;;
+  1) case "$1" in
+       --upload) upload=true ;;
+       *) echo "usage: Scripts/release.sh [--upload]" >&2; exit 64 ;;
+     esac ;;
   *) echo "usage: Scripts/release.sh [--upload]" >&2; exit 64 ;;
 esac
 
@@ -51,11 +56,7 @@ trap 'rm -rf "$work"' EXIT
 
 # The release notes: the "## <version>" section of CHANGELOG.md, without its heading.
 notes="$work/notes.md"
-awk -v v="$version" '/^## /{ if (found) exit; found = ($2 == v); next } found' CHANGELOG.md \
-  | sed -e '/./,$!d' > "$notes"
-if ! grep -q '^[-*+] ' "$notes"; then
-  echo "error: CHANGELOG.md has no \"## $version\" section with bullets; describe what this version brings" >&2; exit 1
-fi
+Scripts/release-notes.sh "$version" > "$notes"
 
 echo "Building Stare $version (Release)…"
 Scripts/bundle.sh release
@@ -82,6 +83,18 @@ echo "  signed by: $authority"
 echo "  sha256:    $sha"
 
 if $upload; then
+  # The cask pins the .dmg's sha256, so it must follow every upload, even a
+  # rebuild of the same version. Fetch and validate it BEFORE publishing: if
+  # the cask cannot be read and rewritten, nothing is published.
+  cask="repos/alvaldes/homebrew-tap/contents/Casks/stare.rb"
+  if ! gh api "$cask" -q .content | base64 -D > "$work/stare.rb"; then
+    echo "error: could not fetch Casks/stare.rb from alvaldes/homebrew-tap; create it from Scripts/stare.rb first (see the error above). Nothing was published." >&2; exit 1
+  fi
+  cask_sha="$(gh api "$cask" -q .sha)"
+  if ! Scripts/write-cask.sh "$version" "$sha" "$work/stare.rb" > "$work/stare.new.rb"; then
+    echo "error: the version and sha256 lines of Casks/stare.rb could not be rewritten. Nothing was published." >&2; exit 1
+  fi
+
   if gh release view "$tag" >/dev/null 2>&1; then
     gh release upload "$tag" "$dmg" --clobber
     gh release edit "$tag" --notes-file "$notes"
@@ -91,16 +104,6 @@ if $upload; then
   fi
   echo "Uploaded to release $tag."
 
-  # The cask pins the .dmg's sha256, so it must follow every upload, even a
-  # rebuild of the same version.
-  cask="repos/alvaldes/homebrew-tap/contents/Casks/stare.rb"
-  cask_sha="$(gh api "$cask" -q .sha)"
-  gh api "$cask" -q .content | base64 -D > "$work/stare.rb"
-  sed -E -e "s/^  version \".*\"$/  version \"$version\"/" \
-         -e "s/^  sha256 \".*\"$/  sha256 \"$sha\"/" "$work/stare.rb" > "$work/stare.new.rb"
-  if ! grep -qx "  version \"$version\"" "$work/stare.new.rb" || ! grep -qx "  sha256 \"$sha\"" "$work/stare.new.rb"; then
-    echo "error: could not find the version and sha256 lines in Casks/stare.rb" >&2; exit 1
-  fi
   if cmp -s "$work/stare.rb" "$work/stare.new.rb"; then
     echo "The Homebrew cask is already up to date."
   else
