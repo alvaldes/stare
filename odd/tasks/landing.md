@@ -32,7 +32,7 @@ S9. CTA principal: descargar la app. Apunta al último GitHub Release; mientras 
 | T19 | Barra de menú real (manzana SVG, hora real) y Safari con el portfolio en vivo (iframe liviano), siempre en oscuro | S5–S6 | inline | hecho | da34f88, b5e5ad2 |
 | T20 | Verificar en Safari y Firefox que el iframe muestre el portfolio en oscuro (color-scheme del iframe → prefers-color-scheme); probado solo en Chromium | S6 | — | pendiente | |
 | T10 | Licencia (decisión del usuario) y repo público `alvaldes/stare`; hoy los links dan 404 y "open source" no es cierto aún | S9 | inline | hecho | 13fc329 |
-| T11 | Primer deploy: `pnpm wrangler login` (usuario, interactivo) + `pnpm deploy` | S3–S4 | — | pendiente, bloquea publicar | |
+| T11 | Primer deploy: `pnpm wrangler login` (usuario, interactivo) + `pnpm deploy` | S3–S4 | inline | hecho | version c36f4490 |
 | T12 | Imagen og:image generada en el build para previews en redes | S6 | inline | pendiente | |
 | T13 | Auditoría Lighthouse: performance (blur de auroras en móviles) y accesibilidad | S6 | inline | pendiente | |
 | T14 | Página 404 con el mismo estilo | S6 | inline | pendiente | |
@@ -76,3 +76,5 @@ L27 (2026-11-20): "la seccion \"Out of your way until you need it\" con sus 4 ca
 L13 (2026-11-21, cierre de la landing): el trabajo de la rama se commiteó y se mergeó a `main` con `eabc9f1`; verificado en `main` (no en el worktree): `pnpm test` 33/33 y `pnpm build` prerenderiza `dist/client/index.html`. El worktree `stare-wt-landing` y la rama `feat/landing` se eliminaron (la rama estaba mergeada): queda solo `main`. Lo que falta de la landing NO bloquea a la app: deploy del Worker (T11), licencia y repo público (T10), `og:image` (T12), Lighthouse (T13), 404 (T14), demo con text/laser/eraser (T15, ya desbloqueado), video real (T16).
 
 L14 (2026-11-20): "MIT, dale" → LICENSE MIT (Angel Valdés) en 13fc329; repo público https://github.com/alvaldes/stare. "el .alt se subio y eso no debia subirse" / "si, reescribe el historial" → `.atl/` borrado de todo el historial con git filter-repo, ignorado en .gitignore, force push; hashes citados en odd/tasks remapeados (541388e ya no existía antes de la reescritura). Sigue T11: `wrangler login` (usuario) + `pnpm deploy`.
+
+L15 (2026-11-20): "listo" (wrangler login hecho) → `pnpm test` 33/33, `pnpm deploy` publicó la versión c36f4490 en https://stare-landing.stare-landing.workers.dev ; verificado: / 200 text/html con el title correcto, assets 200, ruta desconocida 404. El link de descarga del DMG da 404 hasta que exista un GitHub Release. Plugin cloudflare@cloudflare instalado en Claude Code.
