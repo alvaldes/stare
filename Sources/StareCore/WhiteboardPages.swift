@@ -1,6 +1,164 @@
 import CoreGraphics
 import Foundation
 
+/// The one mapping between a board page's space and the view's space
+/// (T5/S5): `view = (page − offset) × zoom`. At zoom 1 it reduces to the old
+/// translation-only rule (`page = view + offset`), so a page that never zooms
+/// keeps its stored points exactly where they were. The mapping lives here,
+/// in StareCore, instead of arithmetic spread through the view — the view,
+/// the selection chrome and the capture compositor all read it from this one
+/// place.
+public struct BoardTransform: Equatable, Sendable {
+    /// The zoom range: 0.25× reads a page-wide view on any display, 8× is close
+    /// enough to draw a fine detail. ⌘0 returns to 1.
+    public static let minZoom: CGFloat = 0.25
+    public static let maxZoom: CGFloat = 8
+    /// One ⌘+ / ⌘− press moves the zoom by this factor.
+    public static let zoomStep: CGFloat = 1.25
+
+    public static let identity = BoardTransform(offset: .zero, zoom: 1)
+
+    /// How far the page origin sits from the display's top-left corner, in page
+    /// units (the pan offset).
+    public var offset: CGSize
+    public var zoom: CGFloat
+
+    public init(offset: CGSize = .zero, zoom: CGFloat = 1) {
+        self.offset = offset
+        self.zoom = zoom
+    }
+
+    /// The zoom clamped into the stated range.
+    public var clamped: BoardTransform {
+        BoardTransform(offset: offset, zoom: min(max(zoom, Self.minZoom), Self.maxZoom))
+    }
+
+    /// A zoom to `target` anchored at `anchor`, a **view** point: the page
+    /// point under the anchor never moves, so whatever is under the pointer
+    /// stays under the pointer. A clamped target that changes nothing returns
+    /// the transform itself.
+    public func zoomed(to target: CGFloat, anchoredAt anchor: CGPoint) -> BoardTransform {
+        let destination = min(max(target, Self.minZoom), Self.maxZoom)
+        guard destination != zoom else { return self }
+        // page(anchor-before) == page(anchor-after):
+        //   anchor/z1 + o1 == anchor/z0 + o0
+        let offset = CGSize(
+            width: offset.width + anchor.x * (1 / zoom - 1 / destination),
+            height: offset.height + anchor.y * (1 / zoom - 1 / destination)
+        )
+        return BoardTransform(offset: offset, zoom: destination)
+    }
+
+    /// A page-space point's place in the view.
+    public func point(fromPage point: CGPoint) -> CGPoint {
+        CGPoint(x: (point.x - offset.width) * zoom, y: (point.y - offset.height) * zoom)
+    }
+
+    /// The page-space point under a view point: what a stroke at that screen
+    /// position stores.
+    public func point(toPage point: CGPoint) -> CGPoint {
+        CGPoint(x: point.x / zoom + offset.width, y: point.y / zoom + offset.height)
+    }
+
+    /// A page-space rect's place in the view (dirty rects, capture crops).
+    public func rect(fromPage rect: CGRect) -> CGRect {
+        let origin = point(fromPage: CGPoint(x: rect.minX, y: rect.minY))
+        let end = point(fromPage: CGPoint(x: rect.maxX, y: rect.maxY))
+        return CGRect(
+            x: min(origin.x, end.x),
+            y: min(origin.y, end.y),
+            width: abs(end.x - origin.x),
+            height: abs(end.y - origin.y)
+        )
+    }
+
+    /// The page-space rect under a view rect: what a region of the view
+    /// covers in page space (culling, grid painting).
+    public func rect(toPage rect: CGRect) -> CGRect {
+        let origin = point(toPage: CGPoint(x: rect.minX, y: rect.minY))
+        let end = point(toPage: CGPoint(x: rect.maxX, y: rect.maxY))
+        return CGRect(
+            x: min(origin.x, end.x),
+            y: min(origin.y, end.y),
+            width: abs(end.x - origin.x),
+            height: abs(end.y - origin.y)
+        )
+    }
+
+    /// A page-space length's size in the view.
+    public func length(fromPage length: CGFloat) -> CGFloat {
+        length * zoom
+    }
+
+    /// A view-space length's size in page space: what a screen-constant size
+    /// (handle squares, hit radii) measures in page units.
+    public func pageLength(_ length: CGFloat) -> CGFloat {
+        length / zoom
+    }
+
+    /// The transform a CGContext concatenates so page-space drawing lands in
+    /// view space.
+    public var cgAffineTransform: CGAffineTransform {
+        CGAffineTransform(translationX: -offset.width, y: -offset.height)
+            .concatenating(CGAffineTransform(scaleX: zoom, y: zoom))
+    }
+}
+
+/// The Freeform-style dot grid over a board page (T6/S6). Dots live in page
+/// space — they pan and zoom with the content — at the base pitch from the
+/// page origin, with a screen-anchored size and colour that read on both a
+/// white and a black page.
+public enum DotGrid: Sendable {
+    /// Page points between dots at zoom 1.
+    public static let spacing: CGFloat = 24
+    /// The on-screen pitch never drops below this many view points, whatever
+    /// the zoom: at very low zoom a fixed spacing turns into mush, so the grid
+    /// coarsens by powers of two instead.
+    public static let minimumScreenSpacing: CGFloat = 12
+    /// A dot's radius on screen, in view points — never scaled with the zoom.
+    public static let dotRadius: CGFloat = 1.1
+
+    /// The page-space pitch the board shows at `zoom`: the first power-of-two
+    /// multiple of the base spacing whose on-screen pitch is readable. The
+    /// result keeps `spacing · zoom` in [minimum, 2 × minimum) while it can,
+    /// and above that is the base spacing again — density stays readable at
+    /// every zoom level without ever growing the dot count.
+    public static func pageSpacing(atZoom zoom: CGFloat) -> CGFloat {
+        guard zoom > 0, zoom.isFinite else { return spacing }
+        var pitch = spacing
+        while pitch * zoom < minimumScreenSpacing {
+            pitch *= 2
+        }
+        return pitch
+    }
+
+    /// The dots inside a page-space rect, on the pitch (anchored at the page
+    /// origin), in row-major order. The view passes its dirty rect so a
+    /// per-frame paint only enumerates what needs repainting.
+    public static func dots(in rect: CGRect, spacing: CGFloat) -> [CGPoint] {
+        guard rect.width > 0, rect.height > 0, spacing > 0, spacing.isFinite else { return [] }
+        let firstX = (rect.minX / spacing).rounded(.down) * spacing
+        let firstY = (rect.minY / spacing).rounded(.down) * spacing
+        var dots: [CGPoint] = []
+        var y = firstY
+        while y <= rect.maxY {
+            var x = firstX
+            while x <= rect.maxX {
+                let dot = CGPoint(x: x, y: y)
+                if rect.contains(dot) { dots.append(dot) }
+                x += spacing
+            }
+            y += spacing
+        }
+        return dots
+    }
+
+    /// The dots visible on a page at `zoom`, within the page-space rect.
+    public static func dots(in rect: CGRect, zoom: CGFloat) -> [CGPoint] {
+        dots(in: rect, spacing: pageSpacing(atZoom: zoom))
+    }
+}
+
 /// A whiteboard page's solid background. Three choices: white, black, or
 /// follow the system — white in light mode, black in dark mode. The choice is
 /// a value of the page itself, so the page keeps its own identity (⌘B knows
@@ -93,15 +251,26 @@ public struct BoardPage: Equatable, Sendable {
     public var background: BoardBackground
     /// How far the page origin sits from the display's top-left corner.
     public var offset: CGSize
+    /// Screen zoom of this page's canvas (T5/S5): `view = (page − offset) × zoom`.
+    /// A view that never zooms keeps 1, where the mapping is the old rule.
+    public var zoom: CGFloat
+
+    /// The page's full view mapping, in one place: everything that maps between
+    /// page space and view space reads this.
+    public var transform: BoardTransform {
+        BoardTransform(offset: offset, zoom: zoom)
+    }
 
     public init(
         session: DrawingSession = DrawingSession(),
         background: BoardBackground = .white,
-        offset: CGSize = .zero
+        offset: CGSize = .zero,
+        zoom: CGFloat = 1
     ) {
         self.session = session
         self.background = background
         self.offset = offset
+        self.zoom = zoom
     }
 }
 
@@ -219,5 +388,32 @@ public final class WhiteboardPages {
     /// Sets the current page's pan offset outright, used by tests and panning resets.
     public func setOffset(_ offset: CGSize) {
         pages[currentIndex].offset = offset
+    }
+
+    /// The current page's zoom.
+    public var zoom: CGFloat { pages[currentIndex].zoom }
+
+    /// The current page's full page ↔ view mapping.
+    public var viewTransform: BoardTransform { pages[currentIndex].transform }
+
+    /// Zooms the current page to `target`, anchored at `anchor` (a view point):
+    /// the page point under the anchor never moves. The target is clamped into
+    /// the zoom range. Returns whether the page's view changed.
+    @discardableResult
+    public func zoom(to target: CGFloat, anchoredAt anchor: CGPoint) -> Bool {
+        let current = pages[currentIndex].transform
+        let updated = current.zoomed(to: target, anchoredAt: anchor)
+        guard updated != current else { return false }
+        pages[currentIndex].offset = updated.offset
+        pages[currentIndex].zoom = updated.zoom
+        return true
+    }
+
+    /// ⌘0 — restores the current page's pan and zoom together: offset back to
+    /// zero and zoom back to one. Marks never move (their stored points are
+    /// page space), so nothing else changes.
+    public func resetView() {
+        pages[currentIndex].offset = .zero
+        pages[currentIndex].zoom = 1
     }
 }

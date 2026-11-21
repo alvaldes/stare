@@ -478,4 +478,39 @@ final class MarkCompositorTests: XCTestCase {
             XCTAssertNil(MarkCompositor.composite(marks: [], over: empty))
         }
     }
+
+    // MARK: - T5/S5: capture at a non-default zoom
+
+    /// The board capture copies what the board shows: the same pan, and the
+    /// same zoom. A mark stored at page (40,30)–(60,50) on a page panned to
+    /// offset (10,5) and zoomed 2× shows at view (60,50)–(100,90) — the
+    /// unzoomed placement stays empty.
+    func testCaptureAtZoomPlacesMarksWhereTheBoardShowsThem() {
+        let mark = Stroke(
+            tool: .rectangle,
+            ink: .red,
+            points: [CGPoint(x: 40, y: 30), CGPoint(x: 60, y: 50)]
+        )
+        let result = MarkCompositor.composite(
+            marks: [mark],
+            over: whiteBase(),
+            scale: 1,
+            offset: CGSize(width: 10, height: 5),
+            zoom: 2
+        )
+        let composed = try! XCTUnwrap(result)
+        // The composed canvas keeps the base's size: the capture covers the
+        // view, which is the size the board shows, whatever the zoom is.
+        XCTAssertEqual(composed.width, width)
+        XCTAssertEqual(composed.height, height)
+
+        XCTAssertTrue(isReddish(pixel(composed, x: 60, y: 70)), "left edge at view (60,70)")
+        XCTAssertTrue(isReddish(pixel(composed, x: 99, y: 70)), "right edge at view (99,70)")
+        XCTAssertTrue(isReddish(pixel(composed, x: 80, y: 50)), "top edge at view (80,50)")
+        XCTAssertTrue(isReddish(pixel(composed, x: 80, y: 89)), "bottom edge at view (80,89)")
+        XCTAssertTrue(isWhitesh(pixel(composed, x: 80, y: 70)), "the interior stays clear")
+        // The 1:1 placement the zoomless compositor used must not appear.
+        XCTAssertTrue(isWhitesh(pixel(composed, x: 40, y: 45)), "the unzoomed spot stays empty")
+        XCTAssertTrue(isWhitesh(pixel(composed, x: 10, y: 40)), "the panned-only spot stays empty")
+    }
 }

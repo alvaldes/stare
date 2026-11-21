@@ -516,10 +516,11 @@ final class OverlayController {
             over: base,
             scale: scale,
             diffusesContent: true,
-            // The marks are stored in page space; the capture is what the
-            // board shows, so the page's pan moves them to view space
-            // (pagePoint - offset).
-            offset: boardView.board.currentPage.offset
+            // The marks are stored in page space; the capture copies what the
+            // board shows — the same pan and the same zoom (T5/S5), so the
+            // page transform moves them into view space.
+            offset: boardView.board.currentPage.offset,
+            zoom: boardView.board.currentPage.zoom
         ) else {
             Diag.log("board capture failed: composition returned nil")
             return
@@ -837,9 +838,9 @@ final class OverlayController {
         boardCanvasUnderPointer()?.boardView?.moveCurrentPageRight()
     }
 
-    /// ⌘0 — recentres the current page's pan.
+    /// ⌘0 — resets the current page's pan and zoom together (T5/S5).
     func resetBoardPan() {
-        boardCanvasUnderPointer()?.boardView?.resetPagePan()
+        boardCanvasUnderPointer()?.boardView?.resetPageView()
     }
 
     private func boardCanvasUnderPointer() -> DisplayCanvas? {

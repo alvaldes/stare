@@ -10,11 +10,12 @@ public enum MarkCompositor {
     /// Marks live in overlay space: top-left origin, points. `scale` is image
     /// pixels per point.
     ///
-    /// `offset` (T12 fix) is the whiteboard page's pan: marks stored in page
-    /// space are placed at `pagePoint - offset`, which is where the board's
-    /// view shows them (`viewPoint = pagePoint - offset`), so a panned page's
-    /// capture is what the board shows. Zero leaves the marks where they were
-    /// drawn, exactly as the drawing overlay composes them.
+    /// `offset` (T12 fix) is the whiteboard page's pan; `zoom` (T5/S5) is its
+    /// zoom. Marks stored in page space are placed where the board's view
+    /// shows them — `view = (page − offset) × zoom` through `BoardTransform`,
+    /// the same mapping the view draws with — so a panned, zoomed page's
+    /// capture is what the board shows. The identity transform leaves the
+    /// marks where they were, exactly as the drawing overlay composes them.
     ///
     /// `diffusesContent` (S1) marks the board's capture: its blur marks diff
     /// the board's own content. False leaves the drawing overlay's behaviour
@@ -24,7 +25,8 @@ public enum MarkCompositor {
         over base: CGImage,
         scale: CGFloat = 1,
         diffusesContent: Bool = false,
-        offset: CGSize = .zero
+        offset: CGSize = .zero,
+        zoom: CGFloat = 1
     ) -> CGImage? {
         let width = base.width
         let height = base.height
@@ -57,14 +59,13 @@ public enum MarkCompositor {
         // rotation are kept; only the geometry moves, and the rotation anchor
         // (the centre of the bounds) moves with it consistently.
         let placed: [Stroke]
-        if offset == .zero {
+        let transform = BoardTransform(offset: offset, zoom: zoom)
+        if transform == .identity {
             placed = marks
         } else {
             placed = marks.map { mark in
                 var shifted = mark
-                shifted.points = mark.points.map { point in
-                    CGPoint(x: point.x - offset.width, y: point.y - offset.height)
-                }
+                shifted.points = mark.points.map { transform.point(fromPage: $0) }
                 return shifted
             }
         }

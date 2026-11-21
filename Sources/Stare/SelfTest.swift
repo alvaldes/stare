@@ -157,6 +157,16 @@ enum SelfTest {
         // frame in both directions.
         report.append(contentsOf: boardPreferencesReport())
 
+        // Board zoom (T5/S5): drawing, the edit cursor and the capture while
+        // zoomed, all through the real view path; ⌘0 resets pan and zoom
+        // together.
+        report.append(contentsOf: boardZoomReport())
+
+        // Board dots (T6/S6): the Freeform-style dot grid on the real render
+        // path — dots follow pan and zoom, and the pitch stays readable at
+        // both ends of the zoom range.
+        report.append(contentsOf: boardDotsReport())
+
         // Palette in both system appearances: the same view must read on a light
         // and on a dark system, which a screenshot of one theme cannot prove.
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
@@ -618,15 +628,22 @@ enum SelfTest {
                 + "current=\(board.currentIndex + 1)/\(board.count) ok=\(moveOk)"
         )
 
-        // ⌘0: pan first through the real view path (the same translation a
-        // space-drag produces), then the reset must return the offset to zero.
-        // Asserting the pan before resetting is what makes a broken reset fail.
+        // ⌘0: pan and zoom first through the real view path (the same
+        // translations a space-drag and a pinch produce), then the reset must
+        // return both together — offset zero and zoom one.
         view.pan(byPointerDelta: CGSize(width: -80, height: -50))
+        // Measure the pan before the zoom: an anchored zoom legitimately moves
+        // the offset too, so a combined assertion would fail on correct code.
         let panned = board.currentPage.offset == CGSize(width: 80, height: 50)
-        view.resetPagePan()
-        let panReset = panned && board.currentPage.offset == .zero
+        view.applyZoom(2, anchoredAt: CGPoint(x: 400, y: 300))
+        let zoomed = board.currentPage.zoom == 2
+        view.resetPageView()
+        let panReset = panned && zoomed
+            && board.currentPage.offset == .zero && board.currentPage.zoom == 1
         report.append(
-            "board pages pan-reset panned=\(panned) offset=\(board.currentPage.offset) ok=\(panReset)"
+            "board pages pan-reset panned=\(panned) zoomed=\(zoomed) "
+                + "offset=\(board.currentPage.offset) zoom=\(board.currentPage.zoom) "
+                + "ok=\(panReset)"
         )
 
         // ⌘⌫ menu item: the key equivalent has to match what a real Delete key
@@ -966,6 +983,290 @@ enum SelfTest {
 
         let passed = colourOk && drewMark && allOk && backOk && borderOk
         report.append("board prefs result=\(passed ? "PASS" : "FAIL")")
+        return report
+    }
+
+    // MARK: - Board zoom (T5/S5)
+
+    /// Zoom through the real board view (T5/S5): with the page at 2\u{00d7} via the
+    /// real `applyZoom` path, a pen stroke drawn through the panel's own event
+    /// path stores exactly the page point under the pointer — it lands where
+    /// the pointer was, proven on the geometry and in the rendered pixels — the
+    /// edit cursor then selects and moves that mark while zoomed and it lands
+    /// where the drag ended in screen terms, and \u{2318}0 (the view's real reset
+    /// path) returns pan and zoom to their identity together, the mark back
+    /// where its stored page point says it belongs.
+    private static func boardZoomReport() -> [String] {
+        var report: [String] = []
+        guard let screen = NSScreen.screens.first else {
+            report.append("FAIL: board zoom no screens")
+            return report
+        }
+        let state = EditorState()
+        let board = WhiteboardPages()
+        guard let canvas = DisplayCanvas(screen: screen, state: state, onEscape: {}, board: board),
+              let view = canvas.boardView else {
+            report.append("FAIL: board zoom canvas could not be created")
+            return report
+        }
+        let panel = canvas.panel
+        panel.orderFrontRegardless()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        defer { panel.orderOut(nil) }
+
+        func close(_ a: CGPoint, _ b: CGPoint) -> Bool {
+            abs(a.x - b.x) < 0.5 && abs(a.y - b.y) < 0.5
+        }
+        /// A window point's view point: events carry window coordinates
+        /// (bottom-left origin) and the view fills the window, flipped.
+        func windowToView(_ point: CGPoint) -> CGPoint {
+            CGPoint(x: point.x, y: view.bounds.height - point.y)
+        }
+        func mid(of points: [CGPoint]) -> CGPoint {
+            guard let first = points.first, let last = points.last else { return .zero }
+            return CGPoint(x: (first.x + last.x) / 2, y: (first.y + last.y) / 2)
+        }
+
+        // \u{2318}+: 2\u{00d7} through the real anchored zoom, at a fixed view anchor: the
+        // page point under the anchor must not move.
+        let anchor = CGPoint(x: 450, y: 300)
+        view.applyZoom(2, anchoredAt: anchor)
+        let zoom = board.currentPage.zoom
+        let anchorOk = abs(zoom - 2) < 0.001
+            && close(view.viewPoint(fromPage: view.pagePoint(anchor)), anchor)
+
+        // 1. Drawing at a non-default zoom: the stroke stores the page point
+        // under the pointer, derived from the very points the events carried —
+        // never hardcoded screen positions.
+        state.tool = .pen
+        state.ink = .red
+        let pointerFromWindow = CGPoint(x: 200, y: 300)
+        let pointerToWindow = CGPoint(x: 340, y: 300)
+        let expectedDown = view.pagePoint(windowToView(pointerFromWindow))
+        let expectedUp = view.pagePoint(windowToView(pointerToWindow))
+        sendDrag(to: panel, from: pointerFromWindow, to: pointerToWindow)
+        guard let mark = board.currentPage.session.strokes.first else {
+            report.append("FAIL: board zoom mark was not committed")
+            return report
+        }
+        let storedDown = mark.points.first ?? .zero
+        let storedUp = mark.points.last ?? .zero
+        let drawOk = anchorOk && close(storedDown, expectedDown) && close(storedUp, expectedUp)
+        report.append(
+            "board zoom draw zoom=\(String(format: "%.2f", zoom)) "
+                + "stored first=\(storedDown) expect page \(expectedDown), "
+                + "last=\(storedUp) expect page \(expectedUp) ok=\(drawOk)"
+        )
+
+        // The same thing in pixels: the stored mark renders under the pointer.
+        let rendered = renderView(view, to: "/tmp/stare-board-zoom.png")
+        let renderScale = rendered.map { CGFloat($0.width) / max(view.bounds.width, 1) } ?? 2
+        let markPage = mid(of: mark.points)
+        let markView = view.viewPoint(fromPage: markPage)
+        let landing = rendered.map { rgb($0, at: markView, scale: renderScale) } ?? (red: -1, green: -1, blue: -1)
+        let landingOk = landing.red >= 180 && landing.green < 120
+        report.append(
+            "board zoom draw pixels mark@\(markView)=\(landing) expect red png=/tmp/stare-board-zoom.png ok=\(landingOk)"
+        )
+
+        // 2. The edit cursor while zoomed: click the mark's body, drag it —
+        // select-and-move is one gesture. The mark moves by the drag's
+        // page-space shift (the screen delta divided by the zoom, the same
+        // arithmetic panning uses) and lands exactly where the drag ended, in
+        // screen terms.
+        let dragStartWindow = CGPoint(x: markView.x, y: view.bounds.height - markView.y)
+        let dragEndWindow = CGPoint(x: dragStartWindow.x + 100, y: dragStartWindow.y - 60)
+        let dragEndView = windowToView(dragEndWindow)
+        state.tool = .select
+        sendDrag(to: panel, from: dragStartWindow, to: dragEndWindow)
+        let moved = board.currentPage.session.strokes.first
+        let expectedPage = CGPoint(x: markPage.x + 100 / zoom, y: markPage.y + 60 / zoom)
+        let movedPage = moved.map { mid(of: $0.points) } ?? .zero
+        let movedOk = moved?.id == mark.id
+            && board.currentPage.session.strokes.count == 1
+            && close(movedPage, expectedPage)
+            && close(view.viewPoint(fromPage: movedPage), dragEndView)
+        report.append(
+            "board zoom move marks=\(board.currentPage.session.strokes.count) sameMark=\(moved?.id == mark.id) "
+                + "page=\(movedPage) expect \(expectedPage), screen=\(view.viewPoint(fromPage: movedPage)) "
+                + "expect drag end \(dragEndView) ok=\(movedOk)"
+        )
+
+        // 3. \u{2318}0: pan and zoom away through the real paths first (a space-drag
+        // translation and a \u{2318}\u{2212} step), then the reset must return both together:
+        // offset zero, zoom one, the identity transform, and the mark back at
+        // its stored page point on screen.
+        view.pan(byPointerDelta: CGSize(width: -80, height: -50))
+        view.applyZoom(1.25, anchoredAt: anchor)
+        let panned = board.currentPage.offset != .zero && board.currentPage.zoom != 1
+        view.resetPageView()
+        let identity = board.currentPage.transform == BoardTransform.identity
+        let markBack = close(view.viewPoint(fromPage: storedDown), storedDown)
+        let resetOk = panned && identity && markBack
+        report.append(
+            "board zoom reset panned=\(panned) offset=\(board.currentPage.offset) "
+                + "zoom=\(String(format: "%.2f", board.currentPage.zoom)) "
+                + "identity=\(identity) markBack=\(markBack) ok=\(resetOk)"
+        )
+
+        let passed = drawOk && landingOk && movedOk && resetOk
+        report.append("board zoom result=\(passed ? "PASS" : "FAIL")")
+        return report
+    }
+
+    // MARK: - Board dots (T6/S6)
+
+    /// The Freeform-style dot grid through the real view path (T6/S6): the
+    /// same dot in page space follows the content — its screen point moves
+    /// after a pan and again after a zoom change, and the pixels move with it
+    /// while the old spots stay clear — the screen pitch stays inside a
+    /// readable band at both ends of the zoom range, and the dots read on a
+    /// white, a black and a system-following page.
+    private static func boardDotsReport() -> [String] {
+        var report: [String] = []
+        let size = CGSize(width: 900, height: 600)
+
+        func borderlessWindow(_ view: NSView, appearance: NSAppearance?) -> NSWindow {
+            let window = NSWindow(
+                contentRect: CGRect(origin: .zero, size: size),
+                styleMask: [.borderless],
+                backing: .buffered,
+                defer: false
+            )
+            window.appearance = appearance
+            window.contentView = view
+            window.orderFrontRegardless()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            return window
+        }
+        func renderScale(_ image: CGImage?) -> CGFloat {
+            guard let image else { return 2 }
+            return CGFloat(image.width) / max(size.width, 1)
+        }
+        func sample(_ image: CGImage?, at point: CGPoint, scale: CGFloat) -> (red: Int, green: Int, blue: Int) {
+            image.map { rgb($0, at: point, scale: scale) } ?? (red: -1, green: -1, blue: -1)
+        }
+
+        let state = EditorState()
+        let board = WhiteboardPages()
+        let view = WhiteboardView(
+            frame: CGRect(origin: .zero, size: size), state: state, board: board, onEscape: {}
+        )
+        let window = borderlessWindow(view, appearance: nil)
+        defer { window.orderOut(nil) }
+
+        // A dot clear of the view edges, taken from the grid's own
+        // enumeration on the base pitch — never a hand-picked point.
+        let spacing = DotGrid.pageSpacing(atZoom: 1)
+        let dotsAround = DotGrid.dots(
+            in: CGRect(x: 80, y: 80, width: 32, height: 32),
+            spacing: spacing
+        )
+        let dot = dotsAround.first ?? CGPoint(x: 96, y: 96)
+        let onGrid = dotsAround.count == 1 && dot == CGPoint(x: spacing * 4, y: spacing * 4)
+        report.append("board dots grid pitch=\(spacing)pt dot=\(dot) onGrid=\(onGrid)")
+
+        // The same dot in page space follows the content: one pan, then one
+        // zoom change, each time to a different screen point — and the pixels
+        // follow, the old spot left clear.
+        let before = view.viewPoint(fromPage: dot)
+        view.pan(byPointerDelta: CGSize(width: 30, height: 20))
+        let afterPan = view.viewPoint(fromPage: dot)
+        let panImage = renderView(view, to: "/tmp/stare-board-dots-pan.png")
+        let panScale = renderScale(panImage)
+        let panMoved = afterPan != before
+        let panDot = sample(panImage, at: afterPan, scale: panScale)
+        let panOld = sample(panImage, at: before, scale: panScale)
+        let panOk = panMoved && panDot.green <= 240 && panOld.green >= 250
+        report.append(
+            "board dots pan dot page=\(dot) screen \(before) → \(afterPan) "
+                + "marked=\(panDot) expect darker, oldSpot=\(panOld) expect clear ok=\(panOk)"
+        )
+
+        view.applyZoom(2, anchoredAt: CGPoint(x: 150, y: 150))
+        let afterZoom = view.viewPoint(fromPage: dot)
+        let zoomImage = renderView(view, to: "/tmp/stare-board-dots-zoom.png")
+        let zoomScale = renderScale(zoomImage)
+        let zoomMoved = afterZoom != afterPan
+        let zoomDot = sample(zoomImage, at: afterZoom, scale: zoomScale)
+        let zoomOld = sample(zoomImage, at: afterPan, scale: zoomScale)
+        let zoomOk = zoomMoved && zoomDot.green <= 240 && zoomOld.green >= 250
+        report.append(
+            "board dots zoom dot page=\(dot) screen \(afterPan) → \(afterZoom) "
+                + "marked=\(zoomDot) expect darker, oldSpot=\(zoomOld) expect clear ok=\(zoomOk)"
+        )
+
+        // The pitch on screen (page pitch × zoom) at both ends of the zoom
+        // range, inside a readable band: at 0.25× the power-of-two coarsening
+        // holds the pitch at DotGrid.minimumScreenSpacing (12pt) — anything
+        // denser merges into a texture — so 12pt is the band's floor and the
+        // base pitch (24pt) its ceiling; at 8× the pitch grows with the zoom
+        // (24 × 8 = 192pt), readable by construction, and it must stay under
+        // one further coarsening step (24 × 2 × 8 = 384pt) to pin that the
+        // doubling stops as soon as the pitch is readable.
+        let lowZoom = BoardTransform.minZoom
+        let highZoom = BoardTransform.maxZoom
+        let lowScreen = DotGrid.pageSpacing(atZoom: lowZoom) * lowZoom
+        let highScreen = DotGrid.pageSpacing(atZoom: highZoom) * highZoom
+        let pitchOk = lowScreen >= DotGrid.minimumScreenSpacing && lowScreen < DotGrid.spacing
+            && highScreen >= DotGrid.spacing && highScreen < DotGrid.spacing * 2 * highZoom
+        report.append(
+            "board dots pitch at zoom \(lowZoom) screen=\(lowScreen)pt expect >=12 <24, "
+                + "at zoom \(highZoom) screen=\(highScreen)pt expect >=24 <384 ok=\(pitchOk)"
+        )
+
+        // Reading on the page colours, sampled through the real render at a
+        // dot and a dot-free spot. White page first, then \u{2318}B to black through
+        // the real toggle, then a system-following page under an explicit
+        // light appearance (which must read exactly like the white page).
+        let dotSpot = afterZoom
+        let emptySpot = CGPoint(x: 600, y: 300)
+        let whiteImage = renderView(view, to: "/tmp/stare-board-dots-white.png")
+        let whiteScale = renderScale(whiteImage)
+        let whitePage = sample(whiteImage, at: emptySpot, scale: whiteScale)
+        let whiteDot = sample(whiteImage, at: dotSpot, scale: whiteScale)
+        let whiteOk = whitePage.green >= 250 && whiteDot.green <= 240
+            && whitePage.green - whiteDot.green >= 20
+        report.append(
+            "board dots read white page@\(emptySpot)=\(whitePage) expect white, "
+                + "dot@\(dotSpot)=\(whiteDot) expect darker png=/tmp/stare-board-dots-white.png ok=\(whiteOk)"
+        )
+
+        view.togglePageBackground()
+        let blackIsBlack = board.currentPage.background == .black
+        let blackImage = renderView(view, to: "/tmp/stare-board-dots-black.png")
+        let blackScale = renderScale(blackImage)
+        let blackPage = sample(blackImage, at: emptySpot, scale: blackScale)
+        let blackDot = sample(blackImage, at: dotSpot, scale: blackScale)
+        let blackOk = blackIsBlack && blackPage.green <= 15
+            && blackDot.green >= 25 && blackDot.green - blackPage.green >= 20
+        report.append(
+            "board dots read black page@\(emptySpot)=\(blackPage) expect black, "
+                + "dot@\(dotSpot)=\(blackDot) expect lighter png=/tmp/stare-board-dots-black.png ok=\(blackOk)"
+        )
+
+        let systemState = EditorState()
+        let systemBoard = WhiteboardPages(background: .system)
+        let systemView = WhiteboardView(
+            frame: CGRect(origin: .zero, size: size), state: systemState, board: systemBoard, onEscape: {}
+        )
+        let systemWindow = borderlessWindow(systemView, appearance: NSAppearance(named: .aqua))
+        let systemIsSystem = systemBoard.currentPage.background == .system
+        let systemSpot = systemView.viewPoint(fromPage: dot)
+        let systemImage = renderView(systemView, to: "/tmp/stare-board-dots-system.png")
+        let systemScale = renderScale(systemImage)
+        let systemPage = sample(systemImage, at: emptySpot, scale: systemScale)
+        let systemDot = sample(systemImage, at: systemSpot, scale: systemScale)
+        let systemOk = systemIsSystem && systemPage.green >= 250 && systemDot.green <= 240
+            && systemPage.green - systemDot.green >= 20
+        report.append(
+            "board dots read system page@\(emptySpot)=\(systemPage) expect white, "
+                + "dot@\(systemSpot)=\(systemDot) expect darker png=/tmp/stare-board-dots-system.png ok=\(systemOk)"
+        )
+        systemWindow.orderOut(nil)
+
+        let passed = onGrid && panOk && zoomOk && pitchOk && whiteOk && blackOk && systemOk
+        report.append("board dots result=\(passed ? "PASS" : "FAIL")")
         return report
     }
 

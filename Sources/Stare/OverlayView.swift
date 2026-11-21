@@ -51,19 +51,36 @@ class OverlayView: NSView {
     /// in the plain overlay, the current page's offset on the whiteboard.
     var panOffset: CGSize { .zero }
 
+    /// Page-space hook: 1 everywhere but the whiteboard, which shows the
+    /// current page's zoom (T5/S5).
+    var zoom: CGFloat { 1 }
+
+    /// The one mapping between page space and view space this layer draws
+    /// with: `view = (page − offset) × zoom`, straight from StareCore — the
+    /// arithmetic never spreads through the view.
+    var viewTransform: BoardTransform {
+        BoardTransform(offset: panOffset, zoom: zoom)
+    }
+
     /// Converts a view point into page space, the space stroke points live in.
     func pagePoint(_ viewPoint: CGPoint) -> CGPoint {
-        CGPoint(x: viewPoint.x + panOffset.width, y: viewPoint.y + panOffset.height)
+        viewTransform.point(toPage: viewPoint)
     }
 
     /// Converts a page-space point back into view space.
     func viewPoint(fromPage point: CGPoint) -> CGPoint {
-        CGPoint(x: point.x - panOffset.width, y: point.y - panOffset.height)
+        viewTransform.point(fromPage: point)
     }
 
     /// Converts a page-space rect into view space, for dirty rectangles.
     func viewRect(fromPage rect: CGRect) -> CGRect {
-        rect.offsetBy(dx: -panOffset.width, dy: -panOffset.height)
+        viewTransform.rect(fromPage: rect)
+    }
+
+    /// Converts a view rect into page space — what a screen region covers in
+    /// page space, for culling and the dot grid.
+    func pageRect(fromView rect: CGRect) -> CGRect {
+        viewTransform.rect(toPage: rect)
     }
 
     /// Notifies the whiteboard bridge that the session changed.
@@ -524,20 +541,30 @@ class OverlayView: NSView {
 
     // MARK: - Editing marks (T11/S6)
 
+    /// Selection geometry reached by the pointer answers with screen-sized
+    /// reach: the hit radius and handle size are view points, so they map into
+    /// page space through the layer's own transform.
+    private var selectionReach: CGFloat { viewTransform.pageLength(Self.selectionHitRadius) }
+    private var selectionHandleSize: CGFloat { viewTransform.pageLength(MarkSelection.defaultHandleSize) }
+
+    /// Page-space size of a view-space length, shared by the eraser and the
+    /// chrome (1 in the plain overlay, 1/zoom on the board).
+    var pageLengthForScreen: CGFloat { viewTransform.pageLength(1) }
+
     /// A click with the edit cursor: a handle of the already selected mark
     /// wins, then the topmost mark under the pointer (newest first), then the
     /// selection is given up. A click that lands on a mark arms its drag right
     /// away, so select-and-move is one gesture.
     private func beginSelection(at point: CGPoint) {
         if let id = selectedMarkID, let selected = session.strokes.first(where: { $0.id == id }) {
-            if let handle = MarkSelection(stroke: selected).handle(at: point) {
+            if let handle = MarkSelection(stroke: selected).handle(at: point, handleSize: selectionHandleSize) {
                 startSelectionDrag(handle, on: selected, at: point)
                 return
             }
         }
 
         guard let hit = session.strokes.last(where: {
-            $0.isSelectedByCursor(at: point, radius: Self.selectionHitRadius)
+            $0.isSelectedByCursor(at: point, radius: selectionReach)
         }) else {
             clearSelection()
             return
@@ -546,7 +573,7 @@ class OverlayView: NSView {
             selectedMarkID = hit.id
             onSelectionChanged?(hit.id)
         }
-        let handle = MarkSelection(stroke: hit).handle(at: point) ?? .body
+        let handle = MarkSelection(stroke: hit).handle(at: point, handleSize: selectionHandleSize) ?? .body
         startSelectionDrag(handle, on: hit, at: point)
     }
 
@@ -647,7 +674,9 @@ class OverlayView: NSView {
     // MARK: - Eraser
 
     private func erase(at point: CGPoint) {
-        let removed = session.erase(at: point, radius: Self.eraserRadius)
+        // The eraser is a screen-sized circle: at any zoom it erases what is
+        // under the pointer, so its page-space radius follows the zoom.
+        let removed = session.erase(at: point, radius: Self.eraserRadius * pageLengthForScreen)
         guard !removed.isEmpty else { return }
         for id in removed { committedBounds.removeValue(forKey: id) }
         onErase?(removed)
@@ -705,7 +734,12 @@ class OverlayView: NSView {
 
         if commit, !typed.isEmpty {
             let size = (typed as NSString).size(withAttributes: [.font: Self.textFont])
-            session.setActiveText(typed, size: size)
+            // The field is a view-space editor: its measured size is screen
+            // points, while the text mark stores page-space points.
+            session.setActiveText(
+                typed,
+                size: CGSize(width: size.width / zoom, height: size.height / zoom)
+            )
             session.commit()
             if let committed = session.strokes.last {
                 committedBounds[committed.id] = committed.bounds
@@ -1056,7 +1090,7 @@ class OverlayView: NSView {
             return
         }
 
-        drawBackground(in: context)
+        drawBackground(in: context, dirty: dirtyRect)
         drawMarks(in: context, dirty: dirtyRect)
 
         notePaintLatency()
@@ -1068,17 +1102,19 @@ class OverlayView: NSView {
     }
 
     /// The layer under the marks. Empty in the transparent overlay; the
-    /// whiteboard paints the current page's solid background here.
-    func drawBackground(in context: CGContext) {}
+    /// whiteboard paints the current page's background and its dot grid here —
+    /// both only inside the dirty rect, so a per-frame paint stays cheap.
+    func drawBackground(in context: CGContext, dirty dirtyRect: NSRect) {}
 
     /// Every mark on the layer, in page space, translated by the pan offset.
     /// `dirtyRect` is in view space; the context is shifted so page-space
     /// points land where the user sees them, which is what makes panning and
     /// display changes never move stored marks.
     func drawMarks(in context: CGContext, dirty dirtyRect: NSRect) {
-        let pageDirty = dirtyRect.offsetBy(dx: panOffset.width, dy: panOffset.height)
+        let transform = viewTransform
+        let pageDirty = transform.rect(toPage: dirtyRect)
         context.saveGState()
-        context.translateBy(x: -panOffset.width, y: -panOffset.height)
+        context.concatenate(transform.cgAffineTransform)
         let now = Date()
         for stroke in session.strokes where stroke.tool.isTransient {
             render(stroke, in: context, now: now)
@@ -1116,18 +1152,24 @@ class OverlayView: NSView {
 
         let selection = MarkSelection(stroke: stroke)
         let accent = CGColor(srgbRed: 0.25, green: 0.55, blue: 1, alpha: 1)
+        let transform = viewTransform
 
         context.saveGState()
-        // Chrome geometry is page space, the same space the marks live in.
-        context.translateBy(x: -panOffset.width, y: -panOffset.height)
+        // Chrome geometry is page space — the same space the marks live in —
+        // but every stroke of it sizes itself in view points divided back into
+        // page units, so the handles keep their on-screen size at any zoom:
+        // they neither shrink to nothing when zoomed out nor grow when zoomed
+        // in. The mark's geometry scales; the chrome does not.
+        context.concatenate(transform.cgAffineTransform)
+        let unit = transform.pageLength(1)
 
         context.saveGState()
         context.concatenate(
             Stroke.rotationTransform(around: selection.anchor, by: selection.rotation)
         )
         context.setStrokeColor(accent)
-        context.setLineWidth(1.5)
-        context.setLineDash(phase: 0, lengths: [5, 4])
+        context.setLineWidth(1.5 * unit)
+        context.setLineDash(phase: 0, lengths: [5 * unit, 4 * unit])
         context.addRect(selection.unrotatedBounds)
         context.strokePath()
         context.restoreGState()
@@ -1136,18 +1178,20 @@ class OverlayView: NSView {
             rotationHandleOffset: MarkSelection.defaultRotationHandleOffset
         ) {
             if handle == .rotation {
+                let radius = 5 * unit
                 context.setFillColor(CGColor(gray: 1, alpha: 1))
-                context.fillEllipse(in: CGRect(x: point.x - 5, y: point.y - 5, width: 10, height: 10))
+                context.fillEllipse(in: CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2))
                 context.setStrokeColor(accent)
-                context.setLineWidth(1.5)
-                context.addEllipse(in: CGRect(x: point.x - 5, y: point.y - 5, width: 10, height: 10))
+                context.setLineWidth(1.5 * unit)
+                context.addEllipse(in: CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2))
                 context.strokePath()
             } else {
-                let square = CGRect(x: point.x - 4, y: point.y - 4, width: 8, height: 8)
+                let half = 4 * unit
+                let square = CGRect(x: point.x - half, y: point.y - half, width: half * 2, height: half * 2)
                 context.setFillColor(CGColor(gray: 1, alpha: 1))
                 context.fill(square)
                 context.setStrokeColor(accent)
-                context.setLineWidth(1.5)
+                context.setLineWidth(1.5 * unit)
                 context.stroke(square)
             }
         }
@@ -1220,7 +1264,8 @@ class OverlayView: NSView {
         guard rect.width > 0, rect.height > 0 else { return }
 
         // The mark's points are page space; the source image is view space.
-        let viewRect = rect.offsetBy(dx: -panOffset.width, dy: -panOffset.height)
+        let transform = viewTransform
+        let viewRect = transform.rect(fromPage: rect)
 
         if let source = blurSource(for: stroke) {
             let image = source.image
@@ -1252,7 +1297,7 @@ class OverlayView: NSView {
                     width: landed.width / scale,
                     height: landed.height / scale
                 )
-                let landedPage = landedView.offsetBy(dx: panOffset.width, dy: panOffset.height)
+                let landedPage = transform.rect(toPage: landedView)
                 context.saveGState()
                 context.clip(to: rect)
                 context.translateBy(x: landedPage.minX, y: landedPage.maxY)

@@ -345,4 +345,176 @@ final class WhiteboardPagesTests: XCTestCase {
         XCTAssertEqual(alpha, 1, accuracy: 0.01, "the base must be opaque, never transparent")
         XCTAssertEqual(red + green + blue, 0, accuracy: 0.01, "a black page's base must be black")
     }
+
+    // MARK: - T5/S5: the page ↔ view mapping
+
+    /// The mapping lives in one place in StareCore (`BoardTransform`):
+    /// `view = (page − offset) × zoom`, so `page = view / zoom + offset`. Zoom 1
+    /// must reduce to the old translation-only rule the panned pages kept.
+    func testPageAndViewPointsRoundTripAtSeveralZoomsAndOffsets() {
+        let pagePoints = [
+            CGPoint(x: 0, y: 0),
+            CGPoint(x: 37.5, y: 41.25),
+            CGPoint(x: -80, y: 200),
+            CGPoint(x: 1_000.5, y: -250),
+        ]
+        let transforms = [
+            BoardTransform.identity,
+            BoardTransform(offset: CGSize(width: 100, height: 60), zoom: 1),
+            BoardTransform(offset: .zero, zoom: 2),
+            BoardTransform(offset: CGSize(width: 125, height: -30), zoom: 0.25),
+            BoardTransform(offset: CGSize(width: -1, height: 17.5), zoom: 8),
+        ]
+        for transform in transforms {
+            for page in pagePoints {
+                let back = transform.point(toPage: transform.point(fromPage: page))
+                XCTAssertEqual(back.x, page.x, accuracy: 1e-9, "x round trip at zoom \(transform.zoom)")
+                XCTAssertEqual(back.y, page.y, accuracy: 1e-9, "y round trip at zoom \(transform.zoom)")
+            }
+            let pageRect = CGRect(x: 10, y: 20, width: 300, height: 150)
+            let backRect = transform.rect(toPage: transform.rect(fromPage: pageRect))
+            XCTAssertEqual(backRect, pageRect, "rect round trip at zoom \(transform.zoom)")
+        }
+        // Zoom 1 is exactly the old rule: page = view + offset.
+        let translationOnly = BoardTransform(offset: CGSize(width: 40, height: 25), zoom: 1)
+        XCTAssertEqual(
+            translationOnly.point(toPage: CGPoint(x: 100, y: 200)),
+            CGPoint(x: 140, y: 225),
+            "zoom 1 must keep the panned page's stored-point rule"
+        )
+    }
+
+    /// The anchoring rule: zooming keeps the page point under the view anchor
+    /// exactly where it was, so drawing follows the pointer no matter what the
+    /// zoom does.
+    func testZoomingAnchoredAtAViewPointKeepsItsPagePointPut() {
+        let anchors = [
+            CGPoint(x: 0, y: 0),
+            CGPoint(x: 200, y: 150),
+            CGPoint(x: 513.5, y: 287.25),
+        ]
+        let zooms: [CGFloat] = [1, 2, 0.25]
+        let targets: [CGFloat] = [2, 0.25, 8, 1.25]
+        for zoom in zooms {
+            let before = BoardTransform(offset: CGSize(width: 60, height: -12), zoom: zoom)
+            for anchor in anchors {
+                let pageUnderAnchor = before.point(toPage: anchor)
+                for target in targets {
+                    let after = before.zoomed(to: target, anchoredAt: anchor)
+                    let kept = after.point(toPage: anchor)
+                    XCTAssertEqual(
+                        kept.x, pageUnderAnchor.x, accuracy: 1e-9,
+                        "the page point under the anchor moved zooming \(zoom)→\(target) at \(anchor)"
+                    )
+                    XCTAssertEqual(
+                        kept.y, pageUnderAnchor.y, accuracy: 1e-9,
+                        "the page point under the anchor moved zooming \(zoom)→\(target) at \(anchor)"
+                    )
+                }
+            }
+        }
+    }
+
+    /// Zoom never boxes you in a corner of the range, and a target outside the
+    /// range lands on its boundary without moving the content (the anchor
+    /// invariant still holds — a clamped zoom keeps its own page point).
+    func testZoomClampsToTheStatedRange() {
+        let start = BoardTransform.identity
+        let tooFar = start.zoomed(to: 99, anchoredAt: CGPoint(x: 100, y: 100))
+        XCTAssertEqual(tooFar.zoom, BoardTransform.maxZoom, "the zoom range top")
+        let tooLittle = start.zoomed(to: 0.01, anchoredAt: CGPoint(x: 100, y: 100))
+        XCTAssertEqual(tooLittle.zoom, BoardTransform.minZoom, "the zoom range bottom")
+        XCTAssertEqual(tooFar.point(toPage: CGPoint(x: 100, y: 100)).x, 100, "a clamped zoom still anchors")
+        // Pushing past an already-clamped end is a no-op: nothing moves.
+        let again = tooFar.zoomed(to: 99, anchoredAt: CGPoint(x: 100, y: 100))
+        XCTAssertEqual(again, tooFar)
+        XCTAssertEqual(start.zoomed(to: 1, anchoredAt: CGPoint(x: 300, y: 200)), start, "zoom 1→1 changes nothing")
+    }
+
+    /// Zoom is a per-page value exactly like the pan offset: switching pages
+    /// never carries one page's view into another, and moving a page keeps it.
+    func testZoomIsPerPageLikeThePanOffset() {
+        let board = WhiteboardPages()
+        XCTAssertTrue(board.zoom(to: 2, anchoredAt: CGPoint(x: 300, y: 200)))
+        XCTAssertEqual(board.currentPage.zoom, 2)
+        board.selectNext()
+        XCTAssertEqual(board.currentPage.zoom, 1, "a new page starts at zoom 1")
+        board.pan(by: CGSize(width: 20, height: 0))
+        XCTAssertTrue(board.zoom(to: 0.5, anchoredAt: .zero))
+        XCTAssertEqual(board.currentPage.zoom, 0.5)
+        XCTAssertEqual(
+            board.currentPage.offset, CGSize(width: 20, height: 0),
+            "anchored at the view origin the offset never moves: the page point under it stays"
+        )
+        board.selectPrevious()
+        XCTAssertEqual(board.currentPage.zoom, 2, "each page keeps its own zoom")
+        XCTAssertEqual(board.currentPage.offset, CGSize(width: 150, height: 100), "the anchor's own pan stays")
+        board.moveCurrentPageRight()
+        XCTAssertEqual(board.currentPage.zoom, 2, "the zoom travels with the page")
+    }
+
+    /// ⌘0 puts pan and zoom back together: offset zero and zoom 1, nothing else
+    /// touched (marks and background survive untouched).
+    func testResetViewRestoresPanAndZoomTogether() {
+        let sessionBefore = drawnSession()
+        let board = WhiteboardPages(background: .black)
+        board.adopt(sessionBefore)
+        board.pan(by: CGSize(width: 80, height: 50))
+        board.zoom(to: 3, anchoredAt: CGPoint(x: 10, y: 10))
+
+        board.resetView()
+        XCTAssertEqual(board.currentPage.offset, .zero)
+        XCTAssertEqual(board.currentPage.zoom, 1)
+        XCTAssertEqual(board.currentPage.session, sessionBefore, "the marks never move")
+        XCTAssertEqual(board.currentPage.background, .black, "the background never changes")
+    }
+
+    // MARK: - T6/S6: the dot grid
+
+    /// At very low zoom a fixed spacing turns into mush, so the spacing only
+    /// ever subdivides by powers of two: the on-screen pitch never falls below
+    /// the readable minimum at any zoom level.
+    func testDotGridSpacingStaysReadableByPowersOfTwo() {
+        let base = DotGrid.spacing
+        for zoom in [CGFloat(0.25), 0.3, 0.45, 0.5, 1, 2, 3.5, 8] {
+            let spacing = DotGrid.pageSpacing(atZoom: zoom)
+            XCTAssertGreaterThanOrEqual(
+                spacing * zoom, DotGrid.minimumScreenSpacing,
+                "the on-screen pitch must stay readable at zoom \(zoom)"
+            )
+            let power = spacing / base
+            // Halving while still readable must not be possible: the rule
+            // stops at the first readable power of two.
+            var reduced = power
+            while reduced >= 2, reduced / 2 * zoom >= DotGrid.minimumScreenSpacing {
+                reduced /= 2
+            }
+            XCTAssertEqual(reduced, power, "the spacing is the first readable power of two at zoom \(zoom)")
+        }
+        XCTAssertEqual(DotGrid.pageSpacing(atZoom: 1), base, "zoom 1 shows the base pitch")
+        XCTAssertEqual(DotGrid.pageSpacing(atZoom: 0.25), base * 2, "zoom 0.25 coarsens one step")
+    }
+
+    /// Dots sit on the pitch, anchored at the page origin, and cover the rect.
+    func testDotGridDotsLieOnThePitchInsideTheRect() {
+        let rect = CGRect(x: 20, y: 8, width: 104, height: 60)
+        let dots = DotGrid.dots(in: rect, spacing: 24)
+        XCTAssertFalse(dots.isEmpty)
+        for dot in dots {
+            XCTAssertEqual(dot.x.truncatingRemainder(dividingBy: 24), 0, accuracy: 1e-9, "dots sit on the pitch")
+            XCTAssertEqual(dot.y.truncatingRemainder(dividingBy: 24), 0, accuracy: 1e-9, "dots sit on the pitch")
+            XCTAssertTrue(rect.contains(dot), "dots stay in the rect: \(dot)")
+        }
+        // Rows and columns actually fill the rect: the pitch points nearest
+        // each corner are all present.
+        let points = Set(dots)
+        for corner in [
+            CGPoint(x: 24, y: 24), CGPoint(x: 120, y: 24), CGPoint(x: 24, y: 48), CGPoint(x: 120, y: 48),
+        ] {
+            XCTAssertTrue(points.contains(corner), "the grid covers \(corner)")
+        }
+        // An empty rect has no dots, and a degenerate spacing never loops.
+        XCTAssertTrue(DotGrid.dots(in: .zero, spacing: 24).isEmpty)
+        XCTAssertTrue(DotGrid.dots(in: CGRect(x: 0, y: 0, width: 100, height: 100), spacing: 0).isEmpty)
+    }
 }
