@@ -219,6 +219,11 @@ public struct PointerAppearance: Equatable, Sendable {
     /// Extra points of margin beyond the glow reach, so invalidation rects
     /// derived from the appearance never clip the gradient.
     public var glowMargin: Double
+    /// Alpha of the translucent body fill for banded and filled shapes
+    /// (today's `0.55 * idleAlpha`).
+    public var bandFillAlpha: Double
+    /// Alpha of the bright edge stroke (today's `0.95 * idleAlpha`).
+    public var edgeAlpha: Double
     /// Preset-specific geometry.
     public var geometry: Geometry
 
@@ -239,6 +244,8 @@ public struct PointerAppearance: Equatable, Sendable {
         self.radius = style.size / 2
         self.glowExtent = Self.glowExtentMultiplier
         self.glowMargin = Self.glowMarginPoints
+        self.bandFillAlpha = 0.55
+        self.edgeAlpha = 0.95
         self.cornerRadiusFactor = style.preset == .squircle ? Self.squircleCornerFactor : nil
         self.edgeWidth = style.preset == .ring || style.preset == .squircle ? Self.edgeWidthPoints : 0
         switch style.preset {
@@ -278,6 +285,8 @@ public struct PointerAppearance: Equatable, Sendable {
             && lhs.radius == rhs.radius
             && lhs.bandWidth == rhs.bandWidth
             && lhs.edgeWidth == rhs.edgeWidth
+            && lhs.bandFillAlpha == rhs.bandFillAlpha
+            && lhs.edgeAlpha == rhs.edgeAlpha
             && lhs.cornerRadiusFactor == rhs.cornerRadiusFactor
             && lhs.glowExtent == rhs.glowExtent
             && lhs.glowMargin == rhs.glowMargin
