@@ -68,6 +68,9 @@ class OverlayView: NSView {
     private var textField: NSTextField?
     private var laserTimer: Timer?
     private var pointerLocation: CGPoint?
+    /// Current scale of the click pulse, shared by every display and pushed
+    /// in by the controller's timer. 1 whenever nobody clicked.
+    private var pointerPulseScale: CGFloat = 1
     private var isSelectingArea = false
     private var selectionOrigin: CGPoint?
     private var selectionRect: CGRect?
@@ -152,7 +155,7 @@ class OverlayView: NSView {
     override func mouseExited(with event: NSEvent) {
         guard let previous = pointerLocation else { return }
         pointerLocation = nil
-        setNeedsDisplay(pointerRect(around: previous))
+        setNeedsDisplay(pointerRect(around: previous, scale: pointerPulseScale))
     }
 
     // MARK: - Session
@@ -515,11 +518,19 @@ class OverlayView: NSView {
     /// The frame is a mode, not a mark: it follows the pointer and is never
     /// captured as a drawing.
     /// One tracking tick from the controller's timer, used in pointer mode where
-    /// the window ignores mouse events and therefore receives none.
-    func followPointerFromScreen() {
+    /// the window ignores mouse events and therefore receives none. `pulseScale`
+    /// is the click pulse multiplier the controller computes for every display.
+    func followPointerFromScreen(pulseScale: CGFloat = 1) {
         guard showsOnlyPointer, let window else { return }
         let windowPoint = window.convertPoint(fromScreen: NSEvent.mouseLocation)
-        updatePointer(to: convert(windowPoint, from: nil))
+        followPointer(at: convert(windowPoint, from: nil), pulseScale: pulseScale)
+    }
+
+    /// One tick with a known view point: the same pointer update the
+    /// screen-following tick ends in, used where the pointer location comes
+    /// from somewhere other than the mouse (the self test).
+    func followPointer(at point: CGPoint, pulseScale: CGFloat = 1) {
+        updatePointer(to: point, pulseScale: pulseScale)
     }
 
     func syncPointerFromScreen() {
@@ -531,21 +542,28 @@ class OverlayView: NSView {
             return
         }
         let windowPoint = window.convertPoint(fromScreen: NSEvent.mouseLocation)
-        updatePointer(to: convert(windowPoint, from: nil))
+        updatePointer(to: convert(windowPoint, from: nil), pulseScale: pointerPulseScale)
     }
 
-    private func updatePointer(to point: CGPoint) {
+    private func updatePointer(to point: CGPoint, pulseScale: CGFloat) {
         let previous = pointerLocation
-        guard previous != point else { return }
+        let previousScale = pointerPulseScale
+        guard previous != point || previousScale != pulseScale else { return }
         pointerLocation = point
-        lastPointerChange = Date()
-        var rect = pointerRect(around: point)
-        if let previous { rect = rect.union(pointerRect(around: previous)) }
+        pointerPulseScale = pulseScale
+        // The pulse must not reset the idle fade: only movement does.
+        if previous != point { lastPointerChange = Date() }
+        // The pulse grows and settles even while the pointer stands still, so
+        // both the previous and the current highlight area are invalidated.
+        var rect = pointerRect(around: point, scale: pulseScale)
+        if let previous {
+            rect = rect.union(pointerRect(around: previous, scale: previousScale))
+        }
         setNeedsDisplay(rect)
     }
 
-    private func pointerRect(around point: CGPoint) -> CGRect {
-        let radius = state.pointerSize / 2 * Self.pointerGlowMultiplier + 12
+    private func pointerRect(around point: CGPoint, scale: CGFloat = 1) -> CGRect {
+        let radius = state.pointerSize / 2 * scale * Self.pointerGlowMultiplier + 12
         return CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2)
     }
 
@@ -662,7 +680,10 @@ class OverlayView: NSView {
         // Pointer highlight is its own mode; it is never part of drawing.
         guard showsOnlyPointer, let point = pointerLocation else { return }
 
-        let radius = state.pointerSize / 2
+        // The pulse scales the whole highlight — ring, glow, band and shape
+        // — from one radius, so pointerSize, both shapes and the glow keep
+        // their proportions and a resting highlight (scale 1) is unchanged.
+        let radius = state.pointerSize / 2 * pointerPulseScale
         let band = radius * Self.pointerBandRatio
         let alpha = idleAlpha
         let squircle = state.pointerShape == "squircle"

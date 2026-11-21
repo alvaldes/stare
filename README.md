@@ -11,7 +11,7 @@ Press `⌥⇧A` to draw over the screen, `⌥⇧W` for the whiteboard, `S` to ca
 
 ```sh
 swift build                 # compile
-swift test                  # 82 unit tests, no GUI needed
+swift test                  # 95 unit tests, no GUI needed
 Scripts/bundle.sh           # release build -> build/Stare.app
 Scripts/bundle.sh release install   # also copies to /Applications
 ```
@@ -24,14 +24,17 @@ the code requirement.
 Diagnostics: the app writes nothing by default. Launch with `STARE_DIAG=1` to make
 it append to `/tmp/stare.log`. `Stare --selftest` writes
 `/tmp/stare-selftest.txt`, offscreen renders of the palette, the editor chrome and
-the settings form in both system appearances, a mark-composition PNG, and a
-blur-composition check with its measured pixels in the report.
+the settings form in both system appearances, a mark-composition PNG, a
+blur-composition check with its measured pixels, pointer-pulse renders with
+their measured extents, and the front-window display mapping with the window
+frame and display frames it used.
 
 ## Keyboard
 
 | Where | Keys |
 | --- | --- |
 | Anywhere | `⌥⇧A` draw over the screen · `⌥⇧W` whiteboard · `⌥⇧M` pointer highlight · `⌥⇧P` pin or unpin the drawing so clicks pass through |
+| Pointer highlight | clicks pulse the highlight (grow and settle), so a click reads as a click on a shared screen · works over any app, no permission |
 | Drawing | `P` pen · `H` highlighter · `A` arrow · `L` line · `R` rectangle · `O` ellipse · `T` text · `C` numbered step · `F` laser · `B` blur · `E` eraser |
 | Drawing | `1`–`8` inks (red, orange, yellow, green, blue, purple, white, black) · `⌘Z` undo · `⇧⌘Z` redo (across displays) · `Esc` clear and leave |
 | Drawing | hold `⇧` for a straight line with pen/highlighter, or a square/circle with rectangle/ellipse |
@@ -86,7 +89,16 @@ Sources/Stare/            AppKit and SwiftUI
   `NSWorkspace.activeSpaceDidChangeNotification`, is the configuration that works.
 - **The pointer highlight is its own mode**, not a drawing tool: `⌥⇧M` shows a
   click-through layer that follows `NSEvent.mouseLocation` at 60Hz. It needs no
-  permission, unlike a global event tap, and it never activates Stare.
+  permission, unlike a global event tap, and it never activates Stare. A click
+  makes it pulse — grow and settle over 0.45s — and the pulse reads the mouse
+  button by polling `CGEventSource.buttonState` from the same 60Hz timer, which
+  also needs no permission, so pointer mode stays permission-free.
+- **The "front window's display" answer comes from the real window list**:
+  `FrontWindowLocator` takes the front-most layer-0 on-screen window that is
+  not Stare's own from `CGWindowListCopyWindowInfo` and maps its bounds to a
+  display through the pure `FrontWindowDisplay` mapping (StareCore). The old
+  frontmost-application heuristic stays as the fallback when the list has no
+  such window. Reading the list needs no Accessibility permission.
 - **Retina captures need `CGDisplayCopyDisplayMode(...).pixelWidth`.** On a
   3840-wide screen `CGDisplayPixelsWide` reports 1920, so trusting it halves the
   capture resolution.
@@ -116,4 +128,5 @@ full spec list (S1–S35) and the log of every correction.
    marks stay while clicks pass through.
 3. **Polish already identified** — click animation for the pointer highlight
    (scale pulse), and a real "front window's display" check beyond the current
-   window-list heuristic.
+   window-list heuristic. *(Done in T7: the click pulse and the z-order window
+   lookup landed; see `odd/tasks/v0.2.md`.)*

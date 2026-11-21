@@ -123,6 +123,10 @@ enum SelfTest {
 
         panel.orderOut(nil)
 
+        // Front window (T7/S3): the frontmost normal window from the actual
+        // window list and the display its bounds land on.
+        report.append(contentsOf: frontWindowReport())
+
         // Pin is controller state the view cannot show: every layer has to stop
         // taking clicks while the marks stay visible, and come back on unpin.
         let controller = OverlayController(captureService: CaptureService())
@@ -178,6 +182,11 @@ enum SelfTest {
         // path over a synthetic screen and measure the pixels.
         report.append(contentsOf: blurRenderReport())
 
+        // Click pulse (T7/S3): the pulse curve sampled the way the pointer
+        // timer samples it, and the highlight rendered through the real
+        // pointer drawing path at rest, peak and settled.
+        report.append(contentsOf: pointerPulseReport())
+
         return finish(report, code: 0)
     }
 
@@ -185,6 +194,130 @@ enum SelfTest {
         let key = NSDeviceDescriptionKey("NSScreenNumber")
         guard let number = screen.deviceDescription[key] as? NSNumber else { return nil }
         return CGDirectDisplayID(number.uint32Value)
+    }
+
+    // MARK: - Click pulse (T7)
+
+    /// Samples the pulse curve the way the pointer timer samples it, then
+    /// renders the highlight through the real pointer drawing path (the same
+    /// `draw` the overlay uses) at rest, peak and settled, and measures the
+    /// opaque pixel extent of each render: it must grow with the pulse and
+    /// return to the resting size.
+    private static func pointerPulseReport() -> [String] {
+        var report: [String] = []
+        let size = CGSize(width: 900, height: 600)
+        let state = EditorState()
+        state.pointerFadeWhenIdle = false
+        let view = OverlayView(frame: CGRect(origin: .zero, size: size), state: state, onEscape: {})
+        view.showsOnlyPointer = true
+        let centre = CGPoint(x: size.width / 2, y: size.height / 2)
+
+        var pulse = PointerPulse()
+        let t0: TimeInterval = 100
+        pulse.start(at: t0)
+        let samples: [(String, TimeInterval)] = [
+            ("click", t0),
+            ("rise", t0 + pulse.riseDuration / 2),
+            ("peak", t0 + pulse.riseDuration),
+            ("settle", t0 + pulse.duration - pulse.settleDuration / 2),
+            ("end", t0 + pulse.duration),
+            ("after", t0 + pulse.duration + 1),
+        ]
+        let curve = samples.map { tag, t -> String in
+            "\(tag)=\(String(format: "%.3f", pulse.scale(at: t)))"
+        }.joined(separator: " ")
+        report.append(
+            "pointer pulse curve \(curve) duration=\(String(format: "%.2f", pulse.duration))s peak=\(pulse.peakScale)"
+        )
+
+        // A second click mid-pulse restarts the curve from the new instant.
+        pulse.start(at: t0 + pulse.duration / 2)
+        report.append(
+            "pointer pulse restart scaleAtNewAnchor=\(String(format: "%.3f", pulse.scale(at: t0 + pulse.duration / 2))) expect 1.000"
+        )
+        pulse.start(at: t0)
+
+        func render(_ tag: String, scale: CGFloat) -> CGSize? {
+            view.followPointer(at: centre, pulseScale: scale)
+            guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
+            view.cacheDisplay(in: view.bounds, to: rep)
+            guard let image = rep.cgImage else { return nil }
+            _ = writePNG(image, to: "/tmp/stare-pointer-pulse-\(tag).png")
+            return opaqueExtentPixels(image)
+        }
+
+        let rest = render("rest", scale: pulse.scale(at: t0))
+        let peak = render("peak", scale: pulse.scale(at: t0 + pulse.riseDuration))
+        let settled = render("settled", scale: pulse.scale(at: t0 + pulse.duration))
+
+        guard let rest, let peak, let settled, rest.width > 0 else {
+            report.append("FAIL: pointer pulse render failed rest=\(String(describing: rest)) peak=\(String(describing: peak)) settled=\(String(describing: settled))")
+            return report
+        }
+        let grew = String(format: "%.2f", peak.width / rest.width)
+        report.append("pointer pulse rest png=/tmp/stare-pointer-pulse-rest.png extent=\(Int(rest.width))x\(Int(rest.height))px")
+        report.append("pointer pulse peak png=/tmp/stare-pointer-pulse-peak.png extent=\(Int(peak.width))x\(Int(peak.height))px grew=\(grew)x expect ~\(pulse.peakScale)")
+        report.append(
+            "pointer pulse settled extent=\(Int(settled.width))x\(Int(settled.height))px returnedToRest=\(settled == rest)"
+        )
+        let passed = peak.width > rest.width * 1.2 && peak.width < rest.width * 1.45 && settled == rest
+        report.append("pointer pulse result=\(passed ? "PASS" : "FAIL")")
+        return report
+    }
+
+    /// Bounding box of pixels whose alpha is visible, in pixels of the image.
+    private static func opaqueExtentPixels(_ image: CGImage) -> CGSize? {
+        let rep = NSBitmapImageRep(cgImage: image)
+        guard let data = rep.bitmapData, rep.samplesPerPixel == 4, rep.bitsPerSample == 8 else { return nil }
+        let width = rep.pixelsWide
+        let height = rep.pixelsHigh
+        let bytesPerRow = rep.bytesPerRow
+        var minX = width, maxX = -1, minY = height, maxY = -1
+        for y in 0..<height {
+            let row = data.advanced(by: y * bytesPerRow)
+            for x in 0..<width where row[x * 4 + 3] > 24 {
+                if x < minX { minX = x }
+                if x > maxX { maxX = x }
+                if y < minY { minY = y }
+                if y > maxY { maxY = y }
+            }
+        }
+        guard maxX >= minX, maxY >= minY else { return nil }
+        return CGSize(width: maxX - minX + 1, height: maxY - minY + 1)
+    }
+
+    // MARK: - Front window (T7)
+
+    /// Reports the frontmost normal window from the actual window list — the
+    /// answer the palette's "front window" placement uses — together with the
+    /// display frames and the mapping result. No such window exercises the
+    /// fallback (frontmost application heuristic).
+    private static func frontWindowReport() -> [String] {
+        var report: [String] = []
+        let displayFrames = NSScreen.screens.map(\.frame)
+        let primaryScreenTop = NSScreen.screens.first?.frame.maxY ?? 0
+        report.append(
+            "front window displays=[\(displayFrames.map(String.init(describing:)).joined(separator: ", "))] primaryTop=\(primaryScreenTop)"
+        )
+        let front = NSWorkspace.shared.frontmostApplication
+        report.append(
+            "front window frontmostApp=\(front?.localizedName ?? "nil") pid=\(front?.processIdentifier ?? -1)"
+        )
+        if let bounds = FrontWindowLocator.frontmostNormalWindowBounds() {
+            let appKit = FrontWindowDisplay.appKitFrame(cgWindowBounds: bounds, primaryScreenTop: primaryScreenTop)
+            let index = FrontWindowDisplay.displayIndex(windowFrame: appKit, displayFrames: displayFrames)
+            let screen = index.map { NSScreen.screens[$0] }
+            report.append(
+                "front window cg=\(bounds) appkit=\(appKit) index=\(index.map(String.init) ?? "nil") screen=\(screen?.localizedName ?? "nil")"
+            )
+        } else {
+            report.append("front window none in the window list; exercising the fallback")
+            let fallback = front.flatMap {
+                FrontWindowLocator.frontmostWindowBounds(ownerPID: $0.processIdentifier)
+            }
+            report.append("front window fallbackBounds=\(fallback.map(String.init(describing:)) ?? "nil")")
+        }
+        return report
     }
 
     // MARK: - Whiteboard (T6)

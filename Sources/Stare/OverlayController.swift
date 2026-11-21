@@ -38,6 +38,11 @@ final class OverlayController {
     private var keyMonitor: Any?
     private var pointerTimer: Timer?
     private(set) var isPointerActive = false
+    /// Click pulse of the pointer highlight, shared by every display. The
+    /// timer below detects click edges and drives the pulse from there.
+    private var pointerPulse = PointerPulse()
+    /// Button state from the previous timer tick, for click-edge detection.
+    private var pointerButtonWasDown = false
 
     init(
         captureService: ScreenCapturing = CaptureService(),
@@ -215,10 +220,23 @@ final class OverlayController {
 
     private func startPointerTimer() {
         guard pointerTimer == nil else { return }
-        // NSEvent.mouseLocation needs no permission, unlike a global event tap.
         pointerTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             guard let self else { return }
-            for canvas in self.canvases.values { canvas.view.followPointerFromScreen() }
+            let now = ProcessInfo.processInfo.systemUptime
+            // Click pulse: the mouse button is polled through the combined
+            // session event source, which reports button state without any
+            // permission — no Accessibility, no Input Monitoring, no prompt —
+            // so pointer mode stays permission-free like the rest of the app.
+            // The down edge of a click restarts the pulse.
+            let isDown = CGEventSource.buttonState(.combinedSessionState, button: .left)
+            if isDown, !self.pointerButtonWasDown {
+                self.pointerPulse.start(at: now)
+            }
+            self.pointerButtonWasDown = isDown
+            let pulseScale = self.pointerPulse.scale(at: now)
+            for canvas in self.canvases.values {
+                canvas.view.followPointerFromScreen(pulseScale: pulseScale)
+            }
         }
     }
 

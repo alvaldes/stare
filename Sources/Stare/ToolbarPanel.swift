@@ -123,28 +123,16 @@ final class ToolbarPanel: NSPanel {
         }
     }
 
-    /// The screen holding the frontmost application's frontmost normal window.
-    /// Read from the window list, so it needs no Accessibility permission.
+    /// The screen of the frontmost normal window, taken from the actual
+    /// window server list: the front-most layer-0 window that is on screen,
+    /// visible and not Stare's own. The previous frontmost-application
+    /// heuristic stays as the fallback for when the list has no such window.
+    /// Reading the list needs no Accessibility permission.
     private func frontWindowScreen() -> NSScreen? {
-        guard let front = NSWorkspace.shared.frontmostApplication else { return nil }
-        let windows = CGWindowListCopyWindowInfo(
-            [.optionOnScreenOnly, .excludeDesktopElements],
-            kCGNullWindowID
-        ) as? [[String: Any]] ?? []
-
-        for window in windows {
-            guard (window[kCGWindowOwnerPID as String] as? Int32) == front.processIdentifier,
-                  (window[kCGWindowLayer as String] as? Int) == 0,
-                  let raw = window[kCGWindowBounds as String] as? [String: Any],
-                  let rect = CGRect(dictionaryRepresentation: raw as CFDictionary),
-                  rect.width > 200, rect.height > 200 else { continue }
-
-            // Window list bounds are top-left based; screens are bottom-left.
-            let primaryHeight = NSScreen.screens.first?.frame.maxY ?? 0
-            let centre = CGPoint(x: rect.midX, y: primaryHeight - rect.midY)
-            return NSScreen.screens.first { $0.frame.contains(centre) }
-        }
-        return nil
+        FrontWindowLocator.frontmostNormalWindowScreen()
+            ?? FrontWindowLocator.frontmostWindowScreen(
+                ownerPID: NSWorkspace.shared.frontmostApplication?.processIdentifier ?? -1
+            )
     }
 
     private static let screenKey = "toolbarScreen"
