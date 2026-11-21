@@ -19,7 +19,7 @@ S9. CTA principal: descargar la app. Apunta al último GitHub Release; mientras 
 
 | ID | Tarea | Specs | Ruta | Estado | Commit |
 | --- | --- | --- | --- | --- | --- |
-| T1 | Scaffold, Tailwind, pipeline `toSSG` → static assets, wrangler sin costo | S1–S4 | inline | hecho | b7a4af5 |
+| T1 | Scaffold, Tailwind, pipeline `toSSG` → static assets, wrangler sin costo | S1–S4 | inline | hecho | 6537595 |
 | T2 | Sistema visual y secciones (hero, features, atajos, download, FAQ, footer) | S6–S9 | inline | hecho | ver Log L8 |
 | T3 | Motor de la demo: herramientas, tintas, undo, Esc, toolbar | S5 | inline | hecho | ver Log L8 |
 | T4 | Captura S → card con Copy al portapapeles | S5 | inline | hecho | ver Log L8 |
@@ -28,18 +28,18 @@ S9. CTA principal: descargar la app. Apunta al último GitHub Release; mientras 
 | T7 | Efectos con vida (aurora, grilla, glass nav, blur-in, sheen, spotlight, reveals, atajos vivos) | S6 | inline | hecho, sin commit | |
 | T8 | Logo: plumilla abierta sobre vidrio aurora + glifo relleno para barra de menú | S6 | inline | hecho, sin commit | |
 | T8b | Nav alineado al contenedor y logo centrado; mini-escena animada en el hero (dibujar → S → Copied → chat) | S6 | inline | hecho, sin commit | |
-| T9 | Commitear T2–T8b en slices en `feat/landing` y mergear a main sin borrar la rama | S1 | inline | hecho | c92fbbe..3f4f820, merge ccf10d2 |
-| T19 | Barra de menú real (manzana SVG, hora real) y Safari con el portfolio en vivo (iframe liviano), siempre en oscuro | S5–S6 | inline | hecho | 9213e6c, 03cd65e |
+| T9 | Commitear T2–T8b en slices en `feat/landing` y mergear a main sin borrar la rama | S1 | inline | hecho | f08451a..17f2428, merge acd799f |
+| T19 | Barra de menú real (manzana SVG, hora real) y Safari con el portfolio en vivo (iframe liviano), siempre en oscuro | S5–S6 | inline | hecho | da34f88, b5e5ad2 |
 | T20 | Verificar en Safari y Firefox que el iframe muestre el portfolio en oscuro (color-scheme del iframe → prefers-color-scheme); probado solo en Chromium | S6 | — | pendiente | |
-| T10 | Licencia (decisión del usuario) y repo público `alvaldes/stare`; hoy los links dan 404 y "open source" no es cierto aún | S9 | — | pendiente, bloquea publicar | |
+| T10 | Licencia (decisión del usuario) y repo público `alvaldes/stare`; hoy los links dan 404 y "open source" no es cierto aún | S9 | inline | hecho | 13fc329 |
 | T11 | Primer deploy: `pnpm wrangler login` (usuario, interactivo) + `pnpm deploy` | S3–S4 | — | pendiente, bloquea publicar | |
 | T12 | Imagen og:image generada en el build para previews en redes | S6 | inline | pendiente | |
 | T13 | Auditoría Lighthouse: performance (blur de auroras en móviles) y accesibilidad | S6 | inline | pendiente | |
 | T14 | Página 404 con el mismo estilo | S6 | inline | pendiente | |
 | T15 | Demo: sumar text, laser, eraser (T7 de la app) y quizás el editor, cuando la app los tenga | S5 | inline | desbloqueado: la app ya tiene text, laser y eraser | |
 | T16 | Video corto real de la app (dibujar → S → pegar) cuando la captura esté terminada | S7 | — | esperando app | |
-| T17 | Mergear `feat/landing` a `main` | S1 | — | hecho | 115addb |
-| T18 | Aplicar logo y glifo en la app: reemplazar `pencil.tip` en `StatusBarController.swift` (template image, relleno siempre) | S6 | — | hecho | 8754241 |
+| T17 | Mergear `feat/landing` a `main` | S1 | — | hecho | eabc9f1 |
+| T18 | Aplicar logo y glifo en la app: reemplazar `pencil.tip` en `StatusBarController.swift` (template image, relleno siempre) | S6 | — | hecho | 6b194b1 |
 
 Ruta: todo inline; T2 y T3 comparten tokens visuales y la toolbar, así que no son unidades independientes para escritores paralelos.
 
@@ -57,7 +57,7 @@ L9 (2026-11-20): logo "el que pusiste esta feisimo" → tras 3 rondas: D3 nib, "
 L10 (2026-11-20): "en la app aun no podemos tocar nada porque aun se esta trabajando asi que seguimos trabajando en la landing y depues mesclamos" → T15–T18 esperan a la app. "pon todo esto en cosas que hacer para retomarlas despues" → T9–T18.
 L11 (2026-11-20): barra de menú de la demo: "debe estar el logo de mac con el nombre de la app Stare y la hora real". Hora real hecha (clock.ts, 3 tests). Logo de Apple: se advirtió que las guías de Apple para terceros lo prohíben sin licencia escrita; el usuario respondió "el icono de la mac claro que se puede usar" y, tras la explicación del riesgo, eligió "1." (la manzana, aceptando el riesgo). Implementado con el glifo del sistema U+F8FF solo en dispositivos Apple; círculo neutro en el resto. Pendiente: nombre "Stare" vs "Ledger" en negrita (Stare no toma el foco, en un Mac real se vería la app de abajo).
 L12 (2026-11-20): "porque usar ascii cuando puedes usar svg o algun otro icono de internet como el que esta en svgl.app" → la manzana pasa a ser un path SVG (svgl.app) dentro de DemoScreen; se eliminan el glifo U+F8FF, el círculo de fallback y la detección de plataforma. Se ve igual en todos los sistemas.
-L13 (2026-11-20): "quiero actualizar main con lo que tenemos hazta ahora pero sin borrar la rama" → 6 commits, merge --no-ff a main (ccf10d2), feat/landing adelantada por fast-forward. Sin conflictos.
+L13 (2026-11-20): "quiero actualizar main con lo que tenemos hazta ahora pero sin borrar la rama" → 6 commits, merge --no-ff a main (acd799f), feat/landing adelantada por fast-forward. Sin conflictos.
 L14 (2026-11-20): "y si mejor ponermos Safari y mostramos un embebed del portfolio del creador... alvaldes.dev" / "prefiero el iframe asi siempre esta actualizado para toda la vida, pero haz que el iframe no consuma mucho". Se advirtió que la captura no puede leer un iframe de otro origen (muestra placeholder). Implementado: sandbox="" (sin JS; el portfolio es Astro estático), loading="lazy", no-referrer, inert, layout a 1280 px escalado con transform.
 L15 (2026-11-20): "alvaldes.dev que use siempre el modo oscuro de esa pagina". El portfolio aplica `dark` con un script inline (localStorage → prefers-color-scheme); con sandbox="" no corre. Probadas 4 variantes en Chromium: solo allow-scripts + color-scheme: dark en el iframe da oscuro. Implementado; cookies/storage/forms/popups siguen bloqueados. Costo: el sitio ahora ejecuta su JS (animación de estrellas). Placeholder de captura pasado a oscuro.
 L16 (2026-11-20): "estos iconos del mock de safari no se parecen a los reales" + screenshot del Safari 26 real → toolbar rehecha: cápsulas de vidrio (sidebar con chevron, atrás/adelante con divisor), barra de direcciones en cápsula con dominio centrado, pestañas como dos cuadrados superpuestos, barra #ececec de 46 pt. Se omitieron el ícono de extensión y el engranaje (propios de la instalación del usuario).
@@ -73,4 +73,6 @@ L24 (2026-11-20): "crees que hay suficiente espacio entre el hero y la primera s
 L25 (2026-11-20): "el \"Requires macOS 26 or later.\" no se anima en la carga" → blur-in a 900 ms, cerrando la secuencia del hero.
 L26 (2026-11-20): "la landing no muestra es el pointer highlight" → opción elegida "En esta página": sección "Presenting? Point at it"; ⌥⇧M (event.code KeyM, porque en Mac el carácter es Â) o el botón activan un anillo sobre el cursor real en toda la página. Geometría portada de OverlayView.drawCursorFrame (banda 26% del radio al 55%, bordes 95% de 2 pt, glow hasta 1.9×, squircle 0.62, fade a 25% tras 1.2 s + 0.8 s; pointer.ts, 4 tests). Controles iguales a Settings: tamaño 32–80, círculo/squircle, glow, fade, tinta. Centro del glow recortado para quedar transparente como en la app. Verificado: sigue al cursor, click-through, toggle, fade 0.25. En touch se explica que necesita mouse.
 L27 (2026-11-20): "la seccion \"Out of your way until you need it\" con sus 4 card se me queda poco y no se si sobre" → 3 de 4 cards repetían Three keys / Pointer / FAQ. Aprobado ("si"): sección eliminada; garantías (menu bar, sin cuenta, capturas locales, open source) como fila dentro del bloque de descarga. Pendiente que "Open source" sea cierto (T10).
-L13 (2026-11-21, cierre de la landing): el trabajo de la rama se commiteó y se mergeó a `main` con `115addb`; verificado en `main` (no en el worktree): `pnpm test` 33/33 y `pnpm build` prerenderiza `dist/client/index.html`. El worktree `stare-wt-landing` y la rama `feat/landing` se eliminaron (la rama estaba mergeada): queda solo `main`. Lo que falta de la landing NO bloquea a la app: deploy del Worker (T11), licencia y repo público (T10), `og:image` (T12), Lighthouse (T13), 404 (T14), demo con text/laser/eraser (T15, ya desbloqueado), video real (T16).
+L13 (2026-11-21, cierre de la landing): el trabajo de la rama se commiteó y se mergeó a `main` con `eabc9f1`; verificado en `main` (no en el worktree): `pnpm test` 33/33 y `pnpm build` prerenderiza `dist/client/index.html`. El worktree `stare-wt-landing` y la rama `feat/landing` se eliminaron (la rama estaba mergeada): queda solo `main`. Lo que falta de la landing NO bloquea a la app: deploy del Worker (T11), licencia y repo público (T10), `og:image` (T12), Lighthouse (T13), 404 (T14), demo con text/laser/eraser (T15, ya desbloqueado), video real (T16).
+
+L14 (2026-11-20): "MIT, dale" → LICENSE MIT (Angel Valdés) en 13fc329; repo público https://github.com/alvaldes/stare. "el .alt se subio y eso no debia subirse" / "si, reescribe el historial" → `.atl/` borrado de todo el historial con git filter-repo, ignorado en .gitignore, force push; hashes citados en odd/tasks remapeados (541388e ya no existía antes de la reescritura). Sigue T11: `wrangler login` (usuario) + `pnpm deploy`.

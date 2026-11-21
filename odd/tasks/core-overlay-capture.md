@@ -26,13 +26,13 @@ S14. Dibujar no pide permisos de macOS. Cada feature que lee píxeles los pide p
 | T1 | Modelo vectorial, geometría y sesión de dibujo (`StareCore`) con tests | S6–S8, S14 | parent | 8a2bead |
 | T2 | Shell de barra de menú, atajo global y overlay multi-display | S3–S5 | parent | 541388e, cdb52a9 |
 | T3 | Toolbar flotante con herramientas e tintas | S6–S7 | parent | 541388e, cdb52a9 |
-| T4a | Núcleo de captura: servicio ScreenCaptureKit, permiso y compositor de marcas | S12, S14, S30 | parent | b09058a |
-| T4b | Integración de captura: selección de área, atajos S / ⇧S, composición y portapapeles | S12, S30 | parent | b09058a |
-| T4 | Captura de display y de área con marcas compuestas + permiso de Screen Recording | S12, S14 | parent | b09058a, 91c8e1a |
-| T5a | Card de captura: miniatura, hover que extiende, copiar, arrastrar afuera | S13 | parent | 0a3012f |
-| T5b | Editor de captura con crop y re-anotación | S13 | parent | ac9f85a, 18bd713 |
+| T4a | Núcleo de captura: servicio ScreenCaptureKit, permiso y compositor de marcas | S12, S14, S30 | parent | 3825ed1 |
+| T4b | Integración de captura: selección de área, atajos S / ⇧S, composición y portapapeles | S12, S30 | parent | 3825ed1 |
+| T4 | Captura de display y de área con marcas compuestas + permiso de Screen Recording | S12, S14 | parent | 3825ed1, 6ee69f7 |
+| T5a | Card de captura: miniatura, hover que extiende, copiar, arrastrar afuera | S13 | parent | aeb60db |
+| T5b | Editor de captura con crop y re-anotación | S13 | parent | 3250134, ff948bc |
 | T7 | Herramientas faltantes del dock: eraser, text, laser y puntero | S21–S24 | parent | 6f9569e, 3738502 |
-| T6 | Ventana de Settings con todas las preferencias | S15, S16, S31 | parent | 6ff4562, 660e47b |
+| T6 | Ventana de Settings con todas las preferencias | S15, S16, S31 | parent | 51b7000, 255bab2 |
 
 ## Log
 
