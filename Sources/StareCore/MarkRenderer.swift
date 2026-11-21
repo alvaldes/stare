@@ -15,6 +15,21 @@ public enum MarkRenderer {
     }
 
     public static func draw(stroke: Stroke, in context: CGContext, opacity: CGFloat? = nil) {
+        guard stroke.rotation != 0 else {
+            drawGeometry(stroke, in: context, opacity: opacity)
+            return
+        }
+        // The mark rotates about its anchor; the geometry itself is untouched,
+        // so the shape never changes.
+        context.saveGState()
+        context.concatenate(
+            Stroke.rotationTransform(around: stroke.anchor, by: stroke.rotation)
+        )
+        drawGeometry(stroke, in: context, opacity: opacity)
+        context.restoreGState()
+    }
+
+    private static func drawGeometry(_ stroke: Stroke, in context: CGContext, opacity: CGFloat? = nil) {
         let path = PathBuilder.path(for: stroke)
 
         if stroke.tool == .number {

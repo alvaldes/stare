@@ -9,13 +9,20 @@ public enum ShortcutResolution: Equatable {
 }
 
 public enum ShortcutRouter {
-    public static func resolve(_ character: Character) -> ShortcutResolution {
-        if let tool = ToolShortcut.tool(for: character) {
+    /// Resolves a pressed key to a tool or an ink. With `allowedTools`, a tool
+    /// outside the offered set resolves to nothing — a surface that hides a
+    /// tool must not arm it through its shortcut either.
+    public static func resolve(_ character: Character, allowedTools: [Tool]) -> ShortcutResolution {
+        if let tool = ToolShortcut.tool(for: character), allowedTools.contains(tool) {
             return .tool(tool)
         }
         if let digit = character.wholeNumberValue, let ink = Ink.ink(forNumber: digit) {
             return .ink(ink)
         }
         return .none
+    }
+
+    public static func resolve(_ character: Character) -> ShortcutResolution {
+        resolve(character, allowedTools: Tool.allCases)
     }
 }

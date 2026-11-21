@@ -352,4 +352,339 @@ final class DrawingSessionTests: XCTestCase {
         XCTAssertEqual(session.strokes.count, 1)
         XCTAssertFalse(session.remove(id: firstID), "removing twice reports failure")
     }
+
+    // T11/S6 slice 2: a deleted mark waits for redo exactly like one undo
+    // took away, so ⇧⌘Z after ⌫ brings it back on the same display.
+    func testRemovedMarkWaitsForRedoLikeAnUndo() {
+        var session = DrawingSession()
+        drawLine(in: &session, tool: .rectangle, points: [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 50)])
+        let id = session.strokes[0].id
+
+        XCTAssertTrue(session.remove(id: id))
+        XCTAssertTrue(session.strokes.isEmpty)
+        XCTAssertTrue(session.canRedo(markWithID: id))
+
+        XCTAssertTrue(session.redo())
+        XCTAssertEqual(session.strokes.map(\.id), [id])
+        XCTAssertFalse(session.canRedo(markWithID: id))
+    }
+
+    // MARK: - T11/S6 slice 2: the global history routes undo/redo by mark id
+
+    // The controller pops a history entry and must not undo a different op
+    // than the one it popped: the query answers for the newest *live* op,
+    // whatever kind it is.
+    func testCanUndoMarkWithIDSeesDrawsAndTransforms() {
+        var session = DrawingSession()
+        drawLine(in: &session, tool: .rectangle, points: [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 50)])
+        drawLine(in: &session, tool: .rectangle, points: [CGPoint(x: 200, y: 0), CGPoint(x: 300, y: 50)])
+        let first = session.strokes[0].id
+        let second = session.strokes[1].id
+
+        XCTAssertTrue(session.canUndo(markWithID: second))
+        XCTAssertFalse(session.canUndo(markWithID: first), "the second draw is newest")
+
+        let moved = MarkTransform.translated(session.strokes[1], by: CGPoint(x: 5, y: 5))
+        XCTAssertTrue(session.replace(moved))
+        XCTAssertTrue(session.canUndo(markWithID: second), "the transform is now the newest op")
+        XCTAssertFalse(session.canUndo(markWithID: first))
+
+        XCTAssertTrue(session.undo())
+        XCTAssertTrue(session.canUndo(markWithID: second), "after the transform undo, the draw is newest again")
+    }
+
+    // Erasing leaves stale journal entries behind; the query must look through
+    // them instead of naming a mark that no longer exists.
+    func testCanUndoMarkWithIDSkipsStaleEntries() {
+        var session = DrawingSession()
+        drawLine(in: &session, tool: .rectangle, points: [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 50)])
+        drawLine(in: &session, tool: .rectangle, points: [CGPoint(x: 200, y: 0), CGPoint(x: 300, y: 50)])
+        let first = session.strokes[0].id
+        let second = session.strokes[1].id
+
+        session.erase(at: session.strokes[1].points[0], radius: 1)
+
+        XCTAssertTrue(session.canUndo(markWithID: first))
+        XCTAssertFalse(session.canUndo(markWithID: second), "the erased mark's entry is stale")
+        XCTAssertFalse(session.canUndo(markWithID: UUID()))
+    }
+
+    // The exact contract the verifier found broken: draw A, draw B, move A —
+    // ⌘Z restores A's geometry, ⌘Z removes B, ⌘Z removes A, and ⇧⌘Z three
+    // times comes back exactly to the original state.
+    func testDrawDrawMoveRoundTripsThroughThreeUndosAndThreeRedos() {
+        var session = DrawingSession()
+        drawLine(in: &session, tool: .rectangle, points: [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 50)])
+        drawLine(in: &session, tool: .rectangle, points: [CGPoint(x: 200, y: 0), CGPoint(x: 300, y: 50)])
+        let a = session.strokes[0]
+        let b = session.strokes[1]
+        let movedA = MarkTransform.translated(a, by: CGPoint(x: 30, y: 0))
+        XCTAssertTrue(session.replace(movedA))
+        XCTAssertEqual(session.strokes[0].points, movedA.points)
+
+        // The global history pops in exactly this order, and each entry must
+        // be the session's newest live op when it is popped.
+        XCTAssertTrue(session.canUndo(markWithID: a.id))
+        XCTAssertFalse(session.canUndo(markWithID: b.id))
+
+        XCTAssertTrue(session.undo())
+        XCTAssertEqual(session.strokes[0].points, a.points, "the first undo restores A's geometry")
+        XCTAssertTrue(session.canUndo(markWithID: b.id))
+        XCTAssertTrue(session.canRedo(markWithID: a.id))
+
+        XCTAssertTrue(session.undo())
+        XCTAssertEqual(session.strokes.map(\.id), [a.id], "then B goes away")
+        XCTAssertTrue(session.canUndo(markWithID: a.id))
+        XCTAssertTrue(session.canRedo(markWithID: b.id))
+
+        XCTAssertTrue(session.undo())
+        XCTAssertTrue(session.strokes.isEmpty, "then A goes away")
+        XCTAssertTrue(session.canRedo(markWithID: a.id))
+
+        XCTAssertTrue(session.redo())
+        XCTAssertEqual(session.strokes.map(\.id), [a.id])
+        XCTAssertTrue(session.redo())
+        XCTAssertEqual(session.strokes.map(\.id), [a.id, b.id])
+        XCTAssertTrue(session.redo())
+        XCTAssertEqual(session.strokes[0].id, a.id)
+        XCTAssertEqual(session.strokes[0].points, movedA.points, "back to the transformed state exactly")
+        XCTAssertFalse(session.canRedo(markWithID: a.id), "nothing left to redo")
+        XCTAssertTrue(session.canUndo(markWithID: a.id), "and the round trip can start over")
+    }
+
+    // The same mark moved twice: every move is its own undo step, and redo
+    // walks the transforms back in the same order they were made.
+    func testSameMarkMovedTwiceRoundTripsThroughUndoAndRedo() {
+        var session = DrawingSession()
+        drawLine(in: &session, tool: .rectangle, points: [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 50)])
+        let a = session.strokes[0]
+        let moved1 = MarkTransform.translated(a, by: CGPoint(x: 10, y: 0))
+        let moved2 = MarkTransform.translated(moved1, by: CGPoint(x: 0, y: 20))
+
+        XCTAssertTrue(session.replace(moved1))
+        XCTAssertTrue(session.replace(moved2))
+        XCTAssertEqual(session.strokes[0].points, moved2.points)
+        XCTAssertTrue(session.canUndo(markWithID: a.id))
+
+        XCTAssertTrue(session.undo())
+        XCTAssertEqual(session.strokes[0].points, moved1.points, "the second move undoes first")
+        XCTAssertTrue(session.canUndo(markWithID: a.id))
+
+        XCTAssertTrue(session.undo())
+        XCTAssertEqual(session.strokes[0].points, a.points, "then the first move")
+
+        XCTAssertTrue(session.redo())
+        XCTAssertEqual(session.strokes[0].points, moved1.points)
+        XCTAssertTrue(session.redo())
+        XCTAssertEqual(session.strokes[0].points, moved2.points, "redo walks the moves back in order")
+    }
+
+    // The redo query sees transform entries, which `undoneStrokes` does not
+    // carry — that is what made ⇧⌘Z silently drop transforms before.
+    func testCanRedoMarkWithIDSeesTransformEntries() {
+        var session = DrawingSession()
+        drawLine(in: &session, tool: .rectangle, points: [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 50)])
+        let id = session.strokes[0].id
+        let moved = MarkTransform.translated(session.strokes[0], by: CGPoint(x: 5, y: 5))
+
+        XCTAssertTrue(session.replace(moved))
+        XCTAssertFalse(session.canRedo(markWithID: id), "a fresh transform forks the history")
+
+        XCTAssertTrue(session.undo())
+        XCTAssertTrue(session.canRedo(markWithID: id), "the undone transform waits for redo")
+
+        XCTAssertTrue(session.redo())
+        XCTAssertEqual(session.strokes[0].points, moved.points)
+        XCTAssertFalse(session.canRedo(markWithID: id))
+    }
+
+    // MARK: - T11/S6 advisories: deleting numbered marks keeps numbering gapless
+
+    // Advisory D: ⌫ goes through remove(id:), which must leave a gapless
+    // sequence exactly like the eraser does — deleting step 2 of [1,2,3] must
+    // renumber the third mark to 2 and hand the number 3 to the next mark.
+    func testDeletingANumberedMarkRenumbersGapless() {
+        var session = DrawingSession()
+        for index in 0..<3 {
+            session.begin(at: CGPoint(x: CGFloat(index) * 60, y: 0), tool: .number, ink: .green)
+        }
+        let middle = session.strokes[1].id
+
+        XCTAssertTrue(session.remove(id: middle))
+        XCTAssertEqual(session.strokes.compactMap(\.stepNumber), [1, 2], "the third mark takes the freed number")
+        XCTAssertEqual(session.nextStepNumber, 3)
+
+        session.begin(at: CGPoint(x: 300, y: 0), tool: .number, ink: .green)
+        XCTAssertEqual(session.strokes.compactMap(\.stepNumber), [1, 2, 3], "no duplicate number where the deleted mark was")
+    }
+
+    // Advisory D, global path: ⇧⌘Z after ⌫ restores the deleted mark with the
+    // sequence still gapless — the stale journalled number must not come back
+    // as a duplicate.
+    func testRedoAfterDeletingANumberedMarkKeepsTheSequenceGapless() {
+        var session = DrawingSession()
+        for index in 0..<3 {
+            session.begin(at: CGPoint(x: CGFloat(index) * 60, y: 0), tool: .number, ink: .green)
+        }
+        let middle = session.strokes[1].id
+
+        XCTAssertTrue(session.remove(id: middle))
+        XCTAssertEqual(session.strokes.compactMap(\.stepNumber), [1, 2])
+
+        XCTAssertTrue(session.redo())
+        XCTAssertEqual(session.strokes.count, 3)
+        XCTAssertEqual(session.strokes.compactMap(\.stepNumber), [1, 2, 3], "the restored mark takes the next number, not its stale one")
+        XCTAssertEqual(session.nextStepNumber, 4)
+    }
+
+    // MARK: - T11/S6: transforms are undoable
+
+    // Undo after a move/scale/rotate restores the previous geometry exactly,
+    // and redo re-applies the transform.
+    func testTransformUndoRestoresGeometryAndRedoReappliesIt() {
+        var session = DrawingSession()
+        drawLine(in: &session, tool: .rectangle, points: [CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 10)])
+        let snapshot = session.strokes[0]
+
+        let moved = MarkTransform.translated(snapshot, by: CGPoint(x: 30, y: 0))
+        XCTAssertTrue(session.replace(moved))
+        XCTAssertEqual(session.strokes[0].points, moved.points)
+
+        XCTAssertTrue(session.undo())
+        XCTAssertEqual(session.strokes.count, 1, "undoing a transform keeps the mark")
+        XCTAssertEqual(session.strokes[0].points, snapshot.points, "the previous geometry is restored exactly")
+        XCTAssertEqual(session.strokes[0].rotation, snapshot.rotation)
+
+        XCTAssertTrue(session.redo())
+        XCTAssertEqual(session.strokes[0].points, moved.points, "redo re-applies the transform")
+    }
+
+    // A transform sits on top of the draw history: undoing it first must not
+    // consume the pending draw undo, and redo walks back in reverse order.
+    func testUndoAfterATransformStillCanUndoTheDraw() {
+        var session = DrawingSession()
+        drawLine(in: &session, tool: .rectangle, points: [CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 10)])
+        drawLine(in: &session, tool: .rectangle, points: [CGPoint(x: 20, y: 20), CGPoint(x: 40, y: 40)])
+        let first = session.strokes[0]
+        let transformed = MarkTransform.translated(first, by: CGPoint(x: 5, y: 5))
+
+        XCTAssertTrue(session.replace(transformed))
+
+        XCTAssertTrue(session.undo())
+        XCTAssertEqual(session.strokes[0].points, first.points, "the transform undoes first")
+        XCTAssertEqual(session.strokes.count, 2, "the pending draw undo is not consumed")
+
+        XCTAssertTrue(session.undo())
+        XCTAssertEqual(session.strokes.count, 1, "then the second draw undoes")
+
+        XCTAssertTrue(session.redo())
+        XCTAssertEqual(session.strokes.count, 2)
+
+        XCTAssertTrue(session.redo())
+        XCTAssertEqual(session.strokes[0].points, transformed.points, "the transform is reapplied last")
+    }
+
+    // A no-op replace must not eat an undo step, and an unknown id reports
+    // failure without touching the session.
+    func testReplaceIgnoresNoOpsAndUnknownIds() {
+        var session = DrawingSession()
+        drawLine(in: &session, tool: .rectangle, points: [CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 10)])
+
+        XCTAssertFalse(session.replace(Stroke(
+            tool: .rectangle,
+            ink: .red,
+            points: [CGPoint(x: 99, y: 0), CGPoint(x: 10, y: 10)]
+        )), "no mark has that id")
+        XCTAssertEqual(session.strokes.count, 1)
+
+        XCTAssertTrue(session.replace(session.strokes[0]), "same geometry: no journal entry")
+        XCTAssertTrue(session.undo())
+        XCTAssertEqual(session.strokes.count, 0, "the draw undo is still there, not a transform undo")
+    }
+
+    // T11/S6 defect A: the cursor must never become a mark — a stray drag
+    // with the select tool would leave an invisible mark no eraser can reach.
+    func testSelectToolNeverBecomesAMark() {
+        var session = DrawingSession()
+        session.begin(at: .zero, tool: .select, ink: .red)
+        session.extend(to: CGPoint(x: 30, y: 30))
+        session.commit()
+
+        XCTAssertTrue(session.strokes.isEmpty, "a drag with the cursor tool leaves no mark")
+        XCTAssertNil(session.active)
+    }
+
+    // Erase stays an edit that forks the history: undone marks and transforms
+    // are gone for good.
+    func testEraseStillClearsRedoIncludingTransforms() {
+        var session = DrawingSession()
+        drawLine(in: &session, tool: .rectangle, points: [CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 10)])
+        let transformed = MarkTransform.translated(session.strokes[0], by: CGPoint(x: 3, y: 3))
+        XCTAssertTrue(session.replace(transformed))
+        XCTAssertFalse(session.canRedo, "a fresh transform forks the history")
+
+        XCTAssertTrue(session.undo())
+        XCTAssertTrue(session.canRedo, "the undone transform waits for redo")
+
+        session.erase(at: session.strokes[0].points[0], radius: 1)
+
+        XCTAssertFalse(session.canRedo, "erasing is an edit, so the undone work is gone for good")
+    }
+
+    // T11/S6 defect D: undo after an erase renumbering must take the number
+    // from the live stroke, not the stale journalled snapshot, or the next
+    // number leaves a gap where the erased mark used to be.
+    func testUndoAfterErasingTheFirstNumberKeepsTheSequenceGapless() {
+        var session = DrawingSession()
+        for index in 0..<3 {
+            session.begin(at: CGPoint(x: CGFloat(index) * 60, y: 0), tool: .number, ink: .green)
+        }
+        XCTAssertEqual(session.strokes.compactMap(\.stepNumber), [1, 2, 3])
+
+        session.erase(at: session.strokes[0].points[0], radius: 4)
+        XCTAssertEqual(session.strokes.compactMap(\.stepNumber), [1, 2])
+        XCTAssertEqual(session.nextStepNumber, 3)
+
+        XCTAssertTrue(session.undo())
+        XCTAssertEqual(session.nextStepNumber, 2, "the live stroke's number, not the stale journalled one")
+
+        session.begin(at: CGPoint(x: 300, y: 0), tool: .number, ink: .green)
+        XCTAssertEqual(session.strokes.compactMap(\.stepNumber), [1, 2], "no gap where 2 was lost")
+        XCTAssertEqual(session.nextStepNumber, 3)
+    }
+
+    func testUndoAfterErasingTheMiddleNumberKeepsTheSequenceGapless() {
+        var session = DrawingSession()
+        for index in 0..<3 {
+            session.begin(at: CGPoint(x: CGFloat(index) * 60, y: 0), tool: .number, ink: .green)
+        }
+
+        session.erase(at: session.strokes[1].points[0], radius: 4)
+        XCTAssertEqual(session.strokes.compactMap(\.stepNumber), [1, 2])
+        XCTAssertEqual(session.nextStepNumber, 3)
+
+        XCTAssertTrue(session.undo())
+        XCTAssertEqual(session.nextStepNumber, 2, "the live stroke's number, not the stale journalled one")
+
+        session.begin(at: CGPoint(x: 300, y: 0), tool: .number, ink: .green)
+        XCTAssertEqual(session.strokes.compactMap(\.stepNumber), [1, 2])
+        XCTAssertEqual(session.nextStepNumber, 3)
+    }
+
+    // T11/S6 defect F: sessions that differ only in their undo/redo journals
+    // behave differently on undo/redo, so they must not compare equal.
+    func testSessionsDifferingOnlyInHistoryAreNotEqual() {
+        var base = DrawingSession()
+        drawLine(in: &base, tool: .rectangle, points: [CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 10)])
+
+        var transformed = base
+        let moved = MarkTransform.translated(transformed.strokes[0], by: CGPoint(x: 5, y: 5))
+        XCTAssertTrue(transformed.replace(moved))
+        XCTAssertTrue(transformed.undo())
+
+        var plain = base
+
+        XCTAssertEqual(transformed.strokes, plain.strokes, "the visible state is the same…")
+        XCTAssertNotEqual(transformed, plain, "…but a different history must not compare equal")
+    }
 }

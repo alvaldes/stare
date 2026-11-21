@@ -4,6 +4,7 @@ import Foundation
 /// A drawing instrument. The raw value is stable because it is persisted in
 /// user defaults and referenced by the MCP-facing model later on.
 public enum Tool: String, CaseIterable, Identifiable, Sendable {
+    case select
     case pen
     case highlighter
     case arrow
@@ -21,6 +22,7 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
     /// Single-key shortcut while drawing. Matches the reference app's layout.
     public var shortcut: Character {
         switch self {
+        case .select: "V"
         case .pen: "P"
         case .highlighter: "H"
         case .arrow: "A"
@@ -37,6 +39,7 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
 
     public var displayName: String {
         switch self {
+        case .select: "Cursor"
         case .pen: "Pen"
         case .highlighter: "Highlighter"
         case .arrow: "Arrow"
@@ -53,6 +56,7 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
 
     public var symbolName: String {
         switch self {
+        case .select: "cursorarrow"
         case .pen: "pencil.tip"
         case .highlighter: "highlighter"
         case .arrow: "arrow.up.right"
@@ -72,7 +76,7 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
     public var usesEndpointsOnly: Bool {
         switch self {
         case .line, .arrow, .rectangle, .ellipse, .blur: true
-        case .pen, .highlighter, .text, .number, .laser, .eraser: false
+        case .select, .pen, .highlighter, .text, .number, .laser, .eraser: false
         }
     }
 
@@ -80,14 +84,15 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
     public var isClickTool: Bool {
         switch self {
         case .number, .text: true
-        case .pen, .highlighter, .arrow, .line, .rectangle, .ellipse, .laser, .eraser, .blur: false
+        case .select, .pen, .highlighter, .arrow, .line, .rectangle, .ellipse, .laser, .eraser, .blur: false
         }
     }
 
     /// The palette order: tools of a kind sit together, so the bar reads as
-    /// groups instead of a run of icons. The selection cursor will lead the first
-    /// group once it exists; it must never be added here twice.
+    /// groups instead of a run of icons. The selection cursor leads the bar as
+    /// its own family group, because editing what is already painted comes first.
     public static let toolbarGroups: [[Tool]] = [
+        [.select],
         [.pen, .highlighter],
         [.line, .arrow, .rectangle, .ellipse],
         [.text, .number],
@@ -103,6 +108,32 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
 
     /// The eraser removes existing marks instead of creating one.
     public var isEraser: Bool { self == .eraser }
+
+    /// The edit cursor transforms existing marks instead of creating one.
+    public var isSelection: Bool { self == .select }
+
+    /// Whether the tool can work in the capture editor, which draws over a
+    /// static captured image with no live session: the edit cursor has no
+    /// selection UI there, text has no field editor, and the laser fades with
+    /// session time instead of annotating a still image.
+    public var worksInCaptureEditor: Bool {
+        switch self {
+        case .select, .text, .laser: false
+        default: true
+        }
+    }
+
+    /// The palette groups as the capture editor may offer them: the main bar's
+    /// groups minus the tools that cannot work over a still image.
+    public static var captureEditorGroups: [[Tool]] {
+        toolbarGroups.map { $0.filter(\.worksInCaptureEditor) }.filter { !$0.isEmpty }
+    }
+
+    /// Flattened list of what `captureEditorGroups` offers, for the shortcut
+    /// router.
+    public static var captureEditorTools: [Tool] {
+        captureEditorGroups.flatMap { $0 }
+    }
 }
 
 public enum ToolShortcut {

@@ -173,6 +173,123 @@ final class MarkCompositorTests: XCTestCase {
         XCTAssertEqual(pixel(result!, x: 60, y: 90).r, pixel(baseImage, x: 60, y: 90).r, "below the rectangle")
     }
 
+    // T11/S6: a rotated mark renders rotated about its anchor, and the old
+    // orientation is gone.
+    func testRotatedMarkRendersAtItsRotatedPlace() {
+        // A horizontal line rotated a quarter turn now runs down the middle.
+        let mark = Stroke(
+            tool: .pen,
+            ink: .red,
+            points: [CGPoint(x: 20, y: 20), CGPoint(x: 80, y: 20)]
+        )
+        let rotated = MarkTransform.rotated(mark, by: .pi / 2)
+
+        let result = MarkCompositor.composite(marks: [rotated], over: whiteBase())
+        XCTAssertNotNil(result)
+
+        XCTAssertTrue(isReddish(pixel(result!, x: 50, y: 50)), "the rotated line runs down the middle")
+        XCTAssertTrue(isWhitesh(pixel(result!, x: 20, y: 20)), "the old start point is empty")
+        XCTAssertTrue(isWhitesh(pixel(result!, x: 80, y: 20)), "the old end point is empty")
+    }
+
+    // T11/S6: a rotated blur still shows the pixels underneath: the cropped
+    // image rotates about its centre, never the crop rectangle.
+    func testRotatedBlurShowsThePixelsUnderneathItsRotatedArea() {
+        // Black left half, white right half, boundary at x = 50.
+        let base = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        base.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1))
+        base.fill(CGRect(x: 0, y: 0, width: 50, height: height))
+        base.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+        base.fill(CGRect(x: 50, y: 0, width: 50, height: height))
+        let baseImage = base.makeImage()!
+
+        let mark = Stroke(
+            tool: .blur,
+            ink: .red,
+            points: [CGPoint(x: 35, y: 30), CGPoint(x: 65, y: 70)]
+        )
+        let rotated = MarkTransform.rotated(mark, by: .pi / 2)
+
+        let result = MarkCompositor.composite(marks: [rotated], over: baseImage)
+        XCTAssertNotNil(result)
+
+        // (32, 50) is inside the rotated patch but outside the unrotated one:
+        // it must show the blurred mix, not the plain black base.
+        let insideRotated = pixel(result!, x: 32, y: 50)
+        XCTAssertGreaterThan(insideRotated.r, 40, "the rotated patch still blurs the pixels underneath")
+
+        // Outside the rotated patch the capture is untouched.
+        XCTAssertEqual(pixel(result!, x: 10, y: 50).r, pixel(baseImage, x: 10, y: 50).r,
+                       "far from the mark the base is untouched")
+    }
+
+    // T11/S6: a scaled text mark must render proportionally larger: the
+    // renderers size the font from the stroke's own textSize, not a hardcoded
+    // one, so the ink and the handles agree at every scale.
+    func testScaledTextRendersProportionallyLarger() {
+        // "Hola mundo" measures 106×24 at the 20pt editing font, which is what
+        // the app stores when the mark is created.
+        let mark = Stroke(
+            tool: .text,
+            ink: .red,
+            points: [CGPoint(x: 10, y: 30)],
+            text: "Hola mundo",
+            textSize: CGSize(width: 106, height: 24)
+        )
+
+        let base = inkExtent(of: mark)
+        let scaled = MarkTransform.scaled(mark, from: CGPoint(x: 10, y: 30), by: 3)
+        let grown = inkExtent(of: scaled)
+
+        XCTAssertGreaterThan(base.w, 20, "the text renders at all")
+        XCTAssertEqual(grown.w / base.w, 3, accuracy: 0.75, "a 3× text scale renders about 3× wider ink")
+        XCTAssertEqual(grown.h / base.h, 3, accuracy: 0.75, "a 3× text scale renders about 3× taller ink")
+    }
+
+    /// Painted-pixel bounding box of the stroke's ink, in pixels.
+    private func inkExtent(of stroke: Stroke) -> (w: CGFloat, h: CGFloat) {
+        let width = 400
+        let height = 200
+        let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        context.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        let result = MarkCompositor.composite(marks: [stroke], over: context.makeImage()!)!
+
+        var minX = width
+        var maxX = -1
+        var minY = height
+        var maxY = -1
+        for y in 0..<height {
+            for x in 0..<width {
+                let p = pixel(result, x: x, y: y)
+                if !(p.r > 240 && p.g > 240 && p.b > 240) {
+                    minX = min(minX, x)
+                    maxX = max(maxX, x)
+                    minY = min(minY, y)
+                    maxY = max(maxY, y)
+                }
+            }
+        }
+        XCTAssertGreaterThan(maxX, minX, "some ink must be on the canvas")
+        return (CGFloat(maxX - minX + 1), CGFloat(maxY - minY + 1))
+    }
+
     func testZeroSizedImageIsRejected() {
         let empty = CGContext(
             data: nil,

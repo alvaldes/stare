@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import XCTest
 
@@ -134,8 +135,80 @@ final class ToolAndInkTests: XCTestCase {
     }
 
     func testToolbarGroupsKeepToolsOfAKindTogether() {
-        XCTAssertEqual(Tool.toolbarGroups.first, [.pen, .highlighter])
+        // T11/S6: the selection cursor leads the bar as its own family group.
+        XCTAssertEqual(Tool.toolbarGroups.first, [.select])
         XCTAssertEqual(Tool.toolbarGroups.last, [.eraser])
     }
 
+    // T11/S6 defect B: every tool's symbol must be a real SF Symbol, or the
+    // toolbar renders an empty button — and the cursor is the first one.
+    func testEveryToolSymbolNameExistsInSFSymbols() {
+        for tool in Tool.allCases {
+            XCTAssertNotNil(
+                NSImage(systemSymbolName: tool.symbolName, accessibilityDescription: nil),
+                "\(tool) must have a real SF Symbol, got '\(tool.symbolName)'"
+            )
+        }
+    }
+
+    // T11/S6: the first tool is the edit cursor, and it answers to V.
+    func testSelectLeadsTheToolbarAndDescribesItself() {
+        XCTAssertEqual(Tool.select.shortcut, "V")
+        XCTAssertEqual(Tool.select.displayName, "Cursor")
+        XCTAssertTrue(Tool.select.isSelection)
+        for tool in Tool.allCases where tool != .select {
+            XCTAssertFalse(tool.isSelection)
+        }
+        XCTAssertEqual(ToolShortcut.tool(for: "v"), .select)
+        XCTAssertEqual(ToolShortcut.tool(for: "V"), .select)
+        XCTAssertFalse(Tool.select.usesEndpointsOnly)
+        XCTAssertFalse(Tool.select.isClickTool)
+        XCTAssertFalse(Tool.select.isTransient)
+        XCTAssertFalse(Tool.select.isEraser)
+        XCTAssertFalse(Tool.select.commitsImmediately)
+    }
+
+    // T11/S6 advisory B: the capture editor draws over a static captured image
+    // with no live session, so tools that need one must not be offered there —
+    // the edit cursor has no selection UI, text has no field editor, and the
+    // laser's lifetime is meaningless over a still image. Every tool the
+    // editor does offer keeps its place in the groups.
+    func testCaptureEditorOffersOnlyToolsThatWorkThere() {
+        let offered = Tool.captureEditorTools
+        XCTAssertFalse(offered.contains(.select), "the cursor is dead in the capture editor")
+        XCTAssertFalse(offered.contains(.text), "text has no field editor in the capture editor")
+        XCTAssertFalse(offered.contains(.laser), "the laser fades with the session, not over a still image")
+        for tool in [.pen, .highlighter, .arrow, .line, .rectangle, .ellipse, .number, .eraser, .blur] as [Tool] {
+            XCTAssertTrue(offered.contains(tool), "\(tool) still works over a captured image")
+        }
+        // Same order and grouping as the main bar, minus the dead tools.
+        XCTAssertEqual(Tool.captureEditorGroups, Tool.toolbarGroups.map { $0.filter(\.worksInCaptureEditor) }.filter { !$0.isEmpty })
+        XCTAssertEqual(Set(Tool.captureEditorTools), Set(offered), "the flattened list matches the groups")
+        // The overlay bar is untouched: same tools, cursor first (order within
+        // the groups is by family, not the enum order).
+        XCTAssertEqual(Set(Tool.toolbarGroups.flatMap { $0 }), Set(Tool.allCases))
+        XCTAssertEqual(Tool.toolbarGroups.flatMap { $0 }.first, .select)
+    }
+
+    // Advisory B: in the capture editor the shortcut router must not resolve a
+    // key to a tool the editor does not show — V lands on nothing instead of
+    // silently arming a cursor that can do nothing.
+    func testSelectShortcutDoesNotResolveInTheCaptureEditor() {
+        XCTAssertEqual(ShortcutRouter.resolve("v"), .tool(.select), "the overlay offers the cursor")
+        XCTAssertEqual(ShortcutRouter.resolve("v", allowedTools: Tool.captureEditorTools), .none)
+
+        // Every tool the editor shows stays reachable by its shortcut, and no
+        // offered shortcut resolves to a tool the editor hides.
+        for tool in Tool.captureEditorTools {
+            XCTAssertEqual(
+                ShortcutRouter.resolve(Character(tool.shortcut.lowercased()), allowedTools: Tool.captureEditorTools),
+                .tool(tool)
+            )
+        }
+        XCTAssertEqual(
+            ShortcutRouter.resolve("t", allowedTools: Tool.captureEditorTools),
+            .none,
+            "the text shortcut is dead in the editor too"
+        )
+    }
 }

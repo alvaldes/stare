@@ -18,13 +18,14 @@ public enum PathBuilder {
         guard let first = points.first else { return CGMutablePath() }
 
         switch stroke.tool {
-        case .text:
+        case .select, .text:
             // Text is drawn by the platform layer; the model keeps its box.
+            // The select tool has no geometry at all.
             return CGMutablePath()
         case .eraser:
             return CGMutablePath()
         case .number:
-            return badgePath(centeredAt: first)
+            return badgePath(centeredAt: first, diameter: stroke.badgeDiameter)
         case .line:
             return linePath(from: first, to: points.last ?? first)
         case .arrow:
@@ -45,9 +46,16 @@ public enum PathBuilder {
         }
         let geometry = path(for: stroke)
         var box = geometry.boundingBoxOfPath
-        if box.isNull || box.isEmpty { box = .zero }
+        // Only a null box (no geometry) collapses to zero: a zero-height box is
+        // a real horizontal line and must keep its position, or marks like a
+        // horizontal pen stroke would report bounds at the origin.
+        if box.isNull { box = .zero }
         let padding = stroke.lineWidth / 2 + 1
-        return box.insetBy(dx: -padding, dy: -padding)
+        // A numbered badge is drawn at its own stored size, so the padding that
+        // keeps the selection and hit box over the rendered badge scales with
+        // it — the same way the text box grows with `textSize`.
+        let scaled = stroke.tool == .number ? padding * stroke.badgeScale : padding
+        return box.insetBy(dx: -scaled, dy: -scaled)
     }
 
     // MARK: - Primitives
@@ -106,13 +114,13 @@ public enum PathBuilder {
         return path
     }
 
-    public static func badgePath(centeredAt center: CGPoint) -> CGPath {
-        let radius = badgeDiameter / 2
+    public static func badgePath(centeredAt center: CGPoint, diameter: CGFloat = badgeDiameter) -> CGPath {
+        let radius = diameter / 2
         let rect = CGRect(
             x: center.x - radius,
             y: center.y - radius,
-            width: badgeDiameter,
-            height: badgeDiameter
+            width: diameter,
+            height: diameter
         )
         let path = CGMutablePath()
         path.addEllipse(in: rect)

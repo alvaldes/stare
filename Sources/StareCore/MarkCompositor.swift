@@ -55,18 +55,44 @@ public enum MarkCompositor {
     ) {
         switch stroke.tool {
         case .text:
-            drawText(stroke, in: context)
+            drawWithRotation(stroke, in: context) { context in
+                drawText(stroke, in: context)
+            }
             return
         case .number:
             MarkRenderer.draw(stroke: stroke, in: context)
-            drawStepNumber(stroke, in: context)
+            drawWithRotation(stroke, in: context) { context in
+                drawStepNumber(stroke, in: context)
+            }
             return
         case .blur:
-            drawBlur(stroke, in: context, base: base, scale: scale)
+            drawWithRotation(stroke, in: context) { context in
+                drawBlur(stroke, in: context, base: base, scale: scale)
+            }
             return
         default:
             MarkRenderer.draw(stroke: stroke, in: context)
         }
+    }
+
+    /// Applies the mark's rotation about its anchor to a branch that draws its
+    /// own geometry (text, the step digit, the blur image). `MarkRenderer.draw`
+    /// already rotates everything it draws itself.
+    private static func drawWithRotation(
+        _ stroke: Stroke,
+        in context: CGContext,
+        _ body: (CGContext) -> Void
+    ) {
+        guard stroke.rotation != 0 else {
+            body(context)
+            return
+        }
+        context.saveGState()
+        context.concatenate(
+            Stroke.rotationTransform(around: stroke.anchor, by: stroke.rotation)
+        )
+        body(context)
+        context.restoreGState()
     }
 
     /// T5/S3: a blur mark is the captured content underneath, blurred, so it
@@ -97,8 +123,12 @@ public enum MarkCompositor {
             radius: BlurEffect.defaultRadius * scale
         ) else { return }
 
-        // The context is flipped for overlay space, so an image drawn plainly
-        // would land upside down; unflip it inside the rectangle.
+        // The crop rectangle never rotates: the pixels always come from the
+        // unrotated area of the base frame. The cropped image itself is what
+        // turns about the mark's anchor, so a rotated blur patch still shows
+        // the pixels underneath it. The context is flipped for overlay space,
+        // so an image drawn plainly would land upside down; unflip it inside
+        // the rectangle.
         context.saveGState()
         context.translateBy(x: rect.minX, y: rect.maxY)
         context.scaleBy(x: 1, y: -1)
@@ -108,21 +138,41 @@ public enum MarkCompositor {
 
     private static func drawText(_ stroke: Stroke, in context: CGContext) {
         guard let text = stroke.text, !text.isEmpty, let origin = stroke.points.first else { return }
-        let line = makeLine(text, font: font(ofSize: OverlayStyle.textSize), ink: stroke.ink)
+        let fontSize = textFontSize(for: stroke)
+        let line = makeLine(text, font: font(ofSize: fontSize), ink: stroke.ink)
 
         context.saveGState()
         // The context is flipped for overlay space, so glyphs need unmirroring.
         context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
-        context.textPosition = CGPoint(x: origin.x, y: origin.y + OverlayStyle.textSize)
+        context.textPosition = CGPoint(x: origin.x, y: origin.y + fontSize)
         CTLineDraw(line, context)
         context.restoreGState()
+    }
+
+    /// The stroke's own `textSize` sets the font size: the app stores the box
+    /// the text was measured in, and a scaled mark carries the scaled box, so
+    /// the size that renders the text at that box's width scales with it.
+    /// Unscaled marks measure back out to `OverlayStyle.textSize`, so their
+    /// rendering is unchanged.
+    private static func textFontSize(for stroke: Stroke) -> CGFloat {
+        let base = OverlayStyle.textSize
+        guard let text = stroke.text, !text.isEmpty,
+              let size = stroke.textSize, size.width > 0
+        else { return base }
+        var ascent: CGFloat = 0
+        var descent: CGFloat = 0
+        let reference = makeLine(text, font: font(ofSize: base), ink: stroke.ink)
+        let width = CGFloat(CTLineGetTypographicBounds(reference, &ascent, &descent, nil))
+        guard width > 0.001 else { return base }
+        return base * size.width / width
     }
 
     private static func drawStepNumber(_ stroke: Stroke, in context: CGContext) {
         guard let number = stroke.stepNumber, let centre = stroke.points.first else { return }
         let line = makeLine(
             "\(number)",
-            font: font(ofSize: OverlayStyle.stepNumberSize),
+            // The digit scales with the badge it sits on (advisory A).
+            font: font(ofSize: OverlayStyle.stepNumberSize * stroke.badgeScale),
             ink: digitInk(for: stroke.ink)
         )
 
