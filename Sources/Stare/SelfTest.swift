@@ -701,13 +701,14 @@ enum SelfTest {
         return lines
     }
 
-    // MARK: - Marker styles (T7/S5)
+    // MARK: - Marker styles (T7/S5, T14/S9)
 
-    /// Renders each of the five pointer presets in both system appearances
+    /// Renders each of the six pointer presets in both system appearances
     /// through the same preview view the Settings pane shows (one PNG per
     /// preset per appearance), and checks the preview's own transparent
     /// bitmap against the pulse report's extent measurement so a render is
-    /// proven to have painted real pixels, not an empty tile.
+    /// proven to have painted real pixels, not an empty tile. T14 adds one
+    /// dashed-border render and one rotated click-pulse render to the proofs.
     @MainActor
     private static func markerStylesReport() -> [String] {
         var report: [String] = []
@@ -733,11 +734,39 @@ enum SelfTest {
                 }
             }
         }
+        // Dashed border: the same squircle drawn with dashes paints real
+        // pixels the solid one fills with gaps.
+        var dashed = PointerStyle.standard
+        dashed.borderStyle = .dashed
+        var dashedPainted = false
+        if let image = PointerHighlightPreview.cgImage(for: dashed, ink: .red, scale: 1),
+            let extent = opaqueExtentPixels(image), extent.width > 20, extent.height > 20 {
+            dashedPainted = writePNG(image, to: "/tmp/stare-marker-dashed.png")
+        }
+        // Rotated click animation: the pulse peak of a rotate style, drawn at
+        // the pulse's scale and turned by the overlay's rotation rule.
+        var rotating = PointerStyle.standard
+        rotating.clickAnimation = .rotate
+        let pulse = PointerPulse()
+        let peakScale = pulse.peakScale
+        var rotatedPainted = false
+        if let image = PointerHighlightPreview.cgImage(
+            for: rotating,
+            ink: .red,
+            scale: 1,
+            pulseScale: peakScale,
+            rotation: (peakScale - 1) * 1.2
+        ), let extent = opaqueExtentPixels(image), extent.width > 20, extent.height > 20 {
+            rotatedPainted = writePNG(image, to: "/tmp/stare-marker-rotated.png")
+        }
         let passed = written == total && painted == PointerStylePreset.allCases.count
+            && dashedPainted && rotatedPainted
         report.append(
             "marker styles result=\(passed ? "PASS" : "FAIL") presets=\(PointerStylePreset.allCases.count) "
                 + "previewPainted=\(painted)/\(PointerStylePreset.allCases.count) pngs=\(written)/\(total) "
-                + "path=/tmp/stare-marker-<preset>-<light|dark>.png"
+                + "dashed=\(dashedPainted ? 1 : 0) rotated=\(rotatedPainted ? 1 : 0) "
+                + "path=/tmp/stare-marker-<preset>-<light|dark>.png "
+                + "dashed=/tmp/stare-marker-dashed.png rotated=/tmp/stare-marker-rotated.png"
         )
         return report
     }

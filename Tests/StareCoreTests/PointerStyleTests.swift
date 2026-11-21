@@ -103,6 +103,93 @@ final class PointerStyleTests: XCTestCase {
         }
     }
 
+    // MARK: - New fields (T14/S9)
+
+    func testNewFieldsDefaultToSolidScaleAndFullOpacity() {
+        XCTAssertEqual(PointerStyle.standard.borderStyle, .solid)
+        XCTAssertEqual(PointerStyle.standard.clickAnimation, .scale)
+        XCTAssertEqual(PointerStyle.standard.opacity, 1)
+        let style = PointerStyle(preset: .rhombus, size: 50, opacity: 0.6)
+        XCTAssertEqual(style.borderStyle, .solid)
+        XCTAssertEqual(style.clickAnimation, .scale)
+        XCTAssertEqual(style.opacity, 0.6)
+        XCTAssertEqual(style.preset, .rhombus)
+    }
+
+    func testOpacityClampsIntoItsRangeInitAndMutation() {
+        XCTAssertEqual(PointerStyle(opacity: 0).opacity, PointerStyle.opacityRange.lowerBound)
+        XCTAssertEqual(PointerStyle(opacity: 2).opacity, PointerStyle.opacityRange.upperBound)
+        var style = PointerStyle.standard
+        style.opacity = 0.1
+        XCTAssertEqual(style.opacity, PointerStyle.opacityRange.lowerBound)
+        style.opacity = 5
+        XCTAssertEqual(style.opacity, 1)
+    }
+
+    func testDashedAndRotateRoundTripThroughTheBlob() throws {
+        var style = PointerStyle.standard
+        style.borderStyle = .dashed
+        style.clickAnimation = .rotate
+        style.opacity = 0.6
+        let decoded = try JSONDecoder().decode(
+            PointerStyle.self, from: JSONEncoder().encode(style)
+        )
+        XCTAssertEqual(decoded, style)
+    }
+
+    func testUnknownBorderAndClickValuesFallBackToTheDefaults() throws {
+        let data = Data(
+            (#"{"preset":"ring","size":72,"colorSource":{"ink":true},"bandWidth":0.26,"glowIntensity":1,"fadeWhenIdle":true,"borderStyle":"wavy","clickAnimation":"spin","opacity":0.5}"#).utf8
+        )
+        let style = try JSONDecoder().decode(PointerStyle.self, from: data)
+        XCTAssertEqual(style.preset, .ring)
+        XCTAssertEqual(style.borderStyle, .solid)
+        XCTAssertEqual(style.clickAnimation, .scale)
+        XCTAssertEqual(style.opacity, 0.5)
+    }
+
+    func testBlobWrittenBeforeThisTaskStillDecodesWithTheNewDefaults() throws {
+        let blob = (#"{"preset":"squircle","size":64,"colorSource":{"ink":true},"bandWidth":0.3,"glowIntensity":0.5,"fadeWhenIdle":false}"#)
+        let style = try JSONDecoder().decode(PointerStyle.self, from: Data(blob.utf8))
+        XCTAssertEqual(style.preset, .squircle)
+        XCTAssertEqual(style.size, 64)
+        XCTAssertEqual(style.bandWidth, 0.3)
+        XCTAssertEqual(style.glowIntensity, 0.5)
+        XCTAssertFalse(style.fadeWhenIdle)
+        XCTAssertEqual(style.borderStyle, .solid)
+        XCTAssertEqual(style.clickAnimation, .scale)
+        XCTAssertEqual(style.opacity, 1)
+    }
+
+    // MARK: Rhombus
+
+    func testRhombusIsABandedEdgeShapeLikeTheSquircle() {
+        var style = PointerStyle.standard
+        style.preset = .rhombus
+        let appearance = style.appearance(ink: .red)
+        XCTAssertEqual(appearance.geometry, .rhombus)
+        XCTAssertEqual(appearance.bandWidth, 0.26)
+        XCTAssertEqual(appearance.edgeWidth, 2)
+        XCTAssertEqual(appearance.cornerRadiusFactor, PointerAppearance.squircleCornerFactor)
+    }
+
+    func testRhombusRoundTrips() throws {
+        var style = PointerStyle.standard
+        style.preset = .rhombus
+        let decoded = try JSONDecoder().decode(
+            PointerStyle.self, from: JSONEncoder().encode(style)
+        )
+        XCTAssertEqual(decoded, style)
+        XCTAssertEqual(decoded.preset, .rhombus)
+    }
+
+    func testNewPresetAndBorderTitlesAreEnglishAndDistinct() {
+        XCTAssertTrue(PointerStylePreset.allCases.contains(.rhombus))
+        XCTAssertEqual(PointerStylePreset.rhombus.title, "Rhombus")
+        XCTAssertEqual(PointerBorderStyle.allCases.map(\.title), ["Solid", "Dashed"])
+        XCTAssertEqual(PointerClickAnimation.allCases.map(\.title), ["Scale", "Rotate"])
+    }
+
     // MARK: Appearance projection
 
     func testAppearanceResolvesInkSourceToThePassedInk() {
@@ -157,6 +244,7 @@ final class PointerStyleTests: XCTestCase {
         XCTAssertEqual(appearance.radius, 36)
     }
 
+    /// A style whose band width is half the radius still fills edge to edge.
     func testMarkerTipBandEqualsItsWidth() {
         var style = PointerStyle.standard
         style.preset = .markerTip

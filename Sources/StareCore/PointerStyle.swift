@@ -14,6 +14,10 @@ public enum PointerStylePreset: String, Codable, CaseIterable, Sendable {
     case markerTip
     /// Soft radial falloff with no hard edge.
     case spotlight
+    /// The squircle's rounded square rotated 45°: banded, with a bright edge,
+    /// its rounded vertices pointing past the outer circle along the axes and
+    /// its edges touching the circle along the diagonals.
+    case rhombus
 
     /// English label shown in Settings.
     public var title: String {
@@ -23,6 +27,43 @@ public enum PointerStylePreset: String, Codable, CaseIterable, Sendable {
         case .dot: "Dot"
         case .markerTip: "Marker tip"
         case .spotlight: "Spotlight"
+        case .rhombus: "Rhombus"
+        }
+    }
+}
+
+/// Whether the border of a banded shape is drawn as today's continuous band
+/// or as dashes. Raw values are what the preferences blob persists;
+/// decoding an unknown string falls back to `.solid`.
+public enum PointerBorderStyle: String, Codable, CaseIterable, Sendable {
+    /// Today's filled band with its bright edges.
+    case solid
+    /// The outline stroked as dashes instead of a filled band.
+    case dashed
+
+    /// English label shown in Settings.
+    public var title: String {
+        switch self {
+        case .solid: "Solid"
+        case .dashed: "Dashed"
+        }
+    }
+}
+
+/// What a click does to the highlight. Raw values are what the preferences
+/// blob persists; decoding an unknown string falls back to `.scale`.
+public enum PointerClickAnimation: String, Codable, CaseIterable, Sendable {
+    /// The highlight grows with the click pulse — today's behaviour.
+    case scale
+    /// The same pulse envelope turns the shape about its centre instead of
+    /// growing it.
+    case rotate
+
+    /// English label shown in Settings.
+    public var title: String {
+        switch self {
+        case .scale: "Scale"
+        case .rotate: "Rotate"
         }
     }
 }
@@ -75,10 +116,14 @@ public struct PointerStyle: Codable, Equatable, Sendable {
     public static let bandWidthRange: ClosedRange<Double> = 0.08...0.5
     /// Valid glow strength range; 0 turns the glow off.
     public static let glowRange: ClosedRange<Double> = 0...1
+    /// Valid overall opacity range: fully see-through is not a state worth
+    /// offering, so the floor sits above it.
+    public static let opacityRange: ClosedRange<Double> = 0.25...1
 
     public static let defaultSize: Double = 72
     public static let defaultBandWidth: Double = 0.26
     public static let defaultGlowIntensity: Double = 1
+    public static let defaultOpacity: Double = 1
 
     /// Shape preset; decoding an unknown string falls back to `.ring`.
     public var preset: PointerStylePreset
@@ -105,6 +150,19 @@ public struct PointerStyle: Codable, Equatable, Sendable {
     /// Fade the highlight down when the pointer stops moving.
     public var fadeWhenIdle: Bool
 
+    /// Solid band or dashed outline; only the banded shapes (ring, squircle,
+    /// rhombus) draw a border, so the value is ignored by the others.
+    public var borderStyle: PointerBorderStyle
+
+    /// Overall opacity, always clamped to `opacityRange`: multiplies every
+    /// alpha the highlight draws, so 1 reproduces today's look exactly.
+    public var opacity: Double {
+        didSet { opacity = Self.clamp(opacity, to: Self.opacityRange) }
+    }
+
+    /// What a click does to the highlight.
+    public var clickAnimation: PointerClickAnimation
+
     /// The style a fresh install gets, matching the look the app ships today.
     public static let standard = PointerStyle(
         preset: .squircle,
@@ -122,7 +180,10 @@ public struct PointerStyle: Codable, Equatable, Sendable {
         colorSource: PointerColorSource = .ink,
         bandWidth: Double = defaultBandWidth,
         glowIntensity: Double = defaultGlowIntensity,
-        fadeWhenIdle: Bool = true
+        fadeWhenIdle: Bool = true,
+        borderStyle: PointerBorderStyle = .solid,
+        opacity: Double = defaultOpacity,
+        clickAnimation: PointerClickAnimation = .scale
     ) {
         self.preset = preset
         self.size = size
@@ -130,19 +191,26 @@ public struct PointerStyle: Codable, Equatable, Sendable {
         self.bandWidth = bandWidth
         self.glowIntensity = glowIntensity
         self.fadeWhenIdle = fadeWhenIdle
+        self.borderStyle = borderStyle
+        self.opacity = opacity
+        self.clickAnimation = clickAnimation
         // Property observers do not run during initialisation, so clamp once
         // here for every value produced through this path.
         self.size = Self.clamp(self.size, to: Self.sizeRange)
         self.bandWidth = Self.clamp(self.bandWidth, to: Self.bandWidthRange)
         self.glowIntensity = Self.clamp(self.glowIntensity, to: Self.glowRange)
+        self.opacity = Self.clamp(self.opacity, to: Self.opacityRange)
     }
 
     private enum CodingKeys: String, CodingKey {
         case preset, size, colorSource, bandWidth, glowIntensity, fadeWhenIdle
+        case borderStyle, opacity, clickAnimation
     }
 
-    /// Lenient decoding: unknown preset strings fall back to `.ring`, missing
-    /// keys take the defaults of `standard`, and out-of-range numbers clamp.
+    /// Lenient decoding: unknown preset strings fall back to `.ring`, unknown
+    /// border and click-animation values fall back to `.solid`/`.scale`,
+    /// missing keys take the defaults of `standard`, and out-of-range numbers
+    /// clamp.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let rawPreset = try? container.decode(String.self, forKey: .preset)
@@ -161,6 +229,14 @@ public struct PointerStyle: Codable, Equatable, Sendable {
             to: Self.glowRange
         )
         self.fadeWhenIdle = (try? container.decodeIfPresent(Bool.self, forKey: .fadeWhenIdle)) ?? true
+        let rawBorder = try? container.decode(String.self, forKey: .borderStyle)
+        self.borderStyle = rawBorder.flatMap(PointerBorderStyle.init(rawValue:)) ?? .solid
+        self.opacity = Self.clamp(
+            (try? container.decodeIfPresent(Double.self, forKey: .opacity)) ?? Self.defaultOpacity,
+            to: Self.opacityRange
+        )
+        let rawClick = try? container.decode(String.self, forKey: .clickAnimation)
+        self.clickAnimation = rawClick.flatMap(PointerClickAnimation.init(rawValue:)) ?? .scale
     }
 
     private static func clamp(_ value: Double, to range: ClosedRange<Double>) -> Double {
@@ -195,6 +271,12 @@ public struct PointerAppearance: Equatable, Sendable {
         case markerTip
         /// Soft radial falloff outward from `radius`; no hard edge.
         case spotlight
+        /// The squircle's rounded square rotated 45°: banded, with a bright
+        /// edge, drawn by rotating the shape's own drawing by 45° about the
+        /// centre. Its rounded vertices reach ≈1.16 × radius along the
+        /// axes — past the outer circle the other presets fill — while its
+        /// edges touch the circle along the diagonals.
+        case rhombus
     }
 
     /// Ink the highlight is drawn in.
@@ -202,8 +284,9 @@ public struct PointerAppearance: Equatable, Sendable {
     /// Half the chosen diameter, in points.
     public var radius: Double
     /// Band thickness measured inward from the outer boundary, as a ratio of
-    /// `radius`: the style's band for ring/squircle, 0 for the filled dot and
-    /// the edge-less spotlight, and the full width (2) for the marker tip.
+    /// `radius`: the style's band for ring, squircle and rhombus, 0 for the
+    /// filled dot and the edge-less spotlight, and the full width (2) for the
+    /// marker tip.
     public var bandWidth: Double
     /// Width of the bright edge stroked on the boundaries, in points; 0 when
     /// the shape has no hard edge.
@@ -224,6 +307,9 @@ public struct PointerAppearance: Equatable, Sendable {
     public var bandFillAlpha: Double
     /// Alpha of the bright edge stroke (today's `0.95 * idleAlpha`).
     public var edgeAlpha: Double
+    /// Whether a banded shape draws its border as dashes instead of the
+    /// filled band; the renderer picks the rhythm from `bandWidth`.
+    public var dashed: Bool
     /// Preset-specific geometry.
     public var geometry: Geometry
 
@@ -244,17 +330,19 @@ public struct PointerAppearance: Equatable, Sendable {
         self.radius = style.size / 2
         self.glowExtent = Self.glowExtentMultiplier
         self.glowMargin = Self.glowMarginPoints
-        self.bandFillAlpha = 0.55
-        self.edgeAlpha = 0.95
-        self.cornerRadiusFactor = style.preset == .squircle ? Self.squircleCornerFactor : nil
-        self.edgeWidth = style.preset == .ring || style.preset == .squircle ? Self.edgeWidthPoints : 0
+        // The style's opacity multiplies every alpha the highlight draws —
+        // band, edge, dashes and glow alike — so an opacity of 1 reproduces
+        // today's alphas exactly.
+        self.bandFillAlpha = 0.55 * style.opacity
+        self.edgeAlpha = 0.95 * style.opacity
+        self.dashed = style.borderStyle == .dashed
         switch style.preset {
         case .ring:
             self.bandWidth = style.bandWidth
             self.geometry = .ring
-        case .squircle:
+        case .squircle, .rhombus:
             self.bandWidth = style.bandWidth
-            self.geometry = .squircle
+            self.geometry = style.preset == .squircle ? .squircle : .rhombus
         case .dot:
             self.bandWidth = 0
             self.geometry = .dot
@@ -266,8 +354,12 @@ public struct PointerAppearance: Equatable, Sendable {
             self.bandWidth = 0
             self.geometry = .spotlight
         }
+        self.cornerRadiusFactor = geometry == .squircle || geometry == .rhombus
+            ? Self.squircleCornerFactor : nil
+        self.edgeWidth = geometry == .ring || geometry == .squircle || geometry == .rhombus
+            ? Self.edgeWidthPoints : 0
         if style.glowIntensity > 0 {
-            let intensity = style.glowIntensity
+            let intensity = style.glowIntensity * style.opacity
             self.glowStops = [
                 (location: 0, alpha: 0.26 * intensity),
                 (location: 0.55, alpha: 0.10 * intensity),
@@ -287,6 +379,7 @@ public struct PointerAppearance: Equatable, Sendable {
             && lhs.edgeWidth == rhs.edgeWidth
             && lhs.bandFillAlpha == rhs.bandFillAlpha
             && lhs.edgeAlpha == rhs.edgeAlpha
+            && lhs.dashed == rhs.dashed
             && lhs.cornerRadiusFactor == rhs.cornerRadiusFactor
             && lhs.glowExtent == rhs.glowExtent
             && lhs.glowMargin == rhs.glowMargin

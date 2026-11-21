@@ -905,19 +905,30 @@ class OverlayView: NSView {
     /// from the `PointerStyle` chosen in Settings and the current ink, so the
     /// overlay and the Settings preview draw identical pixels. The idle fade
     /// is folded in here as a context alpha around the renderer call; the
-    /// renderer itself knows nothing about fading.
+    /// renderer itself knows nothing about fading. A style whose click
+    /// animation is rotate turns the shape with the same pulse envelope:
+    /// each unit of pulse scale past 1 turns it
+    /// `clickRotateRadiansPerScale` radians, so the pulse's peak (1.35×)
+    /// turns it ≈0.42 rad ≈ 24° and it returns to rest with the pulse.
     private func drawCursorFrame(in context: CGContext) {
         // Pointer highlight is its own mode; it is never part of drawing.
         guard showsOnlyPointer, let point = pointerLocation else { return }
 
-        let appearance = state.pointerStyle.appearance(ink: state.ink)
+        let style = state.pointerStyle
+        let appearance = style.appearance(ink: state.ink)
+        // The pulse grows and settles even while the pointer stands still, so
+        // the rotation rides the same envelope as the scale animation.
+        let rotation: CGFloat = style.clickAnimation == .rotate
+            ? (pointerPulseScale - 1) * Self.clickRotateRadiansPerScale
+            : 0
         let alpha = idleAlpha
         guard alpha < 1 else {
             PointerHighlightRenderer.draw(
                 in: context,
                 center: point,
                 appearance: appearance,
-                pulseScale: pointerPulseScale
+                pulseScale: pointerPulseScale,
+                rotation: rotation
             )
             return
         }
@@ -927,10 +938,15 @@ class OverlayView: NSView {
             in: context,
             center: point,
             appearance: appearance,
-            pulseScale: pointerPulseScale
+            pulseScale: pointerPulseScale,
+            rotation: rotation
         )
         context.restoreGState()
     }
+
+    /// Radians of click-rotate turn per unit of pulse scale past 1: the peak
+    /// pulse (1.35×) turns the shape ≈0.42 rad ≈ 24°.
+    private static let clickRotateRadiansPerScale: CGFloat = 1.2
 
     /// Fades the highlight down when the pointer has been still, so a shared
     /// screen is not permanently framed.

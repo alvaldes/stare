@@ -11,24 +11,38 @@ enum PointerHighlightPreview {
     /// Side of the square bitmap that fits the whole highlight, including the
     /// glow reach and margin, in points, taken from the appearance's own
     /// extent so it can never clip the drawing.
-    static func side(for style: StareCore.PointerStyle, ink: Ink) -> CGFloat {
-        let extent = PointerHighlightRenderer.extent(for: style.appearance(ink: ink), pulseScale: 1)
+    static func side(for style: StareCore.PointerStyle, ink: Ink, pulseScale: CGFloat = 1) -> CGFloat {
+        let extent = PointerHighlightRenderer.extent(for: style.appearance(ink: ink), pulseScale: pulseScale)
         return max(extent.width, extent.height).rounded(.up)
     }
 
     /// Transparent image of the highlight centred in its bitmap, sized in
-    /// points; nil when the bitmap context cannot be created.
-    static func image(for style: StareCore.PointerStyle, ink: Ink, scale: CGFloat) -> NSImage? {
-        cgImage(for: style, ink: ink, scale: scale).map { cgImage in
-            let side = side(for: style, ink: ink)
+    /// points; nil when the bitmap context cannot be created. `pulseScale` and
+    /// `rotation` render a click-pulse instant (the selftest's rotated and
+    /// peak renders); the Settings preview always draws the rest state.
+    static func image(
+        for style: StareCore.PointerStyle,
+        ink: Ink,
+        scale: CGFloat,
+        pulseScale: CGFloat = 1,
+        rotation: CGFloat = 0
+    ) -> NSImage? {
+        cgImage(for: style, ink: ink, scale: scale, pulseScale: pulseScale, rotation: rotation).map { cgImage in
+            let side = side(for: style, ink: ink, pulseScale: pulseScale)
             return NSImage(cgImage: cgImage, size: NSSize(width: side, height: side))
         }
     }
 
     /// The same render as an opaque-alpha-preserving bitmap at `scale` pixels
     /// per point, for pixel checks in the selftest.
-    static func cgImage(for style: StareCore.PointerStyle, ink: Ink, scale: CGFloat) -> CGImage? {
-        let side = side(for: style, ink: ink)
+    static func cgImage(
+        for style: StareCore.PointerStyle,
+        ink: Ink,
+        scale: CGFloat,
+        pulseScale: CGFloat = 1,
+        rotation: CGFloat = 0
+    ) -> CGImage? {
+        let side = side(for: style, ink: ink, pulseScale: pulseScale)
         let pixels = max(1, Int(side * scale))
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(
@@ -52,7 +66,8 @@ enum PointerHighlightPreview {
             in: context,
             center: CGPoint(x: side / 2, y: side / 2),
             appearance: style.appearance(ink: ink),
-            pulseScale: 1
+            pulseScale: pulseScale,
+            rotation: rotation
         )
         return context.makeImage()
     }

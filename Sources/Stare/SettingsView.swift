@@ -656,7 +656,7 @@ private struct MarkerPane: View {
 
             SettingsCard(title: "Highlight", symbol: "scope") {
                 SettingRow(
-                    title: "Style",
+                    title: "Shape",
                     content: Picker("", selection: $model.pointer.preset) {
                         ForEach(PointerStylePreset.allCases, id: \.self) { preset in
                             Text(preset.title).tag(preset)
@@ -688,6 +688,42 @@ private struct MarkerPane: View {
                             .foregroundStyle(.secondary)
                             .frame(width: 44, alignment: .trailing)
                     }
+                )
+                SettingRow(
+                    title: "Border style",
+                    detail: borderDetail,
+                    content: Picker("", selection: $model.pointer.borderStyle) {
+                        ForEach(PointerBorderStyle.allCases, id: \.self) { style in
+                            Text(style.title).tag(style)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 180)
+                    .disabled(!borderApplies)
+                )
+                SettingRow(
+                    title: "Opacity",
+                    detail: "How translucent the whole highlight is, glow included.",
+                    content: HStack(spacing: 8) {
+                        Slider(value: $model.pointer.opacity, in: PointerStyle.opacityRange)
+                            .frame(width: 180)
+                        Text("\(Int((model.pointer.opacity * 100).rounded())) %")
+                            .font(.callout.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 44, alignment: .trailing)
+                    }
+                )
+                SettingRow(
+                    title: "Click animation",
+                    detail: "What a click does to the highlight: it grows, or it turns.",
+                    content: Picker("", selection: $model.pointer.clickAnimation) {
+                        ForEach(PointerClickAnimation.allCases, id: \.self) { animation in
+                            Text(animation.title).tag(animation)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(width: 180)
                 )
                 SettingRow(
                     title: "Glow",
@@ -751,12 +787,29 @@ private struct MarkerPane: View {
 
     /// The band is part of the hollow shapes only: the Dot is filled and the
     /// Spotlight has no hard edge, so their appearance ignores the thickness
-    /// and the control says so instead of silently doing nothing.
+    /// and the control says so instead of silently doing nothing. The rhombus
+    /// is a band like the ring and the squircle.
     private var bandApplies: Bool {
         switch model.pointer.preset {
         case .dot, .spotlight: false
-        default: true
+        case .ring, .squircle, .rhombus, .markerTip: true
         }
+    }
+
+    /// A border is drawn only by the banded ring shapes; for the filled dot,
+    /// the chisel tip and the edge-less spotlight the picker is disabled and
+    /// says so instead of pretending to do something.
+    private var borderApplies: Bool {
+        switch model.pointer.preset {
+        case .ring, .squircle, .rhombus: true
+        case .dot, .markerTip, .spotlight: false
+        }
+    }
+
+    private var borderDetail: String? {
+        borderApplies
+            ? "Solid draws the band filled; dashed sketches it as dashes."
+            : "The \(model.pointer.preset.title) style has no border; border style is ignored."
     }
 
     private var bandDetail: String {
