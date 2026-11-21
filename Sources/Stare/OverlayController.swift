@@ -5,7 +5,7 @@ import StareCore
 /// Owns the drawing overlay: one panel per display, the editor state shared
 /// with the toolbar, and the activate/deactivate lifecycle.
 final class OverlayController {
-    let state = EditorState()
+    let state: EditorState
     private(set) var isActive = false
     /// Pinned drawing: the marks stay on screen and every click goes to the app
     /// underneath, so the user can keep working while the drawing stays visible.
@@ -49,10 +49,12 @@ final class OverlayController {
 
     init(
         captureService: ScreenCapturing = CaptureService(),
-        liveFrames: LiveFrameSource = LiveFrameSource()
+        liveFrames: LiveFrameSource = LiveFrameSource(),
+        preferences: PreferencesModel? = nil
     ) {
         self.captureService = captureService
         self.liveFrames = liveFrames
+        self.state = EditorState(preferences: preferences)
         wireEditor()
         // Interest is asked from the canvases, so it is whatever the sessions
         // actually hold: only capture while the overlay is active and at least
@@ -603,7 +605,7 @@ final class OverlayController {
         // "active" limits drawing to the display the pointer is on when the
         // session starts; "all" is the documented default.
         let screens: [NSScreen]
-        if state.overlayScope == "active", let active = screenUnderPointer() {
+        if state.overlayScopeValue == .active, let active = screenUnderPointer() {
             screens = [active]
         } else {
             screens = NSScreen.screens
@@ -787,7 +789,7 @@ final class OverlayController {
                 onDone: { [weak self] in self?.deactivate() }
             ))
         self.toolbar = toolbar
-        toolbar.positionNearPointerDisplay(placement: state.palettePlacement)
+        toolbar.positionNearPointerDisplay(placement: state.palettePlacementValue)
         toolbar.orderFrontRegardless()
     }
 

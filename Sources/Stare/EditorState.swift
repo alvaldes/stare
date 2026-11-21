@@ -4,83 +4,178 @@ import StareCore
 
 /// Editor state shared by the overlay views and the floating toolbar: the
 /// current tool, the current ink and whether the armed frame is drawn.
+///
+/// Persistence lives in the injected `PreferencesModel` (T6 slice 1): every
+/// general and pointer value below is a mirror of a field of the model's one
+/// blob, written through it on change — `EditorState` never touches
+/// `UserDefaults` itself. The published property names and types are kept
+/// exactly as the existing consumers (`OverlayView`, `OverlayController`,
+/// `ToolbarPanel`, `CaptureEditor`, `SelfTest`, and the current
+/// `SettingsView`) use them; consumers that used to compare strings compare
+/// the typed accessors (`overlayScopeValue`, `palettePlacementValue`,
+/// `pointerPreset`) instead. `tool` and `ink` stay in-memory until T8.
 final class EditorState: ObservableObject {
-    private static let frameKey = "showArmedFrame"
-    private static let laserLifetimeKey = "laserLifetime"
-    private static let pointerSizeKey = "pointerSize.v3"
-    private static let overlayScopeKey = "overlayScope"
-    private static let palettePlacementKey = "palettePlacement"
-    private static let pointerShapeKey = "pointerShape"
-    private static let pointerGlowKey = "pointerGlow"
-    private static let pointerFadeKey = "pointerFadeWhenIdle"
+    /// The single preferences owner. Nil in surfaces that never see the
+    /// app's instance — the capture editor (created per capture, detached
+    /// from the app's own state) and the selftest harness (which must not
+    /// read or write the user's real preferences). They run on the shipped
+    /// defaults in memory only.
+    private let preferences: PreferencesModel?
+    private var preferenceCancellables: Set<AnyCancellable> = []
+    /// True while the mirrors are being refreshed from the preferences
+    /// model, so a refresh does not bounce back into the model and persist.
+    private var syncingFromModel = false
 
     @Published var tool: Tool = .pen {
         didSet { Diag.log("tool=\(tool.rawValue)") }
     }
     @Published var ink: Ink = .red
     @Published var showArmedFrame: Bool {
-        didSet { UserDefaults.standard.set(showArmedFrame, forKey: Self.frameKey) }
+        didSet { writeIfNotSyncing { $0.showArmedFrame = showArmedFrame } }
     }
     /// Presentation mode: the layer is visible but passes clicks through, so the
     /// pointer highlight works while the user keeps working in another app.
     @Published var pointerActive: Bool = false
-    /// "all" draws on every display, "active" only on the one under the pointer.
+    /// Mirror of the overlay scope; "all" draws on every display, "active"
+    /// only on the one under the pointer. Compare it through
+    /// `overlayScopeValue` instead of the string.
     @Published var overlayScope: String {
-        didSet { UserDefaults.standard.set(overlayScope, forKey: Self.overlayScopeKey) }
+        didSet { writeIfNotSyncing { $0.scope = OverlayScope(rawValue: overlayScope) ?? .all } }
     }
-    /// Where the palette opens: "cursor", "frontWindow" or "fixed".
+    /// Mirror of where the palette opens. Compare it through
+    /// `palettePlacementValue` instead of the string.
     @Published var palettePlacement: String {
-        didSet { UserDefaults.standard.set(palettePlacement, forKey: Self.palettePlacementKey) }
+        didSet {
+            writeIfNotSyncing {
+                $0.palettePlacement = PalettePlacement(rawValue: palettePlacement) ?? .cursor
+            }
+        }
     }
-    /// Diameter of the pointer highlight ring, in points.
+    /// Mirror of the pointer highlight diameter, in points.
     @Published var pointerSize: CGFloat {
-        didSet { UserDefaults.standard.set(Double(pointerSize), forKey: Self.pointerSizeKey) }
+        didSet { writeIfNotSyncing { $0.pointer.size = Double(pointerSize) } }
     }
-    /// `circle` or `squircle`, matching the shapes the reference app offers.
+    /// Mirror of the pointer shape as the legacy "circle"/"squircle" strings;
+    /// the slice-2 Settings pane binds the full `PointerStyle` instead.
+    /// Compare it through `pointerPreset` instead of the string.
     @Published var pointerShape: String {
-        didSet { UserDefaults.standard.set(pointerShape, forKey: Self.pointerShapeKey) }
+        didSet { writeIfNotSyncing { $0.pointer.preset = pointerShape == "squircle" ? .squircle : .ring } }
     }
+    /// Mirror of whether the glow is on: any positive glow intensity reads
+    /// as on, and writing maps on/off to today's full/off intensities.
     @Published var pointerGlow: Bool {
-        didSet { UserDefaults.standard.set(pointerGlow, forKey: Self.pointerGlowKey) }
+        didSet { writeIfNotSyncing { $0.pointer.glowIntensity = pointerGlow ? 1 : 0 } }
     }
     /// Fade the highlight down when the pointer stops moving.
     @Published var pointerFadeWhenIdle: Bool {
-        didSet { UserDefaults.standard.set(pointerFadeWhenIdle, forKey: Self.pointerFadeKey) }
+        didSet { writeIfNotSyncing { $0.pointer.fadeWhenIdle = pointerFadeWhenIdle } }
     }
-    /// Seconds a laser mark stays on screen before fading out.
+    /// Mirror of the laser lifetime in seconds; only today's picker values
+    /// are persisted, anything else falls back to the default on write.
     @Published var laserLifetime: TimeInterval {
-        didSet { UserDefaults.standard.set(laserLifetime, forKey: Self.laserLifetimeKey) }
+        didSet {
+            writeIfNotSyncing {
+                $0.laserLifetime = LaserLifetime(rawValue: laserLifetime) ?? .twoPointFive
+            }
+        }
     }
     /// Whiteboard pages indicator for the toolbar: nil hides the page controls.
     @Published var whiteboardPage: (current: Int, total: Int)? = nil
 
-    init() {
-        let defaults = UserDefaults.standard
-        if defaults.object(forKey: Self.frameKey) == nil {
-            defaults.set(true, forKey: Self.frameKey)
+    /// Typed value behind the `overlayScope` string mirror; consumers that
+    /// used to compare strings compare this instead.
+    var overlayScopeValue: OverlayScope {
+        OverlayScope(rawValue: overlayScope) ?? .all
+    }
+
+    /// Typed value behind the `palettePlacement` string mirror; consumers
+    /// that used to compare strings compare this instead.
+    var palettePlacementValue: PalettePlacement {
+        PalettePlacement(rawValue: palettePlacement) ?? .cursor
+    }
+
+    /// Typed value behind the `pointerShape` string mirror, mapped the way
+    /// today's renderer maps it — anything that is not "squircle" is a ring.
+    var pointerPreset: PointerStylePreset {
+        pointerShape == "squircle" ? .squircle : .ring
+    }
+
+    /// Creates the state. With `preferences`, every value seeds from the one
+    /// blob and every change persists through it; without it (capture
+    /// editor, selftest) the state runs on the shipped defaults in memory.
+    init(preferences: PreferencesModel? = nil) {
+        self.preferences = preferences
+        if let preferences {
+            // The model is main-actor isolated and this state is only ever
+            // created on the main thread, so the assumed isolation holds.
+            let style = MainActor.assumeIsolated { preferences.pointer }
+            let frame = MainActor.assumeIsolated { preferences.showArmedFrame }
+            let scope = MainActor.assumeIsolated { preferences.scope }
+            let placement = MainActor.assumeIsolated { preferences.palettePlacement }
+            let lifetime = MainActor.assumeIsolated { preferences.laserLifetime }
+            pointerSize = CGFloat(style.size)
+            pointerShape = style.preset == .squircle ? "squircle" : "circle"
+            pointerGlow = style.glowIntensity > 0
+            pointerFadeWhenIdle = style.fadeWhenIdle
+            showArmedFrame = frame
+            overlayScope = scope.rawValue
+            palettePlacement = placement.rawValue
+            laserLifetime = lifetime.rawValue
+        } else {
+            pointerSize = CGFloat(PointerStyle.standard.size)
+            pointerShape = "squircle"
+            pointerGlow = true
+            pointerFadeWhenIdle = true
+            showArmedFrame = true
+            overlayScope = OverlayScope.all.rawValue
+            palettePlacement = PalettePlacement.cursor.rawValue
+            laserLifetime = LaserLifetime.twoPointFive.rawValue
         }
-        showArmedFrame = defaults.bool(forKey: Self.frameKey)
-        if defaults.object(forKey: Self.laserLifetimeKey) == nil {
-            defaults.set(2.5, forKey: Self.laserLifetimeKey)
+        if let preferences {
+            MainActor.assumeIsolated { subscribeToModel(preferences) }
         }
-        if defaults.object(forKey: Self.pointerSizeKey) == nil {
-            defaults.set(72.0, forKey: Self.pointerSizeKey)
-        }
-        for key in [Self.pointerShapeKey, Self.pointerGlowKey, Self.pointerFadeKey] where defaults.object(forKey: key) == nil {
-            defaults.set(key == Self.pointerShapeKey ? "squircle" : true, forKey: key)
-        }
-        if defaults.object(forKey: Self.overlayScopeKey) == nil {
-            defaults.set("all", forKey: Self.overlayScopeKey)
-        }
-        if defaults.object(forKey: Self.palettePlacementKey) == nil {
-            defaults.set("cursor", forKey: Self.palettePlacementKey)
-        }
-        laserLifetime = defaults.double(forKey: Self.laserLifetimeKey)
-        pointerSize = CGFloat(defaults.double(forKey: Self.pointerSizeKey))
-        pointerShape = defaults.string(forKey: Self.pointerShapeKey) ?? "squircle"
-        pointerGlow = defaults.bool(forKey: Self.pointerGlowKey)
-        pointerFadeWhenIdle = defaults.bool(forKey: Self.pointerFadeKey)
-        overlayScope = defaults.string(forKey: Self.overlayScopeKey) ?? "all"
-        palettePlacement = defaults.string(forKey: Self.palettePlacementKey) ?? "cursor"
+    }
+
+    /// Keeps the mirrors in step with the one blob, so a change made
+    /// directly on the model (the slice-2 Settings panes) reaches every view
+    /// that observes this state.
+    @MainActor
+    private func subscribeToModel(_ model: PreferencesModel) {
+        model.$pointer.dropFirst().sink { [weak self] style in
+            self?.syncFromModel {
+                $0.pointerSize = CGFloat(style.size)
+                $0.pointerShape = style.preset == .squircle ? "squircle" : "circle"
+                $0.pointerGlow = style.glowIntensity > 0
+                $0.pointerFadeWhenIdle = style.fadeWhenIdle
+            }
+        }.store(in: &preferenceCancellables)
+        model.$showArmedFrame.dropFirst().sink { [weak self] value in
+            self?.syncFromModel { $0.showArmedFrame = value }
+        }.store(in: &preferenceCancellables)
+        model.$scope.dropFirst().sink { [weak self] value in
+            self?.syncFromModel { $0.overlayScope = value.rawValue }
+        }.store(in: &preferenceCancellables)
+        model.$palettePlacement.dropFirst().sink { [weak self] value in
+            self?.syncFromModel { $0.palettePlacement = value.rawValue }
+        }.store(in: &preferenceCancellables)
+        model.$laserLifetime.dropFirst().sink { [weak self] value in
+            self?.syncFromModel { $0.laserLifetime = value.rawValue }
+        }.store(in: &preferenceCancellables)
+    }
+
+    /// Writes a value into the preferences model unless the write came from
+    /// a model refresh, which must not persist back.
+    private func writeIfNotSyncing(_ write: @MainActor (PreferencesModel) -> Void) {
+        guard !syncingFromModel, let preferences else { return }
+        // EditorState is only ever created and used on the main thread (the
+        // overlay, the toolbar and the editors are main-thread objects), so
+        // the assumed isolation holds.
+        MainActor.assumeIsolated { write(preferences) }
+    }
+
+    private func syncFromModel(_ update: (EditorState) -> Void) {
+        syncingFromModel = true
+        update(self)
+        syncingFromModel = false
     }
 }

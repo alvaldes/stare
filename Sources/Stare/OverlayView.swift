@@ -910,7 +910,7 @@ class OverlayView: NSView {
         let radius = state.pointerSize / 2 * pointerPulseScale
         let band = radius * Self.pointerBandRatio
         let alpha = idleAlpha
-        let squircle = state.pointerShape == "squircle"
+        let squircle = state.pointerPreset == .squircle
 
         if state.pointerGlow {
             let glowColours = [

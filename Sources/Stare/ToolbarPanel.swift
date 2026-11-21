@@ -1,4 +1,5 @@
 import AppKit
+import StareCore
 import SwiftUI
 
 /// Palette content view that turns a drag on any non-control area into a window
@@ -92,7 +93,7 @@ final class ToolbarPanel: NSPanel {
     /// Places the palette on the display that has the pointer, at the relative
     /// spot the user last chose. Moving it between displays keeps the offset,
     /// so it lands near the same place on whichever screen you are working.
-    func positionNearPointerDisplay(placement: String) {
+    func positionNearPointerDisplay(placement: PalettePlacement) {
         guard let target = targetScreen(for: placement) else { return }
 
         let anchor = savedAnchor() ?? CGPoint(x: 0.5, y: 0.08)
@@ -114,13 +115,13 @@ final class ToolbarPanel: NSPanel {
     }
 
     /// Resolves the display the palette should open on.
-    private func targetScreen(for placement: String) -> NSScreen? {
+    private func targetScreen(for placement: PalettePlacement) -> NSScreen? {
         switch placement {
-        case "frontWindow":
+        case .frontWindow:
             return frontWindowScreen() ?? screenUnderPointer()
-        case "fixed":
+        case .fixed:
             return savedScreen() ?? screenUnderPointer()
-        default:
+        case .cursor:
             return screenUnderPointer()
         }
     }

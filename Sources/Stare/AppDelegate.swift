@@ -3,12 +3,18 @@ import StareCore
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let captureService = CaptureService()
-    private lazy var overlay = OverlayController(captureService: captureService)
+    /// The single persisted owner of the app-wide preferences blob (T6
+    /// slice 1): every control reads and writes through this instance, and
+    /// nothing else loads the blob from the store. The model is main-actor
+    /// isolated and the delegate is only ever created on the main thread,
+    /// hence the assumed isolation here.
+    private let preferences = MainActor.assumeIsolated { PreferencesModel() }
+    private lazy var overlay = OverlayController(
+        captureService: captureService,
+        preferences: preferences
+    )
     private var statusBar: StatusBarController?
     private lazy var settings = SettingsWindowController(state: overlay.state)
-    /// One persisted owner of the app-wide preferences blob, read for the
-    /// first-run check and written when the guide is dismissed.
-    private let preferenceStore = UserDefaultsPreferenceStore()
     /// One permission model for the whole app; the onboarding guide drives it.
     @MainActor private lazy var screenRecording = ScreenRecordingPermission(
         client: SystemScreenRecordingClient(captureService: captureService)
@@ -95,7 +101,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // user must not be asked twice. Every later launch keeps exactly
         // today's behaviour: request the permission at launch if it is
         // missing, so it never surfaces as a system prompt on the S key.
-        let preferences = AppPreferences(store: preferenceStore)
         if !preferences.hasCompletedOnboarding {
             Diag.log("first launch, showing setup guide")
             onboarding.show()
@@ -114,14 +119,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Marks the guide as seen, once. Idempotent, so reopening it from the
-    /// menu never flips the flag (S3); loading through `AppPreferences` also
-    /// carries the legacy pointer migration into the blob on the first save.
+    /// menu never flips the flag (S3); writing through the preferences model
+    /// also carries the legacy per-key migration into the blob on the first
+    /// save.
     @MainActor
     private func markOnboardingComplete() {
-        var preferences = AppPreferences(store: preferenceStore)
         guard !preferences.hasCompletedOnboarding else { return }
         preferences.hasCompletedOnboarding = true
-        preferences.save(to: preferenceStore)
         Diag.log("onboarding marked complete")
     }
 }
