@@ -70,6 +70,31 @@ final class EditorState: ObservableObject {
     @Published var pointerFadeWhenIdle: Bool {
         didSet { writeIfNotSyncing { $0.pointer.fadeWhenIdle = pointerFadeWhenIdle } }
     }
+    /// Mirror of the band thickness as a ratio of the radius.
+    @Published var pointerBandWidth: Double {
+        didSet { writeIfNotSyncing { $0.pointer.bandWidth = pointerBandWidth } }
+    }
+    /// Mirror of the glow strength, 0...1; 0 turns the glow off.
+    @Published var pointerGlowStrength: Double {
+        didSet { writeIfNotSyncing { $0.pointer.glowIntensity = pointerGlowStrength } }
+    }
+    /// Mirror of where the highlight's colour comes from: true follows the
+    /// active ink, false uses `pointerFixedInk`.
+    @Published var pointerColorFollowsInk: Bool {
+        didSet {
+            writeIfNotSyncing {
+                $0.pointer.colorSource = pointerColorFollowsInk ? .ink : .fixed(pointerFixedInk)
+            }
+        }
+    }
+    /// Mirror of the fixed ink, used whenever the colour does not follow the
+    /// active ink.
+    @Published var pointerFixedInk: Ink {
+        didSet {
+            guard !pointerColorFollowsInk else { return }
+            writeIfNotSyncing { $0.pointer.colorSource = .fixed(pointerFixedInk) }
+        }
+    }
     /// Mirror of the laser lifetime in seconds; only today's picker values
     /// are persisted, anything else falls back to the default on write.
     @Published var laserLifetime: TimeInterval {
@@ -100,6 +125,26 @@ final class EditorState: ObservableObject {
         pointerShape == "squircle" ? .squircle : .ring
     }
 
+    /// The style the pointer highlight draws from (T7/S5): with a
+    /// preferences model it is the one blob's `PointerStyle`, which the
+    /// Settings pane writes directly; detached state (selftest harness,
+    /// capture editor) projects it from the mirrors on the shipped defaults.
+    /// `OverlayView` reads this for both the renderer and the invalidation
+    /// rect, so the highlight and its dirty rect answer to the same style.
+    var pointerStyle: PointerStyle {
+        guard let preferences else {
+            return PointerStyle(
+                preset: pointerPreset,
+                size: Double(pointerSize),
+                colorSource: pointerColorFollowsInk ? .ink : .fixed(pointerFixedInk),
+                bandWidth: pointerBandWidth,
+                glowIntensity: pointerGlowStrength,
+                fadeWhenIdle: pointerFadeWhenIdle
+            )
+        }
+        return MainActor.assumeIsolated { preferences.pointer }
+    }
+
     /// Creates the state. With `preferences`, every value seeds from the one
     /// blob and every change persists through it; without it (capture
     /// editor, selftest) the state runs on the shipped defaults in memory.
@@ -117,6 +162,15 @@ final class EditorState: ObservableObject {
             pointerShape = style.preset == .squircle ? "squircle" : "circle"
             pointerGlow = style.glowIntensity > 0
             pointerFadeWhenIdle = style.fadeWhenIdle
+            pointerBandWidth = style.bandWidth
+            pointerGlowStrength = style.glowIntensity
+            if case .fixed(let fixedInk) = style.colorSource {
+                pointerFixedInk = fixedInk
+                pointerColorFollowsInk = false
+            } else {
+                pointerFixedInk = .red
+                pointerColorFollowsInk = true
+            }
             showArmedFrame = frame
             overlayScope = scope.rawValue
             palettePlacement = placement.rawValue
@@ -126,6 +180,10 @@ final class EditorState: ObservableObject {
             pointerShape = "squircle"
             pointerGlow = true
             pointerFadeWhenIdle = true
+            pointerBandWidth = PointerStyle.defaultBandWidth
+            pointerGlowStrength = PointerStyle.defaultGlowIntensity
+            pointerFixedInk = .red
+            pointerColorFollowsInk = true
             showArmedFrame = true
             overlayScope = OverlayScope.all.rawValue
             palettePlacement = PalettePlacement.cursor.rawValue
@@ -147,6 +205,14 @@ final class EditorState: ObservableObject {
                 $0.pointerShape = style.preset == .squircle ? "squircle" : "circle"
                 $0.pointerGlow = style.glowIntensity > 0
                 $0.pointerFadeWhenIdle = style.fadeWhenIdle
+                $0.pointerBandWidth = style.bandWidth
+                $0.pointerGlowStrength = style.glowIntensity
+                if case .fixed(let fixedInk) = style.colorSource {
+                    $0.pointerFixedInk = fixedInk
+                    $0.pointerColorFollowsInk = false
+                } else {
+                    $0.pointerColorFollowsInk = true
+                }
             }
         }.store(in: &preferenceCancellables)
         model.$showArmedFrame.dropFirst().sink { [weak self] value in

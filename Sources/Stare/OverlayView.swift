@@ -68,10 +68,6 @@ class OverlayView: NSView {
     }
 
     static let textFont = NSFont.systemFont(ofSize: 20, weight: .regular)
-    /// The pointer highlight is a thick translucent band with bright edges and a
-    /// soft glow, sized from preferences.
-    static let pointerGlowMultiplier: CGFloat = 1.9
-    static let pointerBandRatio: CGFloat = 0.26
     private static let eraserRadius: CGFloat = 8
 
     private var textField: NSTextField?
@@ -773,9 +769,14 @@ class OverlayView: NSView {
         setNeedsDisplay(rect)
     }
 
+    /// The invalidation rect comes from the appearance itself
+    /// (`PointerHighlightRenderer.extent`), never from local constants, so it
+    /// always covers whatever the renderer paints for the chosen style.
     private func pointerRect(around point: CGPoint, scale: CGFloat = 1) -> CGRect {
-        let radius = state.pointerSize / 2 * scale * Self.pointerGlowMultiplier + 12
-        return CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2)
+        let appearance = state.pointerStyle.appearance(ink: state.ink)
+        return PointerHighlightRenderer
+            .extent(for: appearance, pulseScale: scale)
+            .offsetBy(dx: point.x, dy: point.y)
     }
 
     /// Small rect covering the last input segment, so a drag never rebuilds the
@@ -898,61 +899,35 @@ class OverlayView: NSView {
     }
 
     /// A thick translucent band with a bright edge on both sides and a soft
-    /// glow, the way the reference app reads on video. The pointer stays visible
-    /// in the middle: nothing is hidden, only framed.
+    /// glow, drawn by the one production renderer (`PointerHighlightRenderer`)
+    /// from the `PointerStyle` chosen in Settings and the current ink, so the
+    /// overlay and the Settings preview draw identical pixels. The idle fade
+    /// is folded in here as a context alpha around the renderer call; the
+    /// renderer itself knows nothing about fading.
     private func drawCursorFrame(in context: CGContext) {
         // Pointer highlight is its own mode; it is never part of drawing.
         guard showsOnlyPointer, let point = pointerLocation else { return }
 
-        // The pulse scales the whole highlight — ring, glow, band and shape
-        // — from one radius, so pointerSize, both shapes and the glow keep
-        // their proportions and a resting highlight (scale 1) is unchanged.
-        let radius = state.pointerSize / 2 * pointerPulseScale
-        let band = radius * Self.pointerBandRatio
+        let appearance = state.pointerStyle.appearance(ink: state.ink)
         let alpha = idleAlpha
-        let squircle = state.pointerPreset == .squircle
-
-        if state.pointerGlow {
-            let glowColours = [
-                state.ink.cgColor(alpha: 0.26 * alpha),
-                state.ink.cgColor(alpha: 0.10 * alpha),
-                state.ink.cgColor(alpha: 0),
-            ] as CFArray
-            if let gradient = CGGradient(
-                colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                colors: glowColours,
-                locations: [0, 0.55, 1]
-            ) {
-                context.drawRadialGradient(
-                    gradient,
-                    startCenter: point,
-                    startRadius: radius - band,
-                    endCenter: point,
-                    endRadius: radius * Self.pointerGlowMultiplier,
-                    options: []
-                )
-            }
+        guard alpha < 1 else {
+            PointerHighlightRenderer.draw(
+                in: context,
+                center: point,
+                appearance: appearance,
+                pulseScale: pointerPulseScale
+            )
+            return
         }
-
-        // Ring by construction: fill the outer shape with the band colour, then
-        // punch the middle out. Even-odd on a rounded rect left the interior
-        // painted, which read as a dark disc instead of a ring.
         context.saveGState()
-        context.setFillColor(state.ink.cgColor(alpha: 0.55 * alpha))
-        context.addPath(shapePath(centre: point, radius: radius, squircle: squircle))
-        context.fillPath()
-        context.setBlendMode(.clear)
-        context.addPath(shapePath(centre: point, radius: radius - band, squircle: squircle))
-        context.fillPath()
+        context.setAlpha(alpha)
+        PointerHighlightRenderer.draw(
+            in: context,
+            center: point,
+            appearance: appearance,
+            pulseScale: pointerPulseScale
+        )
         context.restoreGState()
-
-        // Bright edges on both boundaries.
-        context.setStrokeColor(state.ink.cgColor(alpha: 0.95 * alpha))
-        context.setLineWidth(2)
-        context.addPath(shapePath(centre: point, radius: radius, squircle: squircle))
-        context.strokePath()
-        context.addPath(shapePath(centre: point, radius: radius - band, squircle: squircle))
-        context.strokePath()
     }
 
     /// Fades the highlight down when the pointer has been still, so a shared
@@ -963,27 +938,6 @@ class OverlayView: NSView {
         guard idle > 1.2 else { return 1 }
         let progress = min(1, (idle - 1.2) / 0.8)
         return 1 - 0.75 * progress
-    }
-
-    private func shapePath(centre: CGPoint, radius: CGFloat, squircle: Bool) -> CGPath {
-        let rect = CGRect(
-            x: centre.x - radius,
-            y: centre.y - radius,
-            width: radius * 2,
-            height: radius * 2
-        )
-        guard squircle else {
-            let path = CGMutablePath()
-            path.addEllipse(in: rect)
-            return path
-        }
-        let corner = radius * 0.62
-        return CGPath(
-            roundedRect: rect,
-            cornerWidth: corner,
-            cornerHeight: corner,
-            transform: nil
-        )
     }
 
     private func drawHint() {
