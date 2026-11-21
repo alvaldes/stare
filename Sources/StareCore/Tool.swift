@@ -84,6 +84,17 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// The palette order: tools of a kind sit together, so the bar reads as
+    /// groups instead of a run of icons. The selection cursor will lead the first
+    /// group once it exists; it must never be added here twice.
+    public static let toolbarGroups: [[Tool]] = [
+        [.pen, .highlighter],
+        [.line, .arrow, .rectangle, .ellipse],
+        [.text, .number],
+        [.blur, .laser],
+        [.eraser],
+    ]
+
     /// Marks that complete the moment they are placed.
     public var commitsImmediately: Bool { self == .number }
 

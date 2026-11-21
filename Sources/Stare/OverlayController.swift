@@ -719,6 +719,7 @@ final class OverlayController {
             ? ToolbarPanel(
                 state: state,
                 onUndo: { [weak self] in self?.undo() },
+                onRedo: { [weak self] in self?.redo() },
                 onClear: { [weak self] in self?.clearCurrentBoardPage() },
                 onDone: { [weak self] in self?.closeBoard() },
                 onPreviousPage: { [weak self] in
@@ -731,6 +732,7 @@ final class OverlayController {
             : ToolbarPanel(
                 state: state,
                 onUndo: { [weak self] in self?.undo() },
+                onRedo: { [weak self] in self?.redo() },
                 onClear: { [weak self] in self?.clearAll() },
                 onDone: { [weak self] in self?.deactivate() }
             ))

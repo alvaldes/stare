@@ -126,4 +126,16 @@ final class ToolAndInkTests: XCTestCase {
             }
         }
     }
+    // S5: the palette groups tools of a kind, and never shows one twice or drops one.
+    func testToolbarGroupsShowEveryToolExactlyOnce() {
+        let grouped = Tool.toolbarGroups.flatMap { $0 }
+        XCTAssertEqual(grouped.count, Tool.allCases.count, "a tool must not appear twice in the palette")
+        XCTAssertEqual(Set(grouped), Set(Tool.allCases), "every tool must be reachable from the palette")
+    }
+
+    func testToolbarGroupsKeepToolsOfAKindTogether() {
+        XCTAssertEqual(Tool.toolbarGroups.first, [.pen, .highlighter])
+        XCTAssertEqual(Tool.toolbarGroups.last, [.eraser])
+    }
+
 }

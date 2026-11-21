@@ -514,7 +514,7 @@ enum SelfTest {
         state.ink = .blue
         let chrome = EditorChrome(
             state: state,
-            onUndo: {}, onClear: {}, onCrop: {}, onCopy: {}, onSave: {}, onClose: {}
+            onUndo: {}, onRedo: {}, onClear: {}, onCrop: {}, onCopy: {}, onSave: {}, onClose: {}
         )
         let hosting = NSHostingView(rootView: chrome)
         hosting.sizingOptions = [.intrinsicContentSize]
@@ -538,7 +538,7 @@ enum SelfTest {
         state.tool = .arrow
         state.ink = .green
         let hosting = NSHostingView(
-            rootView: ToolbarView(state: state, onUndo: {}, onClear: {}, onDone: {})
+            rootView: ToolbarView(state: state, onUndo: {}, onRedo: {}, onClear: {}, onDone: {})
         )
         hosting.sizingOptions = [.intrinsicContentSize]
         hosting.appearance = NSAppearance(named: appearanceName)

@@ -73,6 +73,7 @@ final class CaptureEditorContent: NSView {
             rootView: EditorChrome(
                 state: EditorState(),
                 onUndo: {},
+                onRedo: {},
                 onClear: {},
                 onCrop: {},
                 onCopy: {},
@@ -97,6 +98,7 @@ final class CaptureEditorContent: NSView {
         chrome.rootView = EditorChrome(
             state: state,
             onUndo: { [weak self] in self?.canvas.undo() },
+            onRedo: { [weak self] in self?.canvas.redo() },
             onClear: { [weak self] in self?.canvas.clearMarks() },
             onCrop: { [weak self] in self?.canvas.beginCrop() },
             onCopy: { [weak self] in self?.canvas.copyToPasteboard() },
@@ -117,6 +119,7 @@ final class CaptureEditorContent: NSView {
 struct EditorChrome: View {
     @ObservedObject var state: EditorState
     let onUndo: () -> Void
+    let onRedo: () -> Void
     let onClear: () -> Void
     let onCrop: () -> Void
     let onCopy: () -> Void
@@ -127,6 +130,7 @@ struct EditorChrome: View {
         ToolbarView(
             state: state,
             onUndo: onUndo,
+            onRedo: onRedo,
             onClear: onClear,
             onDone: onClose,
             extraActions: [
@@ -306,6 +310,11 @@ final class CaptureEditorCanvas: NSView {
 
     func undo() {
         session.undo()
+        needsDisplay = true
+    }
+
+    func redo() {
+        session.redo()
         needsDisplay = true
     }
 

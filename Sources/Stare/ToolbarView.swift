@@ -13,6 +13,7 @@ struct ToolbarAction: Identifiable {
 struct ToolbarView: View {
     @ObservedObject var state: EditorState
     let onUndo: () -> Void
+    let onRedo: () -> Void
     let onClear: () -> Void
     let onDone: () -> Void
     var extraActions: [ToolbarAction] = []
@@ -23,8 +24,11 @@ struct ToolbarView: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            ForEach(Tool.allCases) { tool in
-                toolButton(tool)
+            ForEach(Array(Tool.toolbarGroups.enumerated()), id: \.offset) { index, group in
+                if index > 0 { divider }
+                ForEach(group) { tool in
+                    toolButton(tool)
+                }
             }
 
             divider
@@ -53,6 +57,7 @@ struct ToolbarView: View {
             divider
 
             iconButton("arrow.uturn.backward", help: "Undo (⌘Z)", action: onUndo)
+            iconButton("arrow.uturn.forward", help: "Redo (⇧⌘Z)", action: onRedo)
             iconButton("trash", help: "Clear all (esc)", action: onClear)
             iconButton("xmark", help: "Done (esc)", action: onDone)
         }
