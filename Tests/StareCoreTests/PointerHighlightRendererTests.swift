@@ -29,15 +29,6 @@ final class PointerHighlightRendererTests: XCTestCase {
         }
 
         var center: CGPoint { CGPoint(x: CGFloat(width) / 2, y: CGFloat(height) / 2) }
-
-        /// Number of painted pixels along a horizontal row of the shape.
-        func rowWidth(atY y: CGFloat, threshold: Double = 0.3) -> Int {
-            var count = 0
-            for x in 0..<width where alpha(atX: CGFloat(x), atY: y) > threshold {
-                count += 1
-            }
-            return count
-        }
     }
 
     /// Renders the appearance for `style` into a transparent bitmap at 1 pt
@@ -149,24 +140,6 @@ final class PointerHighlightRendererTests: XCTestCase {
         XCTAssertLessThan(canvas.alpha(atX: 245, atY: 200), 0.03, "nothing beyond the disc")
     }
 
-    // MARK: - Marker tip
-
-    func testMarkerTipIsOpaqueAtCentreAndChiselAsymmetric() {
-        let canvas = render(PointerStyle(preset: .markerTip, glowIntensity: 0))
-        XCTAssertGreaterThan(canvas.alpha(atX: 200, atY: 200), 0.4, "the body is filled")
-
-        // The nib tapers toward centre.y - radius and keeps a wide rounded
-        // body toward centre.y + radius: rows near the tip are far narrower
-        // than rows near the body, and the centre row is the full body width.
-        let tipRow = canvas.rowWidth(atY: 168)
-        let centreRow = canvas.rowWidth(atY: 200)
-        let bodyRow = canvas.rowWidth(atY: 232)
-        XCTAssertGreaterThan(tipRow, 2, "the tip is a real shape, not a vanished point")
-        XCTAssertGreaterThan(bodyRow, 39, "the body keeps most of the diameter")
-        XCTAssertLessThan(tipRow, bodyRow / 2, "the nib tapers")
-        XCTAssertGreaterThan(centreRow, 39, "the body is filled across the centre")
-    }
-
     // MARK: - Spotlight
 
     func testSpotlightFadesMonotonicallyWithNoHardEdgeAtTheRadius() {
@@ -228,85 +201,68 @@ final class PointerHighlightRendererTests: XCTestCase {
         assertNothingOutsideExtent(canvas, extent: extent, tolerance: 0.05)
     }
 
-    // MARK: - Dashed border (T14/S9)
+    // MARK: - The corrected border model (T14 rework)
 
-    /// The dash rhythm is pinned here: rounded dashes twice as long as their
-    /// gaps, both derived from the band width, so the rhythm scales with the
-    /// highlight.
-    func testDashPatternIsDerivedFromTheBandWidth() {
-        XCTAssertEqual(PointerHighlightRenderer.dashPattern(band: 9.36), [18.72, 18.72])
-        XCTAssertEqual(PointerHighlightRenderer.dashPattern(band: 20), [40, 40])
+    /// Samples along the ray at `degrees` for the three sample families of
+    /// the border model — the band's middle, the inner boundary and the
+    /// outer boundary — taking the strongest pixel inside each 2 pt line's
+    /// annulus (radius 36, band 9.36: the fill spans 26.64...36 and the
+    /// lines sit centred on 26.64 and 36).
+    private func borderSamples(_ canvas: Canvas, degrees: Double) -> (fill: Double, inner: Double, outer: Double) {
+        func value(_ radius: Double) -> Double {
+            let radians = degrees * .pi / 180
+            return canvas.alpha(atX: CGFloat(200 + radius * cos(radians)), atY: CGFloat(200 + radius * sin(radians)))
+        }
+        let fill = max(value(31), value(32))
+        let inner = max(value(25), value(26), value(27))
+        let outer = max(value(35), value(36), value(37))
+        return (fill, inner, outer)
     }
 
-    /// Scans the band's mid-radius circle: the solid border paints every
-    /// angle, the dashed one leaves alternating painted and clear samples.
-    func testDashedRingLeavesGapsWhereTheSolidBorderPaints() {
-        var solidStyle = PointerStyle(preset: .ring, bandWidth: 0.26, glowIntensity: 0)
-        solidStyle.borderStyle = .solid
-        var dashedStyle = solidStyle
-        dashedStyle.borderStyle = .dashed
-        let solid = render(solidStyle)
-        let dashed = render(dashedStyle)
-
-        let midBand = 36 - 9.36 / 2
-        var solidGaps = 0
-        var dashedPainted = 0
-        var dashedGaps = 0
-        for degrees in stride(from: 0, to: 360, by: 3) {
-            let radians = CGFloat(degrees) * .pi / 180
-            let x = 200 + midBand * cos(radians)
-            let y = 200 + midBand * sin(radians)
-            if solid.alpha(atX: x, atY: y) < 0.4 { solidGaps += 1 }
-            if dashed.alpha(atX: x, atY: y) > 0.4 { dashedPainted += 1 }
-            if dashed.alpha(atX: x, atY: y) < 0.05 { dashedGaps += 1 }
+    /// Solid: the band is a filled coloured ring that carries a thin bright
+    /// line on both of its boundaries. A sample in the middle of the band is
+    /// the band fill, a sample on the inner boundary and one on the outer
+    /// boundary are both brighter than that fill — three distinct families.
+    func testSolidBorderFillsTheBandWithALineOnBothBoundaries() {
+        var style = PointerStyle(preset: .ring, bandWidth: 0.26, glowIntensity: 0)
+        style.borderStyle = .solid
+        let canvas = render(style)
+        for degrees in stride(from: 0.0, to: 360, by: 15) {
+            let sample = borderSamples(canvas, degrees: degrees)
+            XCTAssertGreaterThan(sample.fill, 0.45, "the band is filled at \(degrees)°")
+            XCTAssertLessThan(sample.fill, 0.65, "the middle of the band is the fill, not a line, at \(degrees)°")
+            XCTAssertGreaterThan(sample.inner, 0.85, "the inner boundary carries a line at \(degrees)°")
+            XCTAssertGreaterThan(sample.outer, 0.85, "the outer boundary carries a line at \(degrees)°")
+            XCTAssertLessThan(sample.fill, sample.inner, "the inner line is brighter than the band fill at \(degrees)°")
+            XCTAssertLessThan(sample.fill, sample.outer, "the outer line is brighter than the band fill at \(degrees)°")
         }
-        XCTAssertEqual(solidGaps, 0, "the solid border paints the whole band")
-        XCTAssertGreaterThan(dashedPainted, 0, "the dashed border still paints")
-        XCTAssertGreaterThan(
-            dashedGaps, 0,
-            "gaps exist along the same outline where the solid one has paint"
-        )
+        // Inside the hole and past the outer line nothing is painted.
+        XCTAssertLessThan(canvas.alpha(atX: 200, atY: 220), 0.03, "the hole stays clear")
+        XCTAssertLessThan(canvas.alpha(atX: 245, atY: 200), 0.03, "nothing beyond the outer line")
     }
 
-    /// The same rhythm along the squircle's straight edge: the dashed border
-    /// keeps the silhouette (the band spans the same radial range) but
-    /// alternates along it, starting from the path's start corner.
-    func testDashedSquircleAlternatesAlongTheSameOutlineTheSolidFills() {
-        var solidStyle = PointerStyle(preset: .squircle, bandWidth: 0.26, glowIntensity: 0)
-        var dashedStyle = solidStyle
-        dashedStyle.borderStyle = .dashed
-        let solid = render(solidStyle)
-        let dashed = render(dashedStyle)
-
-        // Straight top edge: band spans 26.64...36 above the centre row.
-        let midBandY = 200 + 36 - 9.36 / 2
-        var solidGaps = 0
-        var painted = 0
-        var gaps = 0
-        for dx in stride(from: -25, through: 25, by: 2) {
-            if solid.alpha(atX: CGFloat(200 + dx), atY: CGFloat(midBandY)) < 0.4 { solidGaps += 1 }
-            if dashed.alpha(atX: CGFloat(200 + dx), atY: CGFloat(midBandY)) > 0.4 { painted += 1 }
-            if dashed.alpha(atX: CGFloat(200 + dx), atY: CGFloat(midBandY)) < 0.05 { gaps += 1 }
-        }
-        XCTAssertEqual(solidGaps, 0, "the solid band covers the straight edge")
-        XCTAssertGreaterThan(painted, 0)
-        XCTAssertGreaterThan(gaps, 0, "the dashed edge leaves gaps the solid one fills")
-        // The silhouette holds: at a painted angle the band spans the same
-        // radial range the solid one fills, and nothing is painted past the
-        // outline.
-        var paintedX: CGFloat?
-        for dx in stride(from: -25, through: 25, by: 2) {
-            if dashed.alpha(atX: CGFloat(200 + dx), atY: CGFloat(midBandY)) > 0.4 {
-                paintedX = CGFloat(200 + dx)
-                break
+    /// The regression that pins the corrected model against the previous
+    /// one: the dashed style is the solid one with only the outer boundary
+    /// line turned into dashes — the band stays filled under every gap (no
+    /// hole shows through) and the inner line stays continuous.
+    func testDashedBorderKeepsTheBandFilledUnderGapsAndTheInnerLineContinuous() {
+        var style = PointerStyle(preset: .ring, bandWidth: 0.26, glowIntensity: 0)
+        style.borderStyle = .dashed
+        let canvas = render(style)
+        var dashAngles = 0
+        var gapAngles = 0
+        for degrees in stride(from: 0.0, to: 360, by: 3) {
+            let sample = borderSamples(canvas, degrees: degrees)
+            XCTAssertGreaterThan(sample.fill, 0.45, "the band fill holds under the outer line at \(degrees)°")
+            XCTAssertGreaterThan(sample.inner, 0.85, "the inner line is continuous at \(degrees)°")
+            if sample.outer > 0.8 {
+                dashAngles += 1
+            } else if sample.outer < 0.7 {
+                gapAngles += 1
             }
         }
-        XCTAssertNotNil(paintedX)
-        // The silhouette holds: the outline still carries paint on the
-        // straight edge (the dash phase at this pinned size puts one there),
-        // and nothing is painted past the outline.
-        XCTAssertGreaterThan(dashed.alpha(atX: 200, atY: CGFloat(midBandY)), 0.4, "the outline is still painted")
-        XCTAssertLessThan(dashed.alpha(atX: paintedX ?? 200, atY: 200 + 43), 0.03, "nothing beyond the outline")
+        XCTAssertGreaterThan(dashAngles, 0, "the outer line carries dashes")
+        XCTAssertGreaterThan(gapAngles, 0, "the outer line carries gaps")
     }
 
     // MARK: - Opacity (T14/S9)
@@ -330,26 +286,6 @@ final class PointerHighlightRendererTests: XCTestCase {
 
     // MARK: - Click rotation (T14/S9)
 
-    /// The pulse envelope rotates the shape about its centre without changing
-    /// the extent: the same invalidation rect stays valid while the shape
-    /// turns.
-    func testRotationMovesTheShapeButKeepsTheExtent() {
-        let appearance = PointerStyle(preset: .markerTip, glowIntensity: 0).appearance(ink: .red)
-        let atRest = render(appearance, pulseScale: 1, rotation: 0)
-        let quarterTurn = render(appearance, pulseScale: 1, rotation: .pi / 2)
-        XCTAssertNotEqual(atRest.data, quarterTurn.data, "rotation moves pixels")
-        // The nib points up at rest: its rounded body sits below the centre.
-        XCTAssertGreaterThan(atRest.alpha(atX: 200, atY: 230), 0.4, "the body sits under the nib")
-        XCTAssertLessThan(quarterTurn.alpha(atX: 200, atY: 230), 0.03, "a quarter turn carries the body away")
-        XCTAssertGreaterThan(quarterTurn.alpha(atX: 170, atY: 200), 0.4, "the body moved to the side")
-        // The extent is unchanged: rotation is about the centre of the same
-        // reach, so the invalidation rect stays the same rectangle.
-        let extent = PointerHighlightRenderer.extent(for: appearance, pulseScale: 1)
-        XCTAssertEqual(extent.minX, -80.4, accuracy: 0.001)
-        XCTAssertEqual(extent.width, 160.8, accuracy: 0.001)
-        assertNothingOutsideExtent(quarterTurn, extent: extent, tolerance: 0.05)
-    }
-
     /// Even the rhombus — the shape that pokes past the circle — stays inside
     /// the shared extent while the pulse rotates it.
     func testRotatedRhombusStaysInsideTheSameExtent() {
@@ -359,6 +295,39 @@ final class PointerHighlightRendererTests: XCTestCase {
         let turned = render(appearance, pulseScale: 1, rotation: 0.42)
         let extent = PointerHighlightRenderer.extent(for: appearance, pulseScale: 1)
         assertNothingOutsideExtent(turned, extent: extent, tolerance: 0.05)
+    }
+
+    /// The click pulse envelope rotates the shape about its centre without
+    /// changing the extent: the same invalidation rect stays valid while the
+    /// shape turns. The rhombus carries the proof because it is the last
+    /// asymmetric preset — its rounded vertices point along the axes at rest
+    /// and a 45° turn carries the paint over to the diagonals.
+    func testRotationMovesTheShapeButKeepsTheExtent() {
+        let appearance = PointerStyle(preset: .rhombus, glowIntensity: 0).appearance(ink: .red)
+        let atRest = render(appearance, pulseScale: 1, rotation: 0)
+        let halfTurn = render(appearance, pulseScale: 1, rotation: .pi / 4)
+        XCTAssertNotEqual(atRest.data, halfTurn.data, "rotation moves pixels")
+        // At rest the vertices point along the axes, so the band runs down
+        // the vertical axis; a 45° turn carries the vertex away toward the
+        // diagonal and the axis sample sits on a tangent edge instead.
+        XCTAssertGreaterThan(atRest.alpha(atX: 200, atY: 240), 0.4, "the vertex sits on the axis at rest")
+        XCTAssertLessThan(halfTurn.alpha(atX: 200, atY: 240), 0.05, "a 45° turn carries the vertex away")
+        XCTAssertGreaterThan(halfTurn.alpha(atX: 228, atY: 228), 0.4, "the vertex arrived on the diagonal")
+        // The extent is unchanged: rotation is about the centre of the same
+        // reach, so the invalidation rect stays the same rectangle.
+        let extent = PointerHighlightRenderer.extent(for: appearance, pulseScale: 1)
+        XCTAssertEqual(extent.minX, -80.4, accuracy: 0.001)
+        XCTAssertEqual(extent.width, 160.8, accuracy: 0.001)
+        assertNothingOutsideExtent(halfTurn, extent: extent, tolerance: 0.05)
+    }
+
+    /// The dash rhythm is derived from the border line width, not the band:
+    /// each dash is three line widths long and each gap two, so the dashes
+    /// read as segments on the thin line instead of dots or blobs. With
+    /// today's 2 pt border line that is exactly a 6 pt dash and a 4 pt gap.
+    func testDashRhythmIsDerivedFromTheBorderLineWidth() {
+        XCTAssertEqual(PointerHighlightRenderer.dashPattern(lineWidth: 2), [6, 4])
+        XCTAssertEqual(PointerHighlightRenderer.dashPattern(lineWidth: 3), [9, 6])
     }
 
     // MARK: - Glow

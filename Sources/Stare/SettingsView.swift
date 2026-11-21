@@ -792,23 +792,23 @@ private struct MarkerPane: View {
     private var bandApplies: Bool {
         switch model.pointer.preset {
         case .dot, .spotlight: false
-        case .ring, .squircle, .rhombus, .markerTip: true
+        case .ring, .squircle, .rhombus: true
         }
     }
 
-    /// A border is drawn only by the banded ring shapes; for the filled dot,
-    /// the chisel tip and the edge-less spotlight the picker is disabled and
-    /// says so instead of pretending to do something.
+    /// A border is drawn only by the banded ring shapes; for the filled dot
+    /// and the edge-less spotlight the picker is disabled and says so instead
+    /// of pretending to do something.
     private var borderApplies: Bool {
         switch model.pointer.preset {
         case .ring, .squircle, .rhombus: true
-        case .dot, .markerTip, .spotlight: false
+        case .dot, .spotlight: false
         }
     }
 
     private var borderDetail: String? {
         borderApplies
-            ? "Solid draws the band filled; dashed sketches it as dashes."
+            ? "Solid draws the band filled with a solid line on both edges; dashed turns the outer edge into dashes."
             : "The \(model.pointer.preset.title) style has no border; border style is ignored."
     }
 

@@ -7,17 +7,15 @@ import CoreGraphics
 /// real highlight.
 ///
 /// Everything geometric comes from the appearance (radius, band, edge, glow
-/// stops, glow extent) multiplied by `pulseScale`; the only proportions added
-/// locally belong to the marker tip's own anatomy and are documented under
-/// `markerTipPath`. Draw order matches today's overlay: soft glow first, then
-/// the shape on top.
+/// stops, glow extent) multiplied by `pulseScale`; no shape carries its own
+/// internal proportions. Draw order matches today's overlay: soft glow
+/// first, then the shape on top.
 public enum PointerHighlightRenderer {
     /// Draws the highlight centred on `center` in the context's coordinate
-    /// space. For the marker tip, the nib points toward `center.y - radius`
-    /// (the top of the coordinate space); the other geometries are symmetric,
-    /// so they are flip-invariant. Callers keep control of global state; the
-    /// renderer only sets fill and stroke colours and widths, and the dash
-    /// parameters of a dashed border within its own state.
+    /// space. The banded geometries are symmetric, so they are
+    /// flip-invariant. Callers keep control of global state; the renderer
+    /// only sets fill and stroke colours and widths, and the dash parameters
+    /// of a dashed outer boundary line within its own state.
     ///
     /// `rotation` turns the whole shape about `center` (radians, positive
     /// counter-clockwise in this coordinate space) — the click animation's
@@ -34,17 +32,17 @@ public enum PointerHighlightRenderer {
         let radius = CGFloat(appearance.radius) * pulseScale
         guard radius > 0 else { return }
         let ink = appearance.ink
-        // The band is a ratio of the radius, clamped to the shape so a full
-        // width band (the marker tip's 2) can never turn the hole negative.
-        // The paintings below never punch a hole for filled shapes anyway.
+        // The band is a ratio of the radius, clamped to the shape so it can
+        // never turn the hole negative. The paintings below never punch a
+        // hole for filled shapes anyway.
         let band = radius * CGFloat(appearance.bandWidth)
         let holeRadius = max(0, radius - band)
 
         // Glow first, under the shape, exactly as the overlay does today:
         // a radial gradient from the shape's inner boundary out to the glow
         // reach. The spotlight is pure falloff, so its gradient starts at the
-        // centre instead; the filled dot and the marker tip carry the glow as
-        // a halo starting at their outer boundary.
+        // centre instead; the filled dot carries the glow as a halo starting
+        // at its outer boundary.
         if !appearance.glowStops.isEmpty {
             let colors = appearance.glowStops.map { ink.cgColor(alpha: CGFloat($0.alpha)) } as CFArray
             let locations = appearance.glowStops.map { CGFloat($0.location) }
@@ -56,7 +54,7 @@ public enum PointerHighlightRenderer {
                 let startRadius: CGFloat
                 switch appearance.geometry {
                 case .spotlight: startRadius = 0
-                case .dot, .markerTip: startRadius = radius
+                case .dot: startRadius = radius
                 case .ring, .squircle, .rhombus: startRadius = radius - min(band, radius)
                 }
                 context.drawRadialGradient(
@@ -92,48 +90,44 @@ public enum PointerHighlightRenderer {
 
         switch appearance.geometry {
         case .ring, .squircle, .rhombus:
-            if appearance.dashed {
-                // Dashed border: the band stops being a filled annulus and
-                // becomes a stroke on the outline offset inward half a band,
-                // so the silhouette — the radial range the solid one fills —
-                // is unchanged and only the rhythm changes. The dash pattern
-                // is derived from the band width, so it scales with the
-                // highlight and its pulse.
-                let outline = shapePath(
-                    center: center,
-                    radius: radius - band / 2,
-                    appearance: appearance
-                )
-                context.setStrokeColor(ink.cgColor(alpha: CGFloat(appearance.bandFillAlpha)))
-                context.setLineWidth(band)
-                context.setLineCap(.round)
-                context.setLineDash(phase: 0, lengths: dashPattern(band: band))
-                context.addPath(outline)
-                context.strokePath()
-                return
-            }
-            // Ring by construction, same as today's overlay: fill the outer
-            // shape with the band colour, then punch the middle out with
-            // `.clear` — even-odd left the interior painted, which read as a
-            // dark disc instead of a ring.
+            // The band is a filled coloured ring between the two boundary
+            // lines: fill the outer shape with the band colour, then punch
+            // the middle out with `.clear` — even-odd left the interior
+            // painted, which read as a dark disc instead of a ring. The fill
+            // stays underneath the outer line's dashes, so a dash gap never
+            // shows a hole through the highlight.
             let path = shapePath(center: center, radius: radius, appearance: appearance)
             let hole = shapePath(center: center, radius: holeRadius, appearance: appearance)
-            context.saveGState()
             context.setFillColor(ink.cgColor(alpha: CGFloat(appearance.bandFillAlpha)))
             context.addPath(path)
             context.fillPath()
+            context.saveGState()
             context.setBlendMode(.clear)
             context.addPath(hole)
             context.fillPath()
             context.restoreGState()
 
-            // Bright edges stroked on both boundaries.
+            // The band carries a thin bright line on both boundaries. The
+            // inner one is always continuous; the outer one is a solid line,
+            // or dashes for the dashed style — everything else about the
+            // drawing is identical between the two styles.
             if appearance.edgeWidth > 0 {
                 context.setStrokeColor(ink.cgColor(alpha: CGFloat(appearance.edgeAlpha)))
                 context.setLineWidth(CGFloat(appearance.edgeWidth))
-                context.addPath(path)
-                context.strokePath()
+                context.setLineCap(.round)
                 context.addPath(hole)
+                context.strokePath()
+                if appearance.dashed {
+                    // Butt caps so each dash reads as a crisp segment of the
+                    // thin line instead of a rounded blob; the rhythm is
+                    // pinned under `dashPattern(lineWidth:)`.
+                    context.setLineCap(.butt)
+                    context.setLineDash(
+                        phase: 0,
+                        lengths: dashPattern(lineWidth: CGFloat(appearance.edgeWidth))
+                    )
+                }
+                context.addPath(path)
                 context.strokePath()
             }
 
@@ -141,11 +135,6 @@ public enum PointerHighlightRenderer {
             // A filled disc, translucent so the pointer under it stays visible.
             context.setFillColor(ink.cgColor(alpha: CGFloat(appearance.bandFillAlpha)))
             fillEllipse(in: context, center: center, radius: radius)
-
-        case .markerTip:
-            context.setFillColor(ink.cgColor(alpha: CGFloat(appearance.bandFillAlpha)))
-            context.addPath(markerTipPath(center: center, radius: radius))
-            context.fillPath()
 
         case .spotlight:
             // The gradient drawn above is the whole shape: soft radial
@@ -170,12 +159,14 @@ public enum PointerHighlightRenderer {
         return CGRect(x: -reach, y: -reach, width: reach * 2, height: reach * 2)
     }
 
-    /// Dash rhythm of a dashed border, derived from the band width: rounded
-    /// dashes twice as long as their gaps and set two band lengths apart, so
-    /// the rhythm scales with the highlight's size and pulse. Pinned by the
-    /// renderer tests.
-    public static func dashPattern(band: CGFloat) -> [CGFloat] {
-        [band * 2, band * 2]
+    /// Dash rhythm of a dashed outer boundary line, derived from the border
+    /// line width so the dashes read as segments on that thin line, not dots
+    /// or blobs: each dash is three line widths long and each gap two, and
+    /// the caller strokes with butt caps so the segments stay crisp at any
+    /// line width. With today's 2 pt border line that is exactly a 6 pt dash
+    /// and a 4 pt gap. Pinned by the renderer tests.
+    public static func dashPattern(lineWidth: CGFloat) -> [CGFloat] {
+        [lineWidth * 3, lineWidth * 2]
     }
 
     /// Outer boundary of the banded shapes: an ellipse for `.ring`, a rounded
@@ -224,46 +215,5 @@ public enum PointerHighlightRenderer {
                 height: radius * 2
             )
         )
-    }
-
-    /// Anatomy of the chisel nib, expressed as proportions of `radius` (the
-    /// only internal proportions a shape needs, documented here):
-    ///
-    /// - Body: a rounded rectangle spanning the bottom 70% of the shape,
-    ///   half-width 0.7 `radius`, corner radius 0.25 `radius`. The 0.7 keeps
-    ///   the widest part visibly narrower than the bounding diameter.
-    /// - Tip: a tapered quad from the body's top edge down to a flat chisel
-    ///   edge of half-width 0.09 `radius` sitting exactly on the shape's
-    ///   top boundary, symmetric about the vertical axis.
-    ///
-    /// The whole tip stays inside the shape's bounding square, so `extent`
-    /// over-covers it the same way it over-covers the stroked edges.
-    private static func markerTipPath(center: CGPoint, radius: CGFloat) -> CGPath {
-        let path = CGMutablePath()
-        let halfBodyWidth = 0.7 * radius
-        let bodyTop = radius * -0.4
-        let body = CGRect(
-            x: center.x - halfBodyWidth,
-            y: center.y + bodyTop,
-            width: halfBodyWidth * 2,
-            height: radius - bodyTop
-        )
-        path.addPath(
-            CGPath(
-                roundedRect: body,
-                cornerWidth: 0.25 * radius,
-                cornerHeight: 0.25 * radius,
-                transform: nil
-            )
-        )
-        // Tapered quad: wide at the body's top edge, narrow at the chisel edge
-        // on the top boundary. Filled in the same path as the body so the
-        // overlap does not double-composite.
-        path.move(to: CGPoint(x: center.x - halfBodyWidth, y: center.y + bodyTop))
-        path.addLine(to: CGPoint(x: center.x - 0.09 * radius, y: center.y - radius))
-        path.addLine(to: CGPoint(x: center.x + 0.09 * radius, y: center.y - radius))
-        path.addLine(to: CGPoint(x: center.x + halfBodyWidth, y: center.y + bodyTop))
-        path.closeSubpath()
-        return path
     }
 }

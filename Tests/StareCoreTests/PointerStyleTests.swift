@@ -22,8 +22,8 @@ final class PointerStyleTests: XCTestCase {
     // MARK: Clamping
 
     func testInitClampsSizeBandWidthAndGlowIntensityFromAbove() {
-        let style = PointerStyle(size: 200, bandWidth: 2, glowIntensity: -3)
-        XCTAssertEqual(style.size, 80)
+        let style = PointerStyle(size: 300, bandWidth: 2, glowIntensity: -3)
+        XCTAssertEqual(style.size, 240)
         XCTAssertEqual(style.bandWidth, 0.5)
         XCTAssertEqual(style.glowIntensity, 0)
     }
@@ -40,7 +40,7 @@ final class PointerStyleTests: XCTestCase {
         style.size = 500
         style.bandWidth = -1
         style.glowIntensity = 42
-        XCTAssertEqual(style.size, 80)
+        XCTAssertEqual(style.size, 240)
         XCTAssertEqual(style.bandWidth, 0.08)
         XCTAssertEqual(style.glowIntensity, 1)
     }
@@ -68,9 +68,32 @@ final class PointerStyleTests: XCTestCase {
     func testOutOfRangeNumbersClampWhenDecoded() throws {
         let data = Data(#"{"size":999,"bandWidth":0.001,"glowIntensity":7}"#.utf8)
         let style = try JSONDecoder().decode(PointerStyle.self, from: data)
-        XCTAssertEqual(style.size, 80)
+        XCTAssertEqual(style.size, 240)
         XCTAssertEqual(style.bandWidth, 0.08)
         XCTAssertEqual(style.glowIntensity, 1)
+    }
+
+    // MARK: Size ceiling (T14 rework)
+
+    func testSizeRangeStretchesTo240AndKeepsTheDefault() {
+        XCTAssertEqual(PointerStyle.sizeRange, 32...240)
+        XCTAssertEqual(PointerStyle.defaultSize, 72)
+        XCTAssertEqual(PointerStyle(size: 240).size, 240)
+    }
+
+    /// Legacy values above the old 80 pt ceiling survive both paths that
+    /// produce a style instead of being clamped down.
+    func testLegacySizesAboveTheOldCeilingSurvive() {
+        XCTAssertEqual(PointerStyle(size: 120).size, 120)
+        var style = PointerStyle.standard
+        style.size = 120
+        XCTAssertEqual(style.size, 120)
+    }
+
+    func testALegacyEncodedSizeOf120SurvivesDecoding() throws {
+        let data = Data(#"{"preset":"ring","size":120}"#.utf8)
+        let style = try JSONDecoder().decode(PointerStyle.self, from: data)
+        XCTAssertEqual(style.size, 120)
     }
 
     // MARK: Codable round trip
@@ -161,6 +184,25 @@ final class PointerStyleTests: XCTestCase {
         XCTAssertEqual(style.opacity, 1)
     }
 
+    // MARK: - Presets (T14 rework)
+
+    /// The owner dropped the marker tip: the list ends up as ring, squircle,
+    /// rhombus, dot and spotlight — five presets, no marker.
+    func testPresetListEndsUpWithFivePresetsWithoutTheMarkerTip() {
+        XCTAssertEqual(
+            PointerStylePreset.allCases.map(\.title),
+            ["Ring", "Squircle", "Rhombus", "Dot", "Spotlight"]
+        )
+    }
+
+    /// A stored `"markerTip"` — written by an older build — decodes like any
+    /// unknown preset: back to the ring.
+    func testStoredMarkerTipDecodesToRing() throws {
+        let data = Data(#"{"preset":"markerTip"}"#.utf8)
+        let style = try JSONDecoder().decode(PointerStyle.self, from: data)
+        XCTAssertEqual(style.preset, .ring)
+    }
+
     // MARK: Rhombus
 
     func testRhombusIsABandedEdgeShapeLikeTheSquircle() {
@@ -242,18 +284,6 @@ final class PointerStyleTests: XCTestCase {
         XCTAssertEqual(appearance.bandWidth, 0)
         XCTAssertEqual(appearance.edgeWidth, 0)
         XCTAssertEqual(appearance.radius, 36)
-    }
-
-    /// A style whose band width is half the radius still fills edge to edge.
-    func testMarkerTipBandEqualsItsWidth() {
-        var style = PointerStyle.standard
-        style.preset = .markerTip
-        let appearance = style.appearance(ink: .red)
-        XCTAssertEqual(appearance.geometry, .markerTip)
-        // The chisel tip is filled edge to edge: the band is the full width,
-        // i.e. twice the radius.
-        XCTAssertEqual(appearance.bandWidth, 2)
-        XCTAssertEqual(appearance.edgeWidth, 0)
     }
 
     func testSpotlightHasNoHardEdge() {

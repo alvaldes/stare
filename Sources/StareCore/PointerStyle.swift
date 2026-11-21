@@ -8,33 +8,32 @@ public enum PointerStylePreset: String, Codable, CaseIterable, Sendable {
     case ring
     /// Hollow rounded-square ring.
     case squircle
-    /// Filled disc with no band.
-    case dot
-    /// Filled chisel tip whose band equals its width.
-    case markerTip
-    /// Soft radial falloff with no hard edge.
-    case spotlight
     /// The squircle's rounded square rotated 45°: banded, with a bright edge,
     /// its rounded vertices pointing past the outer circle along the axes and
     /// its edges touching the circle along the diagonals.
     case rhombus
+    /// Filled disc with no band.
+    case dot
+    /// Soft radial falloff with no hard edge.
+    case spotlight
 
     /// English label shown in Settings.
     public var title: String {
         switch self {
         case .ring: "Ring"
         case .squircle: "Squircle"
-        case .dot: "Dot"
-        case .markerTip: "Marker tip"
-        case .spotlight: "Spotlight"
         case .rhombus: "Rhombus"
+        case .dot: "Dot"
+        case .spotlight: "Spotlight"
         }
     }
 }
 
-/// Whether the border of a banded shape is drawn as today's continuous band
-/// or as dashes. Raw values are what the preferences blob persists;
-/// decoding an unknown string falls back to `.solid`.
+/// How the outer boundary line of a banded shape is drawn. The band itself
+/// is always a filled coloured ring carrying a thin line on both of its
+/// boundaries; this choice turns only the outer one into dashes. Raw values
+/// are what the preferences blob persists; decoding an unknown string falls
+/// back to `.solid`.
 public enum PointerBorderStyle: String, Codable, CaseIterable, Sendable {
     /// Today's filled band with its bright edges.
     case solid
@@ -111,7 +110,7 @@ public enum PointerColorSource: Codable, Equatable, Sendable {
 /// persistence lives in `AppPreferences`.
 public struct PointerStyle: Codable, Equatable, Sendable {
     /// Valid highlight diameter range, in points.
-    public static let sizeRange: ClosedRange<Double> = 32...80
+    public static let sizeRange: ClosedRange<Double> = 32...240
     /// Valid band thickness range, as a ratio of the radius.
     public static let bandWidthRange: ClosedRange<Double> = 0.08...0.5
     /// Valid glow strength range; 0 turns the glow off.
@@ -150,8 +149,9 @@ public struct PointerStyle: Codable, Equatable, Sendable {
     /// Fade the highlight down when the pointer stops moving.
     public var fadeWhenIdle: Bool
 
-    /// Solid band or dashed outline; only the banded shapes (ring, squircle,
-    /// rhombus) draw a border, so the value is ignored by the others.
+    /// Solid or dashed outer boundary line of a banded shape; the band is
+    /// always filled, so only the outer line changes with this value. The
+    /// non-banded shapes (dot, spotlight) ignore it.
     public var borderStyle: PointerBorderStyle
 
     /// Overall opacity, always clamped to `opacityRange`: multiplies every
@@ -267,8 +267,6 @@ public struct PointerAppearance: Equatable, Sendable {
         case squircle
         /// Filled disc of `radius`; no band, no edge.
         case dot
-        /// Filled chisel tip spanning the full diameter; the band is the width.
-        case markerTip
         /// Soft radial falloff outward from `radius`; no hard edge.
         case spotlight
         /// The squircle's rounded square rotated 45°: banded, with a bright
@@ -284,9 +282,8 @@ public struct PointerAppearance: Equatable, Sendable {
     /// Half the chosen diameter, in points.
     public var radius: Double
     /// Band thickness measured inward from the outer boundary, as a ratio of
-    /// `radius`: the style's band for ring, squircle and rhombus, 0 for the
-    /// filled dot and the edge-less spotlight, and the full width (2) for the
-    /// marker tip.
+    /// `radius`: the style's band for ring, squircle and rhombus, and 0 for
+    /// the filled dot and the edge-less spotlight.
     public var bandWidth: Double
     /// Width of the bright edge stroked on the boundaries, in points; 0 when
     /// the shape has no hard edge.
@@ -307,8 +304,9 @@ public struct PointerAppearance: Equatable, Sendable {
     public var bandFillAlpha: Double
     /// Alpha of the bright edge stroke (today's `0.95 * idleAlpha`).
     public var edgeAlpha: Double
-    /// Whether a banded shape draws its border as dashes instead of the
-    /// filled band; the renderer picks the rhythm from `bandWidth`.
+    /// Whether a banded shape draws its outer boundary line as dashes
+    /// instead of a solid line; the renderer picks the rhythm from the edge
+    /// width, and the band stays filled underneath either way.
     public var dashed: Bool
     /// Preset-specific geometry.
     public var geometry: Geometry
@@ -346,10 +344,6 @@ public struct PointerAppearance: Equatable, Sendable {
         case .dot:
             self.bandWidth = 0
             self.geometry = .dot
-        case .markerTip:
-            // The chisel tip is filled edge to edge: the band is the width.
-            self.bandWidth = 2
-            self.geometry = .markerTip
         case .spotlight:
             self.bandWidth = 0
             self.geometry = .spotlight

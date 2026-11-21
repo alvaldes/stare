@@ -703,7 +703,7 @@ enum SelfTest {
 
     // MARK: - Marker styles (T7/S5, T14/S9)
 
-    /// Renders each of the six pointer presets in both system appearances
+    /// Renders each of the five pointer presets in both system appearances
     /// through the same preview view the Settings pane shows (one PNG per
     /// preset per appearance), and checks the preview's own transparent
     /// bitmap against the pulse report's extent measurement so a render is
