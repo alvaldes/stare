@@ -154,24 +154,10 @@ enum SelfTest {
             report.append("editor chrome \(name) rendered=\(rendered)")
         }
 
-        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
-            let rendered = renderSettings(appearanceName: appearance, to: "/tmp/stare-settings-\(name).png")
-            report.append("settings \(name) rendered=\(rendered)")
-        }
-
-        // A window measured before layout used to come out zero-sized: created,
-        // "opened", and never seen.
-        let settingsController = SettingsWindowController(state: EditorState())
-        settingsController.show()
-        RunLoop.current.run(until: Date().addingTimeInterval(0.4))
-        if let window = NSApp.windows.first(where: { $0.title == "Stare Settings" }) {
-            report.append(
-                "settings window frame=\(window.frame) visible=\(window.isVisible) key=\(window.isKeyWindow)"
-            )
-            window.close()
-        } else {
-            report.append("FAIL: settings window not created")
-        }
+        // Settings (T6 slice 2): the sidebar + panes shell renders in both
+        // system appearances, one PNG per pane, and its window is resizable
+        // and clearly wider than the old fixed 420-pt form.
+        report.append(contentsOf: MainActor.assumeIsolated { settingsReport() })
 
         // Onboarding (T5/S1–S3): the guide renders in both appearances, its
         // window can become key from an .accessory app, has a real frame and
@@ -778,13 +764,108 @@ enum SelfTest {
         return report
     }
 
-    /// Renders the settings form with a fixed appearance.
-    private static func renderSettings(appearanceName: NSAppearance.Name, to path: String) -> Bool {
-        let hosting = NSHostingView(rootView: SettingsView(state: EditorState()))
-        hosting.sizingOptions = [.intrinsicContentSize, .preferredContentSize]
+    /// T6 slice 2: renders each Settings pane in both system appearances (one
+    /// PNG per pane per appearance) and opens the real settings window to
+    /// assert the shell: visible, key, resizable and wider than the old 420-pt
+    /// form. Runs detached from the user's real preferences — the harness
+    /// model uses an in-memory store, so no pane write can touch defaults.
+    @MainActor
+    private static func settingsReport() -> [String] {
+        var report: [String] = []
+        let model = PreferencesModel(store: SelfTestPreferenceStore())
+        let controller = SettingsWindowController(
+            model: model,
+            permission: ScreenRecordingPermission(
+                client: SystemScreenRecordingClient(captureService: CaptureService())
+            )
+        )
+        var allPanesRendered = true
+        let probe = PermissionProbe(
+            permission: ScreenRecordingPermission(
+                client: SystemScreenRecordingClient(captureService: CaptureService())
+            )
+        )
+        for area in SettingsArea.allCases {
+            for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+                let rendered = renderSettings(
+                    area: area,
+                    appearanceName: appearance,
+                    model: model,
+                    permission: probe,
+                    to: "/tmp/stare-settings-\(area.rawValue)-\(name).png"
+                )
+                allPanesRendered = allPanesRendered && rendered
+            }
+        }
+        report.append(
+            "settings panes result=\(allPanesRendered ? "PASS" : "FAIL") areas=\(SettingsArea.allCases.count)"
+        )
+
+        // A window measured before layout used to come out zero-sized: created,
+        // "opened", and never seen.
+        controller.show()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+        if let window = NSApp.windows.first(where: { $0.title == "Stare Settings" }) {
+            let resizable = window.styleMask.contains(.resizable)
+            let contentWidth = window.contentView?.bounds.width ?? 0
+            // The shell assertion is documented behaviour: visible, resizable,
+            // and wider than the old fixed 420-pt form. Keyness is reported but
+            // not asserted — the same activation pattern the guide uses is
+            // asserted on the guide's own window contract, and a headless run
+            // cannot guarantee key state for every window.
+            let windowOk = window.isVisible && resizable && contentWidth > 420
+            report.append(
+                "settings window frame=\(window.frame) visible=\(window.isVisible) key=\(window.isKeyWindow) "
+                    + "resizable=\(resizable) contentWidth=\(Int(contentWidth))"
+            )
+            report.append("settings window result=\(windowOk ? "PASS" : "FAIL")")
+            window.close()
+        } else {
+            report.append("FAIL: settings window not created")
+        }
+        return report
+    }
+
+    /// Renders one Settings pane in a fixed appearance. The pane content
+    /// (header + cards) is hosted at fixed pane width inside a real on-screen
+    /// borderless window — the pattern the board section uses — because a
+    /// windowless hosting view lays text out shifted, which drew pane headers
+    /// clipped outside the image.
+    @MainActor
+    private static func renderSettings(
+        area: SettingsArea,
+        appearanceName: NSAppearance.Name,
+        model: PreferencesModel,
+        permission: PermissionProbe,
+        to path: String
+    ) -> Bool {
+        let size = CGSize(width: 640, height: 560)
+        let hosting = NSHostingView(rootView: SettingsView.pane(
+            for: area,
+            model: model,
+            permission: permission
+        )
+        // Fixture only: pin the pane to the top like the shell's ScrollView
+        // does, and give the render the window background the pane area gets
+        // behind the material. The app view itself stays unstyled.
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
+        .background(Color(nsColor: .windowBackgroundColor)))
+        hosting.sizingOptions = []
         hosting.appearance = NSAppearance(named: appearanceName)
-        hosting.frame = CGRect(origin: .zero, size: hosting.fittingSize)
-        hosting.layoutSubtreeIfNeeded()
+        hosting.frame = CGRect(origin: .zero, size: size)
+
+        let window = NSWindow(
+            contentRect: CGRect(origin: .zero, size: size),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.backgroundColor = .windowBackgroundColor
+        window.contentView = hosting
+        window.appearance = NSAppearance(named: appearanceName)
+        window.orderFrontRegardless()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        defer { window.orderOut(nil) }
 
         guard let representation = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else {
             return false
@@ -1129,5 +1210,19 @@ enum SelfTest {
         FileHandle.standardOutput.write(Data(text.utf8))
         NSLog("Stare: selftest\n%@", text)
         return code
+    }
+
+    /// In-memory `PreferenceStore` for the selftest harness, which must not
+    /// read or write the user's real preferences (same seam the unit tests use).
+    private final class SelfTestPreferenceStore: PreferenceStore {
+        private var values: [String: Any] = [:]
+
+        func object(forKey key: String) -> Any? {
+            values[key]
+        }
+
+        func set(_ value: Any?, forKey key: String) {
+            values[key] = value
+        }
     }
 }
