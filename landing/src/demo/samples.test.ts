@@ -11,8 +11,10 @@ describe('tool samples for the shortcuts panel', () => {
     for (const tool of TOOLS) {
       const marks = sampleMarks(tool.id, 'blue', 1)
       expect(marks.length).toBeGreaterThan(0)
+      expect(marks.some((mark) => mark.tool === tool.id)).toBe(true)
       for (const mark of marks) {
-        expect(mark.tool).toBe(tool.id)
+        // The eraser's sample also shows the marks it is about to sweep away.
+        if (tool.id !== 'eraser') expect(mark.tool).toBe(tool.id)
         expect(mark.ink).toBe('blue')
       }
     }

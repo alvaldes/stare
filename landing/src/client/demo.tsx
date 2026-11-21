@@ -6,7 +6,7 @@ import { render } from 'hono/jsx/dom'
 import { copyImage, renderCapture } from '../demo/capture'
 import { ACTION_ICONS, TOOL_ICONS } from '../demo/icons'
 import { type DemoAction, resolveKey } from '../demo/keymap'
-import { INKS, type InkId, type Point, SCREEN_HEIGHT, SCREEN_WIDTH, TOOLS, type ToolId } from '../demo/model'
+import { ERASER_RADIUS, INKS, type InkId, type Point, SCREEN_HEIGHT, SCREEN_WIDTH, TOOLS, type ToolId } from '../demo/model'
 import { drawSession } from '../demo/render'
 import { DrawingSession } from '../demo/session'
 
@@ -100,7 +100,8 @@ function Demo({ elements }: { elements: DemoElements }) {
 
   // Pointer drawing on the canvas, in the screen's 1200-point space.
   useEffect(() => {
-    let drawing = false
+    // 'erase' drags never create a mark; they wipe what they touch.
+    let mode: 'draw' | 'erase' | null = null
     let frame = 0
     // Lasers fade without any input, so keep drawing frames until the last
     // one has gone; otherwise redraw only when the visitor draws.
@@ -125,24 +126,38 @@ function Demo({ elements }: { elements: DemoElements }) {
       return Math.min(3, Math.max(1, (SCREEN_WIDTH / shown) * 0.6))
     }
 
+    const erase = (event: PointerEvent) => {
+      if (session.erase(toScreen(event), ERASER_RADIUS * strokeWeight()) > 0) scheduleRedraw()
+    }
+
     const down = (event: PointerEvent) => {
       if (event.button !== 0) return
-      drawing = true
       canvas.setPointerCapture(event.pointerId)
+      if (toolRef.current === 'eraser') {
+        mode = 'erase'
+        erase(event)
+        return
+      }
+      mode = 'draw'
       session.begin(toScreen(event), toolRef.current!, inkRef.current!, strokeWeight(), performance.now())
       scheduleRedraw()
     }
     const move = (event: PointerEvent) => {
-      if (!drawing) return
+      if (!mode) return
       // Some browsers hand back an empty list (untrusted events); fall back to
       // the event itself so no sample is lost.
       const coalesced = event.getCoalescedEvents?.() ?? []
-      for (const sample of coalesced.length > 0 ? coalesced : [event]) session.extend(toScreen(sample))
+      for (const sample of coalesced.length > 0 ? coalesced : [event]) {
+        if (mode === 'erase') erase(sample)
+        else session.extend(toScreen(sample))
+      }
       scheduleRedraw()
     }
     const up = () => {
-      if (!drawing) return
-      drawing = false
+      if (!mode) return
+      const wasDrawing = mode === 'draw'
+      mode = null
+      if (!wasDrawing) return
       session.end()
       scheduleRedraw()
     }

@@ -29,3 +29,30 @@ export function normalizedRect(a: Point, b: Point) {
 export function distance(a: Point, b: Point): number {
   return Math.hypot(b.x - a.x, b.y - a.y)
 }
+
+export function distanceToSegment(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const lengthSquared = dx * dx + dy * dy
+  if (lengthSquared === 0) return distance(p, a)
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSquared))
+  return distance(p, { x: a.x + t * dx, y: a.y + t * dy })
+}
+
+/** Distance to an open chain of points; a single point is its own chain. */
+export function distanceToPolyline(p: Point, points: readonly Point[]): number {
+  if (points.length === 1) return distance(p, points[0])
+  let best = Infinity
+  for (let i = 1; i < points.length; i++) best = Math.min(best, distanceToSegment(p, points[i - 1], points[i]))
+  return best
+}
+
+/** The outline of the ellipse inscribed in a rectangle, as a closed polygon. */
+export function ellipseOutline(rect: { x: number; y: number; width: number; height: number }, steps = 72): Point[] {
+  const cx = rect.x + rect.width / 2
+  const cy = rect.y + rect.height / 2
+  return Array.from({ length: steps + 1 }, (_, i) => {
+    const a = (i / steps) * Math.PI * 2
+    return { x: cx + Math.cos(a) * (rect.width / 2), y: cy + Math.sin(a) * (rect.height / 2) }
+  })
+}

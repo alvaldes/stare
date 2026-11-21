@@ -1,6 +1,6 @@
 // Draws the vector model onto a 2D canvas, following StareCore's MarkRenderer.
 import { arrowHeadBarbs, normalizedRect } from './geometry'
-import { BADGE_DIAMETER, inkHex, isTransient, laserOpacity, lineWidth, type Mark, opacity } from './model'
+import { BADGE_DIAMETER, ERASER_RADIUS, inkHex, isTransient, laserOpacity, lineWidth, type Mark, opacity } from './model'
 import type { DrawingSession } from './session'
 
 /** Inks light enough that a white step number would disappear on them. */
@@ -97,6 +97,16 @@ export function drawMark(ctx: CanvasRenderingContext2D, mark: Mark, badge: numbe
     }
     case 'number':
       drawBadge(ctx, mark, badge ?? 1, weight)
+      break
+    case 'eraser':
+      // Only the shortcuts panel draws this: the path the eraser swept.
+      ctx.globalAlpha = 0.22
+      ctx.strokeStyle = '#5b6275'
+      ctx.lineWidth = ERASER_RADIUS * 2 * weight
+      ctx.beginPath()
+      ctx.moveTo(start.x, start.y)
+      ctx.lineTo(end.x, end.y)
+      ctx.stroke()
       break
   }
   ctx.restore()

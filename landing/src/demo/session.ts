@@ -1,5 +1,15 @@
-import { distance } from './geometry'
-import { type InkId, isTransient, LASER_LIFETIME_MS, type Mark, MINIMUM_SAMPLE_DISTANCE, type Point, type ToolId } from './model'
+import { arrowHeadBarbs, distance, distanceToPolyline, ellipseOutline, normalizedRect } from './geometry'
+import {
+  BADGE_DIAMETER,
+  type InkId,
+  isTransient,
+  LASER_LIFETIME_MS,
+  lineWidth,
+  type Mark,
+  MINIMUM_SAMPLE_DISTANCE,
+  type Point,
+  type ToolId,
+} from './model'
 
 const FREEHAND: ReadonlySet<ToolId> = new Set(['pen', 'highlighter', 'laser'])
 
@@ -62,6 +72,17 @@ export class DrawingSession {
     return this.marks.some(fading) || fading(this.current)
   }
 
+  /**
+   * Removes every whole mark within `radius` of the point, as the app's eraser
+   * does on each drag sample. Returns how many went. Not undoable, like the
+   * app: undo afterwards takes back the last mark still on screen.
+   */
+  erase(point: Point, radius: number): number {
+    const before = this.marks.length
+    this.marks = this.marks.filter((mark) => !hitTest(mark, point, radius))
+    return before - this.marks.length
+  }
+
   undo(): void {
     this.marks.pop()
   }
@@ -82,5 +103,42 @@ export class DrawingSession {
       if (this.marks[i].tool === 'number') count++
     }
     return count
+  }
+}
+
+/**
+ * StareCore's Stroke.hitTest: the stroked outline widened by the eraser
+ * radius on each side, the badge's disc, or (for later tools) their bounds.
+ */
+function hitTest(mark: Mark, point: Point, radius: number): boolean {
+  const weight = mark.weight ?? 1
+  const reach = Math.max(lineWidth(mark.tool) * weight, 2) / 2 + radius
+  const [start] = mark.points
+  const end = mark.points[mark.points.length - 1]
+
+  switch (mark.tool) {
+    case 'number':
+      return distance(point, start) <= (BADGE_DIAMETER / 2) * weight + radius
+    case 'rectangle': {
+      const r = normalizedRect(start, end)
+      const corners = [
+        { x: r.x, y: r.y },
+        { x: r.x + r.width, y: r.y },
+        { x: r.x + r.width, y: r.y + r.height },
+        { x: r.x, y: r.y + r.height },
+        { x: r.x, y: r.y },
+      ]
+      return distanceToPolyline(point, corners) <= reach
+    }
+    case 'ellipse':
+      return distanceToPolyline(point, ellipseOutline(normalizedRect(start, end))) <= reach
+    case 'arrow': {
+      const head = arrowHeadBarbs(start, end, weight).map((barb) => [end, barb])
+      return [[start, end], ...head].some((segment) => distanceToPolyline(point, segment) <= reach)
+    }
+    case 'eraser':
+      return false
+    default:
+      return distanceToPolyline(point, mark.points) <= reach
   }
 }

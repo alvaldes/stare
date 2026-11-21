@@ -20,6 +20,7 @@ const TOOL_NOTES: Record<ToolId, string> = {
   rectangle: 'Frame a region of the screen.',
   ellipse: 'Ring the detail that matters.',
   number: 'Numbered steps. Undo one and the rest renumber.',
+  eraser: 'Wipes whole marks as you drag over them. There is no undo for it, like the app.',
   laser: 'Point while you talk. It fades on its own and never shows up in a capture.',
 }
 

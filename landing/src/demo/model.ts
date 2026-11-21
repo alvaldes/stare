@@ -1,7 +1,7 @@
 // The demo's drawing vocabulary, mirrored from the macOS app (StareCore Tool,
 // Ink and Stroke) so the browser behaves like the real thing.
 
-export type ToolId = 'pen' | 'highlighter' | 'arrow' | 'line' | 'rectangle' | 'ellipse' | 'number' | 'laser'
+export type ToolId = 'pen' | 'highlighter' | 'arrow' | 'line' | 'rectangle' | 'ellipse' | 'number' | 'laser' | 'eraser'
 
 export interface ToolInfo {
   id: ToolId
@@ -19,6 +19,7 @@ export const TOOLS: readonly ToolInfo[] = [
   { id: 'ellipse', name: 'Ellipse', key: 'O' },
   { id: 'number', name: 'Numbered step', key: 'C' },
   { id: 'laser', name: 'Laser pointer', key: 'F' },
+  { id: 'eraser', name: 'Eraser', key: 'E' },
 ]
 
 export type InkId = 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'white' | 'black'
@@ -86,6 +87,9 @@ export const MINIMUM_SAMPLE_DISTANCE = 0.75
 export function isTransient(tool: ToolId): boolean {
   return tool === 'laser'
 }
+
+/** How far from the pointer the eraser reaches, in points (the app's 8). */
+export const ERASER_RADIUS = 8
 
 /** The app's default laser duration (its preference starts at 2.5 s). */
 export const LASER_LIFETIME_MS = 2500

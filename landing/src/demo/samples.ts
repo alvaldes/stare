@@ -1,6 +1,6 @@
 // Example marks for the shortcuts panel: what each tool draws, at a point
 // t (0 to 1) of a short drawing animation, on a 320×160 canvas.
-import type { InkId, Mark, Point, ToolId } from './model'
+import { ERASER_RADIUS, type InkId, type Mark, type Point, type ToolId } from './model'
 
 export const SAMPLE_WIDTH = 320
 export const SAMPLE_HEIGHT = 160
@@ -27,6 +27,11 @@ const LASER_PATH: Point[] = Array.from({ length: 40 }, (_, i) => {
   return { x: 44 + k * 232, y: 96 - Math.sin(k * Math.PI * 1.6) * 38 }
 })
 
+/** Three scribbles for the eraser to sweep away, left to right. */
+const SCRIBBLES: Point[][] = [92, 160, 228].map((cx) =>
+  Array.from({ length: 14 }, (_, i) => ({ x: cx - 26 + i * 4, y: 82 + Math.sin(i * 1.3) * 14 })),
+)
+
 const BADGES: Point[] = [{ x: 92, y: 80 }, { x: 160, y: 80 }, { x: 228, y: 80 }]
 
 export function sampleMarks(tool: ToolId, ink: InkId, t: number): Mark[] {
@@ -41,6 +46,13 @@ export function sampleMarks(tool: ToolId, ink: InkId, t: number): Mark[] {
   if (tool === 'laser') {
     const count = Math.max(2, Math.ceil(LASER_PATH.length * progress))
     return [{ tool, ink, points: LASER_PATH.slice(0, count) }]
+  }
+
+  if (tool === 'eraser') {
+    const reach = 40 + 236 * progress
+    const remaining = SCRIBBLES.filter((s) => s[0].x > reach - ERASER_RADIUS)
+    const trail = { tool, ink, points: [{ x: 40, y: 82 }, { x: reach, y: 82 }] }
+    return [...remaining.map((points) => ({ tool: 'pen' as const, ink, points })), trail]
   }
 
   if (tool === 'number') {
