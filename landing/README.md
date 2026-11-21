@@ -56,8 +56,8 @@ pnpm run deploy       # build, prerender, upload
 Use `pnpm run deploy`, not `pnpm deploy`: `deploy` is also a built-in pnpm
 command (it copies a workspace package to a folder) and wins over the script.
 
-The Worker is named `stare-landing` (see `wrangler.jsonc`). The first deploy
-prints its address, `https://stare-landing.<your-subdomain>.workers.dev`.
+The Worker is named `stare` (see `wrangler.jsonc`). The first deploy
+prints its address, `https://stare.<your-subdomain>.workers.dev`.
 
 ## Keeping the demo faithful
 
