@@ -399,6 +399,27 @@ private struct BarPane: View {
     /// own measurement, and the pool chips' measured sizes.
     @State private var poolSizes: [Tool: CGSize] = [:]
 
+    /// The bar's size before scaling, measured from the bar itself the first
+    /// time it lays out: what the fit-to-width factor is computed from.
+    @State private var barNaturalSize: CGSize = .zero
+
+    /// How much the preview shrinks to sit inside the stage: never up, only
+    /// down, so a narrow window still shows the whole bar (S2).
+    private var barPreviewScale: CGFloat {
+        let available = cardsWidth - SettingsMetrics.stageChrome
+        guard barNaturalSize.width > 0, available > 0 else { return 1 }
+        return min(1, available / barNaturalSize.width)
+    }
+
+    /// The bar's own width and height, reported by the bar in the stage.
+    private struct ToolbarPreviewSizeKey: PreferenceKey {
+        static var defaultValue: CGSize { .zero }
+        static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+            let next = nextValue()
+            if next != .zero { value = next }
+        }
+    }
+
     /// The measured chip sizes the pool's drop targets read.
     private struct ToolbarPoolChipSizeKey: PreferenceKey {
         static var defaultValue: [Tool: CGSize] { [:] }
@@ -435,7 +456,11 @@ private struct BarPane: View {
 
     private func syncToolbarPreview() {
         toolbarPreviewState.toolbarTools = model.toolbarTools
-        toolbarPreviewState.toolbarOrientation = model.toolbarOrientation
+        // The preview always renders horizontal (S1): a vertical bar inside the
+        // stage distorted the pane and hid most of the tools, so the preview
+        // answers what is on the bar and the orientation picker answers the
+        // rest. Nothing else of the real bar's state changes here.
+        toolbarPreviewState.toolbarOrientation = .horizontal
         toolbarPreviewState.toolbarBorder = model.toolbarBorder
         toolbarPreviewState.tool = model.tool
         toolbarPreviewState.ink = model.ink
@@ -605,35 +630,44 @@ private struct BarPane: View {
         }
     }
 
-    /// The stage: the bar itself, on the draft layout, docked the way the
-    /// pickers below say. Every item is a drag source and a two-sided drop
-    /// target, and the pool below is the other half of the same draft. The
-    /// real bar with the default layout is wider than the stage, so it
-    /// scrolls along the bar's own axis instead of pushing the pane wider —
-    /// a vertical bar scrolls vertically and is capped in height. The bar
-    /// keeps its drag hooks: the scroller carries the view whole, so every
-    /// item stays a drag source and a drop target.
+    /// The stage: the bar itself, on the draft layout. Every item is a drag
+    /// source and a two-sided drop target, and the pool below is the other half
+    /// of the same draft. It renders horizontal whatever the bar's orientation
+    /// is (S1), and it is fitted to the stage's width (S2) instead of
+    /// scrolling: the whole bar stays visible, because a preview that cuts the
+    /// tools it is meant to show answers nothing. Scaling is a transform, so
+    /// every item keeps its drag hooks.
     private var toolbarStage: some View {
         SettingsStage(
             label: "On the bar",
             note: "Drag a tool out of the pool onto the bar."
         ) {
-            ScrollView(model.toolbarOrientation == .vertical ? .vertical : .horizontal) {
-                ToolbarView(
-                    state: toolbarPreviewState,
-                    onUndo: {}, onRedo: {}, onClear: {}, onDone: {},
-                    toolItems: model.toolbarTools.items,
-                    organiser: ToolbarOrganiserHooks(
-                        dragProvider: { NSItemProvider(object: $0.identifier as NSString) },
-                        drop: { target, edge, payload in
-                            handleBarDrop(target: target, edge: edge, payload: payload)
-                        }
-                    )
+            ToolbarView(
+                state: toolbarPreviewState,
+                onUndo: {}, onRedo: {}, onClear: {}, onDone: {},
+                toolItems: model.toolbarTools.items,
+                organiser: ToolbarOrganiserHooks(
+                    dragProvider: { NSItemProvider(object: $0.identifier as NSString) },
+                    drop: { target, edge, payload in
+                        handleBarDrop(target: target, edge: edge, payload: payload)
+                    }
                 )
-                .padding(.vertical, model.toolbarOrientation == .vertical ? 6 : 8)
+            )
+            .fixedSize()
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(key: ToolbarPreviewSizeKey.self, value: geo.size)
+                }
+            )
+            .scaleEffect(barPreviewScale, anchor: .center)
+            .frame(
+                width: max(barNaturalSize.width, 1) * barPreviewScale,
+                height: max(barNaturalSize.height, 34) * barPreviewScale
+            )
+            .onPreferenceChange(ToolbarPreviewSizeKey.self) { size in
+                barNaturalSize = size
             }
-            .scrollIndicators(.hidden)
-            .frame(maxHeight: model.toolbarOrientation == .vertical ? 240 : nil)
+            .padding(.vertical, 8)
         }
         // The stage is the preview: it follows the model on every change, and
         // starts in step on appear instead of waiting for the first change.

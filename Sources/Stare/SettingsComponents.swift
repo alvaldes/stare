@@ -21,6 +21,17 @@ enum SettingsMetrics {
     static let singleColumnMaximum: CGFloat = 700
     /// Between two cards, and between the cards and the stage.
     static let cardSpacing: CGFloat = 14
+    /// The stage's lead column: the label and the note beside the preview.
+    static let stageLeadingColumn: CGFloat = 140
+    /// Between the stage's lead column and the preview, and the padding around
+    /// both.
+    static let stageSpacing: CGFloat = 16
+    static let stagePadding: CGFloat = 12
+    /// What the stage's own chrome takes from a pane's width, so a stage that
+    /// scales its content down to fit knows the width it really has.
+    static var stageChrome: CGFloat {
+        stageLeadingColumn + stageSpacing + stagePadding * 2
+    }
 }
 
 /// A pane that is its own scroll container: the header stays put and the cards
@@ -91,7 +102,7 @@ struct SettingsStage<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        HStack(alignment: .center, spacing: 16) {
+        HStack(alignment: .center, spacing: SettingsMetrics.stageSpacing) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(label.uppercased())
                     .font(.system(size: 10, weight: .bold))
@@ -102,12 +113,12 @@ struct SettingsStage<Content: View>: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .frame(width: 140, alignment: .leading)
+            .frame(width: SettingsMetrics.stageLeadingColumn, alignment: .leading)
 
             content
                 .frame(maxWidth: .infinity, alignment: .center)
         }
-        .padding(12)
+        .padding(SettingsMetrics.stagePadding)
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
