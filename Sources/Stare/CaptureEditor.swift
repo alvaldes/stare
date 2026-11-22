@@ -509,6 +509,12 @@ final class CaptureEditorCanvas: NSView {
     private var gestureSpace: EditorCropSpace?
     /// The region taking shape, in original pixels, drawn live during the drag.
     private var pendingRegion: CGRect?
+    /// The drawing gesture in flight: the point it started at, whether the
+    /// pointer ever moved away, and the committed marks it started with, so
+    /// `mouseUp` can tell a genuine edit from a stray click.
+    private var drawingStart: CGPoint?
+    private var drawingMoved = false
+    private var drawingStrokes: [Stroke]?
 
     init(image: CGImage) {
         self.image = image
@@ -656,6 +662,9 @@ final class CaptureEditorCanvas: NSView {
         guard let state else { return }
         let drawingSpace = displaySpace(armed: false)
         guard drawingSpace.display.contains(point) else { return }
+        drawingStart = point
+        drawingMoved = false
+        drawingStrokes = session.strokes
         let stroke = session.begin(at: point, tool: state.tool, ink: state.ink)
         spaces[stroke.id] = drawingSpace
         needsDisplay = true
@@ -684,6 +693,9 @@ final class CaptureEditorCanvas: NSView {
         }
 
         session.extend(to: point)
+        if point != drawingStart {
+            drawingMoved = true
+        }
         needsDisplay = true
     }
 
@@ -692,16 +704,29 @@ final class CaptureEditorCanvas: NSView {
             finishCropGesture()
             return
         }
-        let before = session
-        session.extend(to: convert(event.locationInWindow, from: nil))
+        let point = convert(event.locationInWindow, from: nil)
+        // A click that never left its mouseDown point has no direction: feeding
+        // it to `extend` would append a duplicate sample and `commit` would
+        // keep the zero-length mark, a mark that paints nothing. Skipping the
+        // extend lets `commit` judge it and throw it away instead (S7).
+        if drawingMoved || point != drawingStart {
+            session.extend(to: point)
+        }
         session.commit()
-        // A committed mark is an edit in the shared journal (S7): ⌘Z must pop
-        // it before any crop that came before it. A commit that only threw a
-        // stray active mark away (a degenerate stroke) left the marks alone,
-        // so the journal stays silent about it.
-        if session != before {
+        // The journal keys off the session's COMMITTED MARKS — what the
+        // document actually gained — never off the whole session object and
+        // never off the tool (S7). That is why it cannot miss a future tool:
+        // whatever gesture a tool uses, its edit has to land in
+        // `session.strokes` (a click tool already commits inside `begin`, a
+        // drag at `commit`), and any session-only difference — `active`
+        // appearing or vanishing, a no-op commit — journals nothing, so a
+        // gesture that changed nothing can never eat a ⌘Z.
+        if let before = drawingStrokes, session.strokes != before {
             record.noteMark()
         }
+        drawingStart = nil
+        drawingMoved = false
+        drawingStrokes = nil
         needsDisplay = true
     }
 
@@ -719,7 +744,11 @@ final class CaptureEditorCanvas: NSView {
         defer { needsDisplay = true }
 
         guard let drawn, EditorCropRule.isTakeable(drawn) else { return }
-        record.crop(to: EditorCropRule.snapped(drawn, in: fullBounds))
+        let applied = EditorCropRule.snapped(drawn, in: fullBounds)
+        // A gesture that ends on the live region changed nothing: the document
+        // is the same picture, so the journal keeps quiet about it (S7).
+        guard applied != record.region else { return }
+        record.crop(to: applied)
         if let region = record.region {
             Diag.log("editor cropped to region \(region)")
         }
