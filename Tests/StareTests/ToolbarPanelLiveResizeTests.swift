@@ -43,15 +43,37 @@ final class ToolbarPanelLiveResizeTests: XCTestCase {
         }
     }
 
-    private func makeOnScreenPanel(_ state: EditorState) -> ToolbarPanel {
+    /// Places the bar on the primary screen and shows it there. The placement
+    /// the bar runs on its own — `positionNearPointerDisplay` targets the
+    /// pointer's display — follows the human's cursor, which may sit on a
+    /// secondary monitor they are watching while the tests run, so this probe
+    /// never asks AppKit where the window belongs: it pins the primary screen
+    /// (see `PrimaryScreenTestWindow`).
+    private func makeOnScreenPanel(_ state: EditorState) throws -> ToolbarPanel {
         let panel = ToolbarPanel(
             state: state,
             onUndo: {}, onRedo: {}, onClear: {}, onDone: {}
         )
-        panel.positionNearPointerDisplay(placement: .cursor)
+        let home = try XCTUnwrap(
+            PrimaryScreenTestWindow.frame(for: panel.frame.size),
+            "the primary screen cannot host the toolbar probe")
+        panel.setFrameOrigin(home.origin)
         panel.orderFront(nil)
         runLoopTurns()
         return panel
+    }
+
+    /// Re-docks the bar onto the primary screen when one of the panel's own
+    /// placement paths walked it off. The panel's reset path (fired live by
+    /// an orientation or border change, T9/S12) re-targets the pointer's
+    /// display, and the pointer is the human's, not the probe's — so every
+    /// state change that can trigger a reset re-pins the window to the
+    /// primary screen (see `PrimaryScreenTestWindow`) before assertions run.
+    private func confineToPrimaryScreen(_ panel: ToolbarPanel) {
+        guard let home = PrimaryScreenTestWindow.frame(for: panel.frame.size) else { return }
+        let primaryVisible = NSScreen.screens.first?.visibleFrame ?? home
+        guard !primaryVisible.contains(panel.frame) else { return }
+        panel.setFrameOrigin(home.origin)
     }
 
     // MARK: - The window follows the content
@@ -60,7 +82,7 @@ final class ToolbarPanelLiveResizeTests: XCTestCase {
         try XCTSkipIf(NSScreen.screens.isEmpty, "the probe needs a real display")
 
         let state = EditorState()
-        let panel = makeOnScreenPanel(state)
+        let panel = try makeOnScreenPanel(state)
         defer { panel.orderOut(nil) }
 
         // Baseline: a freshly shown bar shows exactly the hosted content's
@@ -73,7 +95,12 @@ final class ToolbarPanelLiveResizeTests: XCTestCase {
         // Flip the stacking direction while the bar is on screen: the window
         // takes the vertical shape.
         state.toolbarOrientation = .vertical
+        // The flip fires the panel's live reset (T9/S12), which re-targets
+        // the pointer's display: pin the bar back to the primary screen at
+        // once, and again after the reset's async re-assert has run.
+        confineToPrimaryScreen(panel)
         runLoopTurns()
+        confineToPrimaryScreen(panel)
 
         let verticalFit = hosting.fittingSize
         XCTAssertEqual(panel.frame.width, verticalFit.width, accuracy: 2)
@@ -87,7 +114,7 @@ final class ToolbarPanelLiveResizeTests: XCTestCase {
         try XCTSkipIf(NSScreen.screens.isEmpty, "the probe needs a real display")
 
         let state = EditorState()
-        let panel = makeOnScreenPanel(state)
+        let panel = try makeOnScreenPanel(state)
         defer { panel.orderOut(nil) }
 
         let hosting = try XCTUnwrap(panel.contentView)
@@ -97,7 +124,11 @@ final class ToolbarPanelLiveResizeTests: XCTestCase {
         // window must take the smaller fitting size.
         // Only the pen on the bar; every other tool waits in the pool.
         state.toolbarTools = ToolbarToolLayout(items: [.tool(.pen)])
+        // A tool-set change only refits the size; the placement paths that
+        // can walk the bar off the primary screen are the reset-driven ones
+        // (orientation/border). Pin it anyway after the runloop settles.
         runLoopTurns()
+        confineToPrimaryScreen(panel)
 
         let shrunkFit = hosting.fittingSize
         XCTAssertLessThan(shrunkFit.width + shrunkFit.height, fullFit.width + fullFit.height)
@@ -113,7 +144,7 @@ final class ToolbarPanelLiveResizeTests: XCTestCase {
         try XCTSkipIf(NSScreen.screens.isEmpty, "the probe needs a real display")
 
         let state = EditorState()
-        let panel = makeOnScreenPanel(state)
+        let panel = try makeOnScreenPanel(state)
         defer { panel.orderOut(nil) }
 
         // Simulate the user dragging the bar away from the default anchor:
@@ -137,6 +168,7 @@ final class ToolbarPanelLiveResizeTests: XCTestCase {
         // Only the pen on the bar; every other tool waits in the pool.
         state.toolbarTools = ToolbarToolLayout(items: [.tool(.pen)])
         runLoopTurns()
+        confineToPrimaryScreen(panel)
 
         // The resize itself must have happened, or the next assertions are
         // vacuous: the window takes the shrunk fitting size…

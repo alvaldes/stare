@@ -10,6 +10,30 @@ import StareCore
 final class WhiteboardClearRoutingTests: XCTestCase {
     private let size = CGSize(width: 900, height: 600)
 
+    /// The controller-path probes show a board canvas for every display and
+    /// a palette on the pointer's display. Both placements write the
+    /// toolbar's persisted anchor/screen (`ToolbarPanel.persistAnchor`), so
+    /// snapshot and restore them here like `ToolbarPanelLiveResizeTests`
+    /// does, leaving no mark on the host's own defaults.
+    private let anchorKeys = [ToolbarPanel.anchorKey, ToolbarPanel.screenKey]
+    private var savedDefaults: [(String, Any?)] = []
+
+    override func setUp() {
+        super.setUp()
+        savedDefaults = anchorKeys.map { ($0, UserDefaults.standard.object(forKey: $0)) }
+    }
+
+    override func tearDown() {
+        for (key, value) in savedDefaults {
+            if let value {
+                UserDefaults.standard.set(value, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
+        super.tearDown()
+    }
+
     private func mouseEvent(_ type: NSEvent.EventType, at point: CGPoint, window: NSWindow) -> NSEvent? {
         NSEvent.mouseEvent(
             with: type, location: CGPoint(x: point.x, y: size.height - point.y),
@@ -40,8 +64,11 @@ final class WhiteboardClearRoutingTests: XCTestCase {
         let board = WhiteboardPages()
         let view = WhiteboardView(
             frame: CGRect(origin: .zero, size: size), state: state, board: board, onEscape: {})
+        try XCTSkipIf(NSScreen.screens.isEmpty, "the probe shows a window, so it needs a screen")
         let window = NSWindow(
-            contentRect: CGRect(origin: .zero, size: size),
+            contentRect: try XCTUnwrap(
+                PrimaryScreenTestWindow.frame(for: size),
+                "the primary screen cannot host the probe"),
             styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = view
         window.orderFrontRegardless()
@@ -77,8 +104,11 @@ final class WhiteboardClearRoutingTests: XCTestCase {
         let board = WhiteboardPages()
         let view = WhiteboardView(
             frame: CGRect(origin: .zero, size: size), state: state, board: board, onEscape: {})
+        try XCTSkipIf(NSScreen.screens.isEmpty, "the probe shows a window, so it needs a screen")
         let window = NSWindow(
-            contentRect: CGRect(origin: .zero, size: size),
+            contentRect: try XCTUnwrap(
+                PrimaryScreenTestWindow.frame(for: size),
+                "the primary screen cannot host the probe"),
             styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = view
         window.orderFrontRegardless()
@@ -135,7 +165,29 @@ final class WhiteboardClearRoutingTests: XCTestCase {
             controller.toggleBoard()
             throw XCTSkip("board canvas could not be created")
         }
+        // Confinement (see `PrimaryScreenTestWindow`): the controller just
+        // showed a board canvas for every display and the palette on the
+        // pointer's display — neither screen is the test's to choose, and
+        // the human watches the others while the suite runs. Everything the
+        // board showed moves onto the primary screen's visible frame in the
+        // same AppKit pass the windows were ordered front in — before the
+        // first runloop turn below — so the window server only ever renders
+        // the confined frames.
+        let primary = try XCTUnwrap(NSScreen.screens.first, "the board canvases need a display")
+        let boardsFrame = try XCTUnwrap(
+            PrimaryScreenTestWindow.frame(for: primary.visibleFrame.size),
+            "the primary screen cannot host the board canvases")
+        for canvas in controller.selfTestViews.compactMap(\.window) {
+            canvas.setFrame(boardsFrame, display: false)
+        }
+        for case let toolbar as ToolbarPanel in NSApplication.shared.windows {
+            guard let paletteFrame = PrimaryScreenTestWindow.frame(for: toolbar.frame.size)
+            else { continue }
+            toolbar.setFrameOrigin(paletteFrame.origin)
+        }
+
         RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+
         return (controller, view, panel)
     }
 

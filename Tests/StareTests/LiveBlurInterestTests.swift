@@ -57,8 +57,11 @@ final class LiveBlurInterestTests: XCTestCase {
     /// PRESERVE: drawing a blur mark the usual way still reports interest —
     /// the fix must not silence the incremental paths.
     func testDrawingABlurMarkStillReportsFrameInterest() throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "the probe shows a window, so it needs a screen")
         let window = NSWindow(
-            contentRect: CGRect(origin: .zero, size: size),
+            contentRect: try XCTUnwrap(
+                PrimaryScreenTestWindow.frame(for: size),
+                "the primary screen cannot host the probe"),
             styleMask: [.borderless], backing: .buffered, defer: false)
         let view = makeView()
         window.contentView = view

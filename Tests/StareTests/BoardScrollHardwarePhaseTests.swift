@@ -54,14 +54,17 @@ final class BoardScrollHardwarePhaseTests: XCTestCase {
         return NSEvent(cgEvent: cg)
     }
 
-    private func makeBoardAndView() -> (WhiteboardPages, WhiteboardView) {
+    private func makeBoardAndView() throws -> (WhiteboardPages, WhiteboardView) {
         let state = EditorState()
         state.tool = .select
         let board = WhiteboardPages()
         let view = WhiteboardView(
             frame: CGRect(origin: .zero, size: size), state: state, board: board, onEscape: {})
+        try XCTSkipIf(NSScreen.screens.isEmpty, "the probe shows a window, so it needs a screen")
         let window = NSWindow(
-            contentRect: CGRect(origin: .zero, size: size),
+            contentRect: try XCTUnwrap(
+                PrimaryScreenTestWindow.frame(for: size),
+                "the primary screen cannot host the probe"),
             styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = view
         window.orderFrontRegardless()
@@ -72,8 +75,8 @@ final class BoardScrollHardwarePhaseTests: XCTestCase {
     /// A live `.changed`-shaped stream keeps the gesture running: opposite
     /// jitter between zoom-in steps must not zoom, and consistent deltas
     /// keep zooming in.
-    func testALiveChangedStreamKeepsTheDirectionLockLatched() {
-        let (board, view) = makeBoardAndView()
+    func testALiveChangedStreamKeepsTheDirectionLockLatched() throws {
+        let (board, view) = try makeBoardAndView()
         defer { view.window?.orderOut(nil) }
         view.resetPageView()
         let base = board.currentPage.zoom
@@ -100,8 +103,8 @@ final class BoardScrollHardwarePhaseTests: XCTestCase {
 
     /// The closing `.ended` event (raw 8 through the CG field) ends the
     /// gesture, so a following event may zoom the other way.
-    func testTheEndedEventClosesTheGestureSoTheNextMayZoomTheOtherWay() {
-        let (board, view) = makeBoardAndView()
+    func testTheEndedEventClosesTheGestureSoTheNextMayZoomTheOtherWay() throws {
+        let (board, view) = try makeBoardAndView()
         defer { view.window?.orderOut(nil) }
         view.resetPageView()
         let base = board.currentPage.zoom
@@ -124,8 +127,8 @@ final class BoardScrollHardwarePhaseTests: XCTestCase {
 
     /// The momentum tail (raw values AppKit reports as momentum begin,
     /// continued and end) never zooms, however large its delta.
-    func testTheMomentumTailNeverZooms() {
-        let (board, view) = makeBoardAndView()
+    func testTheMomentumTailNeverZooms() throws {
+        let (board, view) = try makeBoardAndView()
         defer { view.window?.orderOut(nil) }
         view.resetPageView()
         let base = board.currentPage.zoom
@@ -152,8 +155,8 @@ final class BoardScrollHardwarePhaseTests: XCTestCase {
 
     /// A cancelled gesture releases the direction lock: the next gesture may
     /// zoom the other way instead of the lock staying latched.
-    func testACancelledGestureReleasesTheLock() {
-        let (board, view) = makeBoardAndView()
+    func testACancelledGestureReleasesTheLock() throws {
+        let (board, view) = try makeBoardAndView()
         defer { view.window?.orderOut(nil) }
         view.resetPageView()
         let base = board.currentPage.zoom
