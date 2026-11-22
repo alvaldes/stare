@@ -82,12 +82,17 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertEqual(AppPreferences(store: unknownStore).pointer.preset, .ring)
     }
 
-    func testMigrationUsesTodayDefaultsWhenSomeKeysAreMissing() {
+    /// A legacy user keeps the look they were running: the factory defaults of
+    /// their own era (72 pt), not the ones v0.4/S9 introduced for fresh
+    /// installs. Migration overrides only the keys they actually had.
+    func testMigrationUsesTheLegacyDefaultsWhenSomeKeysAreMissing() {
         let store = InMemoryPreferenceStore()
         store.set("squircle", forKey: "pointerShape")
         let prefs = AppPreferences(store: store)
         XCTAssertEqual(prefs.pointer.preset, .squircle)
-        XCTAssertEqual(prefs.pointer.size, PointerStyle.standard.size)
+        XCTAssertEqual(prefs.pointer.size, 72)
+        XCTAssertEqual(prefs.pointer.bandWidth, 0.26)
+        XCTAssertEqual(prefs.pointer.colorSource, .ink)
         XCTAssertEqual(prefs.pointer.glowIntensity, 1)
         XCTAssertTrue(prefs.pointer.fadeWhenIdle)
     }

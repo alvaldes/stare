@@ -3,20 +3,34 @@ import XCTest
 @testable import StareCore
 
 final class PointerStyleTests: XCTestCase {
+    /// The 72 pt / 0.26 band geometry the renderer's projection was verified
+    /// against. Explicit, so the geometry tests pin the maths rather than the
+    /// factory default — which v0.4/S9 moved to the owner's own look.
+    private static func geometryStyle(_ preset: PointerStylePreset) -> PointerStyle {
+        PointerStyle(preset: preset, size: 72, colorSource: .ink, bandWidth: 0.26)
+    }
+
     // MARK: Defaults
 
-    func testStandardMatchesTodayDefaults() {
+    /// v0.4/S9: the factory look is the owner's own Pointer Highlight setup,
+    /// so a fresh install opens on it. Changing any of these is a product
+    /// decision, not a refactor.
+    func testStandardIsTheOwnersLook() {
         XCTAssertEqual(
             PointerStyle.standard,
             PointerStyle(
-                preset: .squircle,
-                size: 72,
-                colorSource: .ink,
-                bandWidth: 0.26,
+                preset: .rhombus,
+                size: 100,
+                colorSource: .fixed(.purple),
+                bandWidth: 0.1,
                 glowIntensity: 1,
-                fadeWhenIdle: true
+                fadeWhenIdle: true,
+                borderStyle: .dashed
             )
         )
+        XCTAssertEqual(PointerStyle.standard.borderStyle, .dashed)
+        XCTAssertEqual(PointerStyle.standard.size, PointerStyle.defaultSize)
+        XCTAssertEqual(PointerStyle.standard.bandWidth, PointerStyle.defaultBandWidth)
     }
 
     // MARK: Clamping
@@ -58,11 +72,11 @@ final class PointerStyleTests: XCTestCase {
         // Preset falls back to ring per the lenient decoding rule; the numeric
         // and boolean defaults match `standard`.
         XCTAssertEqual(style.preset, .ring)
-        XCTAssertEqual(style.size, 72)
-        XCTAssertEqual(style.bandWidth, 0.26)
+        XCTAssertEqual(style.size, 100)
+        XCTAssertEqual(style.bandWidth, 0.1)
         XCTAssertEqual(style.glowIntensity, 1)
         XCTAssertTrue(style.fadeWhenIdle)
-        XCTAssertEqual(style.colorSource, .ink)
+        XCTAssertEqual(style.colorSource, .ink, "decoding falls back to ink, not to the factory look")
     }
 
     func testOutOfRangeNumbersClampWhenDecoded() throws {
@@ -77,7 +91,7 @@ final class PointerStyleTests: XCTestCase {
 
     func testSizeRangeStretchesTo240AndKeepsTheDefault() {
         XCTAssertEqual(PointerStyle.sizeRange, 32...240)
-        XCTAssertEqual(PointerStyle.defaultSize, 72)
+        XCTAssertEqual(PointerStyle.defaultSize, 100)
         XCTAssertEqual(PointerStyle(size: 240).size, 240)
     }
 
@@ -99,7 +113,7 @@ final class PointerStyleTests: XCTestCase {
     // MARK: Codable round trip
 
     func testFixedColorSourceRoundTrips() throws {
-        var style = PointerStyle.standard
+        var style = PointerStyle(colorSource: .ink)
         style.colorSource = .fixed(.blue)
         let decoded = try JSONDecoder().decode(
             PointerStyle.self, from: JSONEncoder().encode(style)
@@ -128,15 +142,15 @@ final class PointerStyleTests: XCTestCase {
 
     // MARK: - New fields (T14/S9)
 
-    func testNewFieldsDefaultToSolidScaleAndFullOpacity() {
-        XCTAssertEqual(PointerStyle.standard.borderStyle, .solid)
+    func testNewFieldsDefaultToDashedScaleAndFullOpacity() {
+        XCTAssertEqual(PointerStyle.standard.borderStyle, .dashed)
         XCTAssertEqual(PointerStyle.standard.clickAnimation, .scale)
         XCTAssertEqual(PointerStyle.standard.opacity, 1)
-        let style = PointerStyle(preset: .rhombus, size: 50, opacity: 0.6)
-        XCTAssertEqual(style.borderStyle, .solid)
+        let style = PointerStyle(preset: .dot, size: 50, opacity: 0.6)
+        XCTAssertEqual(style.borderStyle, .dashed)
         XCTAssertEqual(style.clickAnimation, .scale)
         XCTAssertEqual(style.opacity, 0.6)
-        XCTAssertEqual(style.preset, .rhombus)
+        XCTAssertEqual(style.preset, .dot)
     }
 
     func testOpacityClampsIntoItsRangeInitAndMutation() {
@@ -206,9 +220,7 @@ final class PointerStyleTests: XCTestCase {
     // MARK: Rhombus
 
     func testRhombusIsABandedEdgeShapeLikeTheSquircle() {
-        var style = PointerStyle.standard
-        style.preset = .rhombus
-        let appearance = style.appearance(ink: .red)
+        let appearance = Self.geometryStyle(.rhombus).appearance(ink: .red)
         XCTAssertEqual(appearance.geometry, .rhombus)
         XCTAssertEqual(appearance.bandWidth, 0.26)
         XCTAssertEqual(appearance.edgeWidth, 2)
@@ -235,7 +247,7 @@ final class PointerStyleTests: XCTestCase {
     // MARK: Appearance projection
 
     func testAppearanceResolvesInkSourceToThePassedInk() {
-        let appearance = PointerStyle.standard.appearance(ink: .green)
+        let appearance = PointerStyle(colorSource: .ink).appearance(ink: .green)
         XCTAssertEqual(appearance.ink, .green)
     }
 
@@ -249,10 +261,8 @@ final class PointerStyleTests: XCTestCase {
     /// Ring with today's values must reproduce the geometry
     /// `OverlayView.drawCursorFrame` draws today, so the current look cannot
     /// drift when the overlay switches to this projection.
-    func testRingAppearanceWithTodayDefaultsReproducesTodayGeometry() {
-        var style = PointerStyle.standard
-        style.preset = .ring
-        let appearance = style.appearance(ink: .red)
+    func testRingAppearanceWithTheVerifiedGeometryReproducesIt() {
+        let appearance = Self.geometryStyle(.ring).appearance(ink: .red)
         XCTAssertEqual(appearance.radius, 36)
         XCTAssertEqual(appearance.bandWidth, 0.26)
         XCTAssertEqual(appearance.edgeWidth, 2)
@@ -269,7 +279,7 @@ final class PointerStyleTests: XCTestCase {
     }
 
     func testSquircleAppearanceCarriesTodayCornerFactor() {
-        let appearance = PointerStyle.standard.appearance(ink: .red)
+        let appearance = Self.geometryStyle(.squircle).appearance(ink: .red)
         XCTAssertEqual(appearance.cornerRadiusFactor, 0.62)
         XCTAssertEqual(appearance.geometry, .squircle)
         XCTAssertEqual(appearance.edgeWidth, 2)
@@ -277,9 +287,7 @@ final class PointerStyleTests: XCTestCase {
     }
 
     func testDotIsAFilledDiscWithNoBandOrEdge() {
-        var style = PointerStyle.standard
-        style.preset = .dot
-        let appearance = style.appearance(ink: .red)
+        let appearance = Self.geometryStyle(.dot).appearance(ink: .red)
         XCTAssertEqual(appearance.geometry, .dot)
         XCTAssertEqual(appearance.bandWidth, 0)
         XCTAssertEqual(appearance.edgeWidth, 0)

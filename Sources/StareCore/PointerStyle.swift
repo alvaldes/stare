@@ -120,8 +120,12 @@ public struct PointerStyle: Codable, Equatable, Sendable {
     /// offering, so the floor sits above it.
     public static let opacityRange: ClosedRange<Double> = 0.25...1
 
-    public static let defaultSize: Double = 72
-    public static let defaultBandWidth: Double = 0.26
+    /// The factory look (v0.4/S9): the owner's own Pointer Highlight settings
+    /// on 2026-11-22, which he asked to become the defaults a fresh install
+    /// gets. Slider noise is rounded (size 100.13 → 100, band 0.1025 → 0.1);
+    /// neither difference is visible on screen.
+    public static let defaultSize: Double = 100
+    public static let defaultBandWidth: Double = 0.1
     public static let defaultGlowIntensity: Double = 1
     public static let defaultOpacity: Double = 1
 
@@ -164,25 +168,28 @@ public struct PointerStyle: Codable, Equatable, Sendable {
     /// What a click does to the highlight.
     public var clickAnimation: PointerClickAnimation
 
-    /// The style a fresh install gets, matching the look the app ships today.
+    /// The style a fresh install gets (v0.4/S9): rhombus, fixed purple, dashed
+    /// border, 100 pt, thin band, glow on, fading when idle, click scaling.
+    /// `PointerStyleTests` pins this look so changing it stays a decision.
     public static let standard = PointerStyle(
-        preset: .squircle,
+        preset: .rhombus,
         size: defaultSize,
-        colorSource: .ink,
+        colorSource: .fixed(.purple),
         bandWidth: defaultBandWidth,
         glowIntensity: defaultGlowIntensity,
-        fadeWhenIdle: true
+        fadeWhenIdle: true,
+        borderStyle: .dashed
     )
 
     /// Creates a style, clamping the numeric values into their ranges.
     public init(
-        preset: PointerStylePreset = .squircle,
+        preset: PointerStylePreset = .rhombus,
         size: Double = defaultSize,
-        colorSource: PointerColorSource = .ink,
+        colorSource: PointerColorSource = .fixed(.purple),
         bandWidth: Double = defaultBandWidth,
         glowIntensity: Double = defaultGlowIntensity,
         fadeWhenIdle: Bool = true,
-        borderStyle: PointerBorderStyle = .solid,
+        borderStyle: PointerBorderStyle = .dashed,
         opacity: Double = defaultOpacity,
         clickAnimation: PointerClickAnimation = .scale
     ) {

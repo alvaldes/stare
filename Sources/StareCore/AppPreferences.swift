@@ -220,9 +220,19 @@ public enum PreferencesMigration {
         let hasFade = store.object(forKey: legacyFadeKey) != nil
         guard hasSize || hasShape || hasGlow || hasFade else { return nil }
 
-        var style = PointerStyle.standard
+        // The style those legacy users were actually running — the factory
+        // look before v0.4/S9 (squircle, ink, 0.26 band). S9 changes what a
+        // fresh install gets; it must not repaint someone's existing setup with
+        // the owner's colours, so migration starts from the old look and only
+        // overrides the keys the user really had.
+        var style = PointerStyle(
+            preset: .squircle,
+            size: 72,
+            colorSource: .ink,
+            bandWidth: 0.26
+        )
         if hasSize {
-            style.size = store.double(forKey: legacySizeKey, default: PointerStyle.standard.size)
+            style.size = store.double(forKey: legacySizeKey, default: style.size)
         }
         if hasShape {
             style.preset = store.string(forKey: legacyShapeKey) == "squircle" ? .squircle : .ring

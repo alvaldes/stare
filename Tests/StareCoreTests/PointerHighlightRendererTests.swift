@@ -8,6 +8,26 @@ import XCTest
 /// identical pixels because they call the same code. Every assertion here
 /// reads rendered pixels, except the two `extent` ones.
 final class PointerHighlightRendererTests: XCTestCase {
+    /// The 72 pt / 0.26 band / ink geometry every pixel assertion below was
+    /// calibrated against. Explicit on purpose: v0.4/S9 moved the factory
+    /// default to the owner's own look (rhombus, 100 pt, 0.1 band, dashed,
+    /// fixed purple), and these tests pin the renderer, not that default.
+    private func verifiedStyle(
+        _ preset: PointerStylePreset = .squircle,
+        bandWidth: Double = 0.26,
+        glowIntensity: Double = 1,
+        opacity: Double = 1
+    ) -> PointerStyle {
+        PointerStyle(
+            preset: preset,
+            size: 72,
+            colorSource: .ink,
+            bandWidth: bandWidth,
+            glowIntensity: glowIntensity,
+            opacity: opacity
+        )
+    }
+
     // MARK: - Helpers
 
     private let canvasSize = 400
@@ -83,7 +103,7 @@ final class PointerHighlightRendererTests: XCTestCase {
     // Standard shape: radius 36, glow reach 36 * 1.9 = 68.4, margin +12,
     // exactly what OverlayView.pointerRect computes today.
     func testExtentForStandardStylePinsTodayRectAtScaleOne() {
-        let appearance = PointerStyle.standard.appearance(ink: .red)
+        let appearance = verifiedStyle().appearance(ink: .red)
         let extent = PointerHighlightRenderer.extent(for: appearance, pulseScale: 1)
         XCTAssertEqual(extent.minX, -80.4, accuracy: 0.001)
         XCTAssertEqual(extent.minY, -80.4, accuracy: 0.001)
@@ -92,7 +112,7 @@ final class PointerHighlightRendererTests: XCTestCase {
     }
 
     func testExtentScalesWithPulseScale() {
-        let appearance = PointerStyle.standard.appearance(ink: .red)
+        let appearance = verifiedStyle().appearance(ink: .red)
         let extent = PointerHighlightRenderer.extent(for: appearance, pulseScale: 1.5)
         // 36 * 1.5 * 1.9 + 12 = 114.6.
         XCTAssertEqual(extent.minX, -114.6, accuracy: 0.001)
@@ -102,7 +122,7 @@ final class PointerHighlightRendererTests: XCTestCase {
     // MARK: - Ring
 
     func testRingLeavesCentreClearPaintsBandAndStaysInsideExtent() {
-        let canvas = render(PointerStyle(preset: .ring, bandWidth: 0.26, glowIntensity: 1))
+        let canvas = render(PointerStyle(preset: .ring, size: 72, colorSource: .ink, bandWidth: 0.26, glowIntensity: 1))
         // standard sizes: radius 36, band 9.36, band spans 26.64...36.
         let extent = CGRect(x: -80.4, y: -80.4, width: 160.8, height: 160.8)
         assertNothingOutsideExtent(canvas, extent: extent, tolerance: 0.05)
@@ -114,7 +134,7 @@ final class PointerHighlightRendererTests: XCTestCase {
     // MARK: - Squircle
 
     func testSquircleLeavesCornersOfTheBoundingSquareClear() {
-        let canvas = render(PointerStyle(preset: .squircle, bandWidth: 0.26, glowIntensity: 0))
+        let canvas = render(PointerStyle(preset: .squircle, size: 72, colorSource: .ink, bandWidth: 0.26, glowIntensity: 0))
         // Corner of the bounding square, well outside the rounded rect whose
         // corner radius is 0.62 * 36 = 22.3: (33.1, 33.1) sits in the corner
         // square but 27.4 away from its corner circle centre.
@@ -133,7 +153,7 @@ final class PointerHighlightRendererTests: XCTestCase {
     // MARK: - Dot
 
     func testDotPaintsAFilledDiscWithNoHollowHole() {
-        let canvas = render(PointerStyle(preset: .dot, glowIntensity: 0))
+        let canvas = render(PointerStyle(preset: .dot, size: 72, colorSource: .ink, glowIntensity: 0))
         XCTAssertGreaterThan(canvas.alpha(atX: 200, atY: 200), 0.4, "the centre is filled")
         XCTAssertGreaterThan(canvas.alpha(atX: 190, atY: 210), 0.4, "no hollow hole")
         XCTAssertGreaterThan(canvas.alpha(atX: 210, atY: 190), 0.4, "no hollow hole")
@@ -143,7 +163,7 @@ final class PointerHighlightRendererTests: XCTestCase {
     // MARK: - Spotlight
 
     func testSpotlightFadesMonotonicallyWithNoHardEdgeAtTheRadius() {
-        let canvas = render(PointerStyle(preset: .spotlight, glowIntensity: 1))
+        let canvas = render(PointerStyle(preset: .spotlight, size: 72, colorSource: .ink, glowIntensity: 1))
         XCTAssertGreaterThan(canvas.alpha(atX: 200, atY: 200), 0.1, "the centre has glow")
         XCTAssertLessThan(canvas.alpha(atX: 200, atY: 200), 0.35, "the centre stays translucent")
 
@@ -168,7 +188,7 @@ final class PointerHighlightRendererTests: XCTestCase {
     /// vertices point along the axes past the outer circle (≈1.16 × radius)
     /// while its edges touch the circle along the diagonals.
     func testRhombusPaintsAlongItsDiagonalsAndClearsTheSquareCorners() {
-        let canvas = render(PointerStyle(preset: .rhombus, bandWidth: 0.26, glowIntensity: 0))
+        let canvas = render(PointerStyle(preset: .rhombus, size: 72, colorSource: .ink, bandWidth: 0.26, glowIntensity: 0))
         // The band sits along the shape's own diagonals: on the axes between
         // the hole (≈30.8 from the centre) and the vertex (≈41.7).
         XCTAssertGreaterThan(canvas.alpha(atX: 200, atY: 236), 0.4, "the band runs along the vertical diagonal")
@@ -191,7 +211,7 @@ final class PointerHighlightRendererTests: XCTestCase {
     /// The rhombus pokes past the circle, so the extent must still cover it —
     /// without growing beyond the formula the other presets share.
     func testRhombusStaysInsideTheSharedExtentWithoutInflatingIt() {
-        var style = PointerStyle.standard
+        var style = verifiedStyle()
         style.preset = .rhombus
         let appearance = style.appearance(ink: .red)
         let extent = PointerHighlightRenderer.extent(for: appearance, pulseScale: 1)
@@ -226,7 +246,7 @@ final class PointerHighlightRendererTests: XCTestCase {
     /// regression that proves the old inner line is gone — and the outer
     /// boundary is bright.
     func testSolidBorderFillsTheBandWithOneContinuousLineOnTheOuterEdge() {
-        var style = PointerStyle(preset: .ring, bandWidth: 0.26, glowIntensity: 0)
+        var style = PointerStyle(preset: .ring, size: 72, colorSource: .ink, bandWidth: 0.26, glowIntensity: 0)
         style.borderStyle = .solid
         let canvas = render(style)
         for degrees in stride(from: 0.0, to: 360, by: 15) {
@@ -250,7 +270,7 @@ final class PointerHighlightRendererTests: XCTestCase {
     /// shows through), the inner edge keeps being the fill's own edge with no
     /// bright line, and the outer samples alternate bright and not.
     func testDashedBorderKeepsTheBandFilledUnderGapsWithNoInnerLine() {
-        var style = PointerStyle(preset: .ring, bandWidth: 0.26, glowIntensity: 0)
+        var style = PointerStyle(preset: .ring, size: 72, colorSource: .ink, bandWidth: 0.26, glowIntensity: 0)
         style.borderStyle = .dashed
         let canvas = render(style)
         var dashAngles = 0
@@ -274,8 +294,8 @@ final class PointerHighlightRendererTests: XCTestCase {
     /// Opacity multiplies every drawn alpha: 1 is today's look, 0.5 roughly
     /// halves the band and visibly dims the glow.
     func testOpacityHalvesTheBandAlphaAndDimsTheGlow() {
-        let full = render(PointerStyle(preset: .ring, bandWidth: 0.26, glowIntensity: 1, opacity: 1))
-        let half = render(PointerStyle(preset: .ring, bandWidth: 0.26, glowIntensity: 1, opacity: 0.5))
+        let full = render(PointerStyle(preset: .ring, size: 72, colorSource: .ink, bandWidth: 0.26, glowIntensity: 1, opacity: 1))
+        let half = render(PointerStyle(preset: .ring, size: 72, colorSource: .ink, bandWidth: 0.26, glowIntensity: 1, opacity: 0.5))
         let bandFull = full.alpha(atX: 200, atY: 231)
         let bandHalf = half.alpha(atX: 200, atY: 231)
         XCTAssertGreaterThan(bandFull, 0.4, "the band is painted at full opacity")
@@ -293,7 +313,7 @@ final class PointerHighlightRendererTests: XCTestCase {
     /// Even the rhombus — the shape that pokes past the circle — stays inside
     /// the shared extent while the pulse rotates it.
     func testRotatedRhombusStaysInsideTheSameExtent() {
-        var style = PointerStyle.standard
+        var style = verifiedStyle()
         style.preset = .rhombus
         let appearance = style.appearance(ink: .red)
         let turned = render(appearance, pulseScale: 1, rotation: 0.42)
@@ -307,7 +327,7 @@ final class PointerHighlightRendererTests: XCTestCase {
     /// asymmetric preset — its rounded vertices point along the axes at rest
     /// and a 45° turn carries the paint over to the diagonals.
     func testRotationMovesTheShapeButKeepsTheExtent() {
-        let appearance = PointerStyle(preset: .rhombus, glowIntensity: 0).appearance(ink: .red)
+        let appearance = PointerStyle(preset: .rhombus, size: 72, colorSource: .ink, glowIntensity: 0).appearance(ink: .red)
         let atRest = render(appearance, pulseScale: 1, rotation: 0)
         let halfTurn = render(appearance, pulseScale: 1, rotation: .pi / 4)
         XCTAssertNotEqual(atRest.data, halfTurn.data, "rotation moves pixels")
@@ -337,7 +357,7 @@ final class PointerHighlightRendererTests: XCTestCase {
     // MARK: - Glow
 
     func testGlowOffLeavesNothingOutsideTheBand() {
-        let canvas = render(PointerStyle(preset: .squircle, glowIntensity: 0))
+        let canvas = render(PointerStyle(preset: .squircle, size: 72, colorSource: .ink, glowIntensity: 0))
         // Outside the band plus its edges (radius 37) nothing is painted at all.
         XCTAssertLessThan(canvas.alpha(atX: 200, atY: 200 + 43), 0.03, "glow off paints no halo")
         XCTAssertLessThan(canvas.alpha(atX: 200, atY: 200 - 43), 0.03)
@@ -345,8 +365,8 @@ final class PointerHighlightRendererTests: XCTestCase {
     }
 
     func testWeakerGlowIsDimmerThanStrongerGlow() {
-        let weak = render(PointerStyle(preset: .squircle, glowIntensity: 0.4))
-        let strong = render(PointerStyle(preset: .squircle, glowIntensity: 1))
+        let weak = render(PointerStyle(preset: .squircle, size: 72, colorSource: .ink, glowIntensity: 0.4))
+        let strong = render(PointerStyle(preset: .squircle, size: 72, colorSource: .ink, glowIntensity: 1))
         // Sample in the halo at 1.3r, between the band and the glow reach.
         let weakSample = weak.alpha(atX: 200, atY: 200 + 47)
         let strongSample = strong.alpha(atX: 200, atY: 200 + 47)
@@ -366,7 +386,7 @@ final class PointerHighlightRendererTests: XCTestCase {
     /// fits the canvas.
     func testFitScaleNeverExceedsOneAndIsOneWhenTheHighlightFits() {
         let side = PointerHighlightRenderer
-            .extent(for: PointerStyle.standard.appearance(ink: .red), pulseScale: 1).width
+            .extent(for: verifiedStyle().appearance(ink: .red), pulseScale: 1).width
         XCTAssertGreaterThan(side, 0)
         XCTAssertLessThanOrEqual(PointerHighlightRenderer.fitScale(extentSide: side, canvasSide: previewCanvasSide), 1)
         XCTAssertEqual(
@@ -381,7 +401,7 @@ final class PointerHighlightRendererTests: XCTestCase {
     /// and the scaled appearance's own extent must then cover exactly the
     /// canvas the fit scale was computed against.
     func test240PtScalesBelowOneWhile72PtStaysAtOne() {
-        var big = PointerStyle.standard
+        var big = verifiedStyle()
         big.size = 240
         let bigSide = PointerHighlightRenderer
             .extent(for: big.appearance(ink: .red), pulseScale: 1).width
@@ -399,7 +419,7 @@ final class PointerHighlightRendererTests: XCTestCase {
     /// and relative stops stay put, so the drawing is identical pixels at a
     /// smaller size.
     func testScaledAppearanceShrinksDistancesAndKeepsRatios() {
-        let appearance = PointerStyle.standard.appearance(ink: .red)
+        let appearance = verifiedStyle().appearance(ink: .red)
         let scaled = appearance.scaled(by: 0.35)
         XCTAssertEqual(scaled.radius, appearance.radius * 0.35, accuracy: 0.0001)
         XCTAssertEqual(scaled.edgeWidth, appearance.edgeWidth * 0.35, accuracy: 0.0001)
@@ -431,7 +451,7 @@ final class PointerHighlightRendererTests: XCTestCase {
         )
         // The percentage the caption carries comes from the same scale the
         // view draws with:
-        var big = PointerStyle.standard
+        var big = verifiedStyle()
         big.size = 240
         let bigScale = PointerHighlightRenderer.fitScale(
             extentSide: PointerHighlightRenderer
