@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import StareCore
 import UniformTypeIdentifiers
@@ -467,18 +468,83 @@ struct EditorCropRecord: Equatable {
     }
 }
 
+/// The staged crop (T4/S6): dropping the marquee — or finishing a grip drag
+/// over an applied region — does NOT cut the pixels. The rectangle waits on
+/// screen, grips live, until Return confirms or Escape / picking a tool
+/// gives it up. `EditorCropStage` is the pure value of that wait, so the
+/// transition rules (staging a drag's preview, keeping or dropping the
+/// rectangle at mouseUp, confirming into exactly one journal step,/// cancelling cleanly) are a tested rule instead of flags scattered in the
+/// gesture code: the canvas only wires the pointer and the keys into these
+/// mutations, and the owner's "hit enter to crop" ask stays a rule, not a
+/// sprinkling of booleans.
+struct EditorCropStage: Equatable {
+    /// The rectangle waiting for Return, in ORIGINAL-pixel space — the same
+    /// rect an applied region would be, so all the crop rules read it.
+    private(set) var pending: CGRect?
+    /// True while a drag is reshaping the rectangle; the hint stays off
+    /// during the drag and comes back when it ends.
+    private(set) var isDragging = false
+
+    /// Whether a rectangle is staged and waiting for Return.
+    var isWaiting: Bool { pending != nil }
+
+    /// Whether the canvas must draw the confirm hint right now.
+    var showsHint: Bool { pending != nil && !isDragging }
+
+    /// Adopts the drag's live rectangle as the staged preview.
+    mutating func updatePreview(_ rect: CGRect) {
+        pending = rect
+        isDragging = true
+    }
+
+    /// The drag ended: the rectangle keeps waiting — still adjustable
+    /// through its grips — unless it is below the minimum side, the old
+    /// scratch-drag rule that refused unusable crops (S6).
+    mutating func endPreview() {
+        isDragging = false
+        if let pending, !EditorCropRule.isTakeable(pending) {
+            self.pending = nil
+        }
+    }
+
+    /// Return: hands back the confirmed region — snapped to the pixel grid
+    /// inside `bounds` exactly as the old mouseUp apply snapped — or nil
+    /// when there is nothing takeable staged (the tool then just disarms).
+    @discardableResult
+    mutating func confirm(in bounds: CGRect) -> CGRect? {
+        isDragging = false
+        guard let pending else { return nil }
+        self.pending = nil
+        return EditorCropRule.isTakeable(pending) ? EditorCropRule.snapped(pending, in: bounds) : nil
+    }
+
+    /// Escape — or a tool pick: the rectangle disappears and the staged
+    /// state is empty again. Nothing was ever applied, so no caller has to
+    /// journal or remember anything.
+    mutating func cancel() {
+        pending = nil
+        isDragging = false
+    }
+}
+
 /// The picture plus a drawing layer, both in view space. The crop is a live
 /// region of the ORIGINAL capture (S7): applying it never rebuilds the
 /// bitmap from an already-cropped one, re-entering the crop shows the
 /// region's edges again over the whole picture, any grip can be dragged to
-/// adjust it, and undo returns to the previous region.
+/// adjust it, and undo returns to the previous region. The staged flow
+/// (T4/S6) sits on top: no drag ever applies the crop, Return does.
 final class CaptureEditorCanvas: NSView {
     /// The original capture, never cropped: regions are rects over these
     /// pixels (S7). "Original" here means the capture as arrived, marks
     /// included — new marks compose over it at save and copy time instead of
     /// ever being baked into the region cut.
     private(set) var image: CGImage
-    var state: EditorState?
+    /// Observes the single selection state: picking any tool drops the
+    /// staged rectangle together with the crop's marking (T4/S6).
+    private var selectionObservation: AnyCancellable?
+    var state: EditorState? {
+        didSet { observeSelection() }
+    }
     private var session = DrawingSession()
     /// The space each mark was recorded in — the display mapping of the
     /// moment it started. Marks are never rewritten; the renderer converts
@@ -487,11 +553,26 @@ final class CaptureEditorCanvas: NSView {
     /// The applied crop and its journal (S7): ⌘Z pops crops and marks in the
     /// order they happened.
     private var record = EditorCropRecord()
+    /// The staged rectangle waiting for the user's Return (T4/S6). No drag
+    /// applies the crop any more — the pointer only reshapes this through the
+    /// stage's rules, and Return is the only route into the journal.
+    private var stage = EditorCropStage()
     /// The crop gesture is armed exactly when crop is the editor's selected
     /// item (S6): one state drives the palette's marking and the mouse, never
     /// two flags.
     private var isCropping: Bool {
         state?.isCropMarked ?? false
+    }
+
+    /// Adapts to a new state: sink onto the one selection (S6) so a tool
+    /// pick — routed through `EditorState` — also ungates the staged
+    /// rectangle. One selection state owns both the marking and the
+    /// rectangle; the canvas never keeps a second flag of its own.
+    private func observeSelection() {
+        selectionObservation = state?.$captureSelection.sink { [weak self] selection in
+            guard case .tool = selection else { return }
+            self?.dropStagedRectangle()
+        }
     }
 
     /// The drag on the crop. The gesture remembers nothing else: the display
@@ -500,15 +581,14 @@ final class CaptureEditorCanvas: NSView {
     private enum Gesture: Equatable {
         /// A fresh rubber-band selection over the armed view.
         case marquee(start: CGPoint)
-        /// A grip of the applied region is being dragged.
+        /// A grip of the staged rectangle — or of the applied region while
+    /// nothing is staged — is being dragged.
         case adjusting(handle: CropHandle, start: CGRect)
-        /// The region is being moved by its interior.
+        /// The staged rectangle is being moved by its interior.
         case moving(start: CGRect, grab: CGPoint)
     }
     private var gesture: Gesture?
     private var gestureSpace: EditorCropSpace?
-    /// The region taking shape, in original pixels, drawn live during the drag.
-    private var pendingRegion: CGRect?
     /// The drawing gesture in flight: the point it started at, whether the
     /// pointer ever moved away, and the committed marks it started with, so
     /// `mouseUp` can tell a genuine edit from a stray click.
@@ -591,7 +671,10 @@ final class CaptureEditorCanvas: NSView {
         context.restoreGState()
 
         if isCropping {
-            drawCropOverlay(space: space, region: pendingRegion ?? record.region, in: context)
+            drawCropOverlay(space: space, region: stage.pending ?? record.region, in: context)
+            if stage.showsHint {
+                drawCropHint(space: space, region: stage.pending, in: context)
+            }
         }
     }
 
@@ -633,6 +716,51 @@ final class CaptureEditorCanvas: NSView {
         }
     }
 
+    /// The confirm hint (T4/S6): while a rectangle is staged the pixels are
+    /// not cut yet, so the picture has to say how to commit. Drawn as a dark
+    /// pill with white text — the same vocabulary the overlay's hint uses —
+    /// centred above the staged rectangle's top edge so it reads against the
+    /// shroud; when the rectangle touches the display's top, it slips inside
+    /// under the top edge instead, clamped so it never leaves the picture.
+    private func drawCropHint(space: EditorCropSpace, region: CGRect?, in context: CGContext) {
+        guard let region else { return }
+        let viewRegion = space.viewRect(fromPixel: region)
+        let text = "Hit ↵ to crop" as NSString
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+            .foregroundColor: NSColor.white,
+        ]
+        let textSize = text.size(withAttributes: attributes)
+        let padding = CGSize(width: 14, height: 8)
+        let pillWidth = textSize.width + padding.width * 2
+        let pillHeight = textSize.height + padding.height * 2
+        var y = viewRegion.minY - pillHeight - 10
+        if y < space.display.minY + 4 {
+            y = viewRegion.minY + 10
+        }
+        y = min(max(y, space.display.minY), space.display.maxY - pillHeight)
+        let pill = CGRect(
+            x: space.display.midX - pillWidth / 2,
+            y: y,
+            width: pillWidth,
+            height: pillHeight
+        )
+        context.setFillColor(CGColor(gray: 0, alpha: 0.74))
+        context.addPath(
+            CGPath(
+                roundedRect: pill,
+                cornerWidth: pill.height / 2,
+                cornerHeight: pill.height / 2,
+                transform: nil
+            )
+        )
+        context.fillPath()
+        text.draw(
+            at: CGPoint(x: pill.minX + padding.width, y: pill.minY + padding.height),
+            withAttributes: attributes
+        )
+    }
+
     // MARK: - Mouse
 
     override func mouseDown(with event: NSEvent) {
@@ -642,7 +770,21 @@ final class CaptureEditorCanvas: NSView {
             let space = displaySpace(armed: true)
             let pixel = space.pixelPoint(fromView: point)
             gestureSpace = space
-            if let region = record.region {
+            // The staged rectangle has first claim (T4/S6): while one waits,
+            // its grips and interior are what the pointer grabs, so the user
+            // can go on adjusting it. Without one, a live applied region's
+            // grips and interior do; a fresh marquee replaces whatever was
+            // staged.
+            if let pending = stage.pending {
+                let viewPending = space.viewRect(fromPixel: pending)
+                if let grip = EditorCropRule.handle(at: point, on: viewPending) {
+                    gesture = .adjusting(handle: grip, start: pending)
+                } else if viewPending.contains(point) {
+                    gesture = .moving(start: pending, grab: pixel)
+                } else {
+                    gesture = .marquee(start: pixel)
+                }
+            } else if let region = record.region {
                 let viewRegion = space.viewRect(fromPixel: region)
                 if let grip = EditorCropRule.handle(at: point, on: viewRegion) {
                     gesture = .adjusting(handle: grip, start: region)
@@ -654,7 +796,6 @@ final class CaptureEditorCanvas: NSView {
             } else {
                 gesture = .marquee(start: pixel)
             }
-            pendingRegion = nil
             needsDisplay = true
             return
         }
@@ -675,18 +816,21 @@ final class CaptureEditorCanvas: NSView {
 
         if isCropping, let gesture, let space = gestureSpace {
             let pixel = space.pixelPoint(fromView: point)
+            // Every drag only reshapes the STAGED preview (T4/S6): the
+            // pixels on screen are still the whole original until Return.
             switch gesture {
             case let .marquee(start):
-                pendingRegion = EditorCropRule.clamped(
-                    EditorCropRule.marquee(between: start, and: pixel), in: fullBounds)
+                stage.updatePreview(EditorCropRule.clamped(
+                    EditorCropRule.marquee(between: start, and: pixel), in: fullBounds))
             case let .adjusting(handle, start):
-                pendingRegion = EditorCropRule.region(from: start, dragging: handle, to: pixel, in: fullBounds)
+                stage.updatePreview(EditorCropRule.region(
+                    from: start, dragging: handle, to: pixel, in: fullBounds))
             case let .moving(start, grab):
-                pendingRegion = EditorCropRule.region(
+                stage.updatePreview(EditorCropRule.region(
                     from: start,
                     movedBy: CGPoint(x: pixel.x - grab.x, y: pixel.y - grab.y),
                     in: fullBounds
-                )
+                ))
             }
             needsDisplay = true
             return
@@ -701,7 +845,7 @@ final class CaptureEditorCanvas: NSView {
 
     override func mouseUp(with event: NSEvent) {
         if isCropping {
-            finishCropGesture()
+            endCropDrag()
             return
         }
         let point = convert(event.locationInWindow, from: nil)
@@ -730,28 +874,51 @@ final class CaptureEditorCanvas: NSView {
         needsDisplay = true
     }
 
-    /// Ends the crop gesture: an adjust or a move commits the preview as one
-    /// undoable step; a fresh marquee becomes the region only when it is big
-    /// enough — a scratch drag below the minimum leaves the applied region
-    /// alone, the way the old rule refused tiny crops. Either way the mark
-    /// goes back to the remembered tool (S6).
-    private func finishCropGesture() {
-        let drawn = pendingRegion
+    /// The drag ends but the crop does NOT (T4/S6): the rectangle stays on
+    /// screen with its grips and the picture is still whole — nothing is
+    /// applied at mouseUp any more, whatever kind of drag it was. A preview
+    /// below the minimum side stages nothing (the old scratch-drag rule),
+    /// and the palette stays marked on the crop while it waits, so the user
+    /// can keep adjusting. Return is the only way the pixels are cut —
+    /// `confirmStagedCrop`, one journal step, exactly as the old apply ran.
+    private func endCropDrag() {
+        stage.endPreview()
         gesture = nil
         gestureSpace = nil
-        pendingRegion = nil
-        state?.endCropSelection()
-        defer { needsDisplay = true }
+        needsDisplay = true
+    }
 
-        guard let drawn, EditorCropRule.isTakeable(drawn) else { return }
-        let applied = EditorCropRule.snapped(drawn, in: fullBounds)
-        // A gesture that ends on the live region changed nothing: the document
-        // is the same picture, so the journal keeps quiet about it (S7).
-        guard applied != record.region else { return }
-        record.crop(to: applied)
-        if let region = record.region {
-            Diag.log("editor cropped to region \(region)")
+    /// Return (T4/S6): the staged rectangle becomes the applied crop —
+    /// snapped to the pixel grid, journalled as one step, and handing the
+    /// palette mark back to the remembered tool — the same epilogue the old
+    /// mouseUp apply ran. Confirming the region that is already live
+    /// journals nothing: a no-op must not be an undoable step (S7).
+    private func confirmStagedCrop() {
+        guard isCropping else { return }
+        defer { needsDisplay = true }
+        gesture = nil
+        gestureSpace = nil
+        if let applied = stage.confirm(in: fullBounds), applied != record.region {
+            record.crop(to: applied)
+            Diag.log("editor cropped to region \(applied)")
         }
+        state?.endCropSelection()
+    }
+
+    /// Picking any tool gives the staged rectangle up (T4/S6): it drops with
+    /// the crop's marking — one selection state owns both. Nothing was ever
+    /// applied, so the journal keeps quiet.
+    private func dropStagedRectangle() {
+        guard stage.isWaiting else { return }
+        stage.cancel()
+        needsDisplay = true
+    }
+
+    /// Whether the confirm hint is drawn right now — the staged crop's
+    /// observable state, which the tests pin instead of reading pixels off
+    /// a rendered bitmap.
+    var showsCropHint: Bool {
+        isCropping && stage.showsHint
     }
 
     // MARK: - Keyboard
@@ -759,12 +926,13 @@ final class CaptureEditorCanvas: NSView {
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { // Escape
             if isCropping {
-                // Cancel the gesture and hand the mark back to the remembered
-                // tool (S6). The applied region stays live; undo can still take
-                // it back afterwards (S7).
+                // Cancel the staged rectangle and hand the mark back to the
+                // remembered tool (T4/S6). The picture stays exactly as it
+                // was — no journal step — and an applied region stays live;
+                // undo can still take the applied one back afterwards (S7).
+                stage.cancel()
                 gesture = nil
                 gestureSpace = nil
-                pendingRegion = nil
                 state?.endCropSelection()
                 needsDisplay = true
             } else {
@@ -774,6 +942,13 @@ final class CaptureEditorCanvas: NSView {
         }
 
         let characters = event.charactersIgnoringModifiers ?? ""
+
+        // T4/S6: Return is the staged rectangle's confirm key — the only way
+        // the pixels are cut — and the drawn hint names it exactly.
+        if event.keyCode == 36 { // Return
+            confirmStagedCrop()
+            return
+        }
 
         if event.modifierFlags.contains(.command) {
             if characters.lowercased() == "z" {

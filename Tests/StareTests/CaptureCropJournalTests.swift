@@ -65,14 +65,28 @@ final class CaptureCropJournalTests: XCTestCase {
             event(.leftMouseUp, at: point, window: editor.window)))
     }
 
+    /// A real Return key press through the canvas's key handling: under the
+    /// staged crop (T4/S6) Return is what commits the dropped rectangle —
+    /// the mouseUp no longer applies anything.
+    private func pressReturn(_ editor: Editor) throws {
+        let event = try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [],
+            timestamp: 0, windowNumber: editor.window.windowNumber,
+            context: nil, characters: "\r", charactersIgnoringModifiers: "\r",
+            isARepeat: false, keyCode: 36))
+        editor.canvas.keyDown(with: event)
+    }
+
     /// The standing 50-px crop the repros start from: marquee (50,100)–(150,200)
-    /// over a 100×100 capture in a 300×200 window lands on pixel region
-    /// (0, 50, 50, 50).
-    private func applyStandingCrop(_ editor: Editor) throws {
+    /// over a 100×100 capture in a 300×200 window stages the pixel region
+    /// (0, 50, 50, 50), and Return confirms it (the staged flow, T4/S6 — the
+    /// mouseUp only drops the rectangle).
+    private func applyStandingCropByReturn(_ editor: Editor) throws {
         editor.state.selectCrop()
         try down(editor, at: CGPoint(x: 50, y: 100))
         try dragged(editor, to: CGPoint(x: 150, y: 200))
         try up(editor, at: CGPoint(x: 150, y: 200))
+        try pressReturn(editor)
     }
 
     /// A real click: mouse down and up at one point, no dragged events —
@@ -152,7 +166,7 @@ final class CaptureCropJournalTests: XCTestCase {
         let image = try XCTUnwrap(Self.solidImage(width: 100, height: 100))
         let editor = Self.makeEditor(image: image)
 
-        try applyStandingCrop(editor)
+        try applyStandingCropByReturn(editor)
         let cropped = try XCTUnwrap(editor.canvas.composedImage())
         XCTAssertEqual(cropped.width, 50, "the crop applied")
 
@@ -182,7 +196,7 @@ final class CaptureCropJournalTests: XCTestCase {
         let editor = Self.makeEditor(image: image)
         let uncropped = try XCTUnwrap(editor.canvas.composedImage())
 
-        try applyStandingCrop(editor)
+        try applyStandingCropByReturn(editor)
         let cropped = try XCTUnwrap(editor.canvas.composedImage())
         XCTAssertEqual(cropped.width, 50)
 
@@ -208,7 +222,7 @@ final class CaptureCropJournalTests: XCTestCase {
         let editor = Self.makeEditor(image: image)
         let uncropped = try XCTUnwrap(editor.canvas.composedImage())
 
-        try applyStandingCrop(editor)
+        try applyStandingCropByReturn(editor)
         let firstCrop = try XCTUnwrap(editor.canvas.composedImage())
 
         editor.state.tool = .pen
@@ -221,6 +235,7 @@ final class CaptureCropJournalTests: XCTestCase {
         try down(editor, at: CGPoint(x: 150, y: 100))
         try dragged(editor, to: CGPoint(x: 250, y: 200))
         try up(editor, at: CGPoint(x: 250, y: 200))
+        try pressReturn(editor)
         let secondCrop = try XCTUnwrap(editor.canvas.composedImage())
         try assertPixels(secondCrop, differsFrom: firstCrop, "the two crops cover different sides")
 
@@ -244,7 +259,7 @@ final class CaptureCropJournalTests: XCTestCase {
         let editor = Self.makeEditor(image: image)
         var stages = [try XCTUnwrap(editor.canvas.composedImage())]
 
-        try applyStandingCrop(editor)
+        try applyStandingCropByReturn(editor)
         stages.append(try XCTUnwrap(editor.canvas.composedImage()))
 
         editor.state.tool = .number
@@ -271,7 +286,7 @@ final class CaptureCropJournalTests: XCTestCase {
         try drag(editor, from: CGPoint(x: 120, y: 80), to: CGPoint(x: 180, y: 120))
         stages.append(try XCTUnwrap(editor.canvas.composedImage()))
 
-        try applyStandingCrop(editor)
+        try applyStandingCropByReturn(editor)
         stages.append(try XCTUnwrap(editor.canvas.composedImage()))
 
         editor.state.tool = .number
@@ -291,7 +306,7 @@ final class CaptureCropJournalTests: XCTestCase {
         try click(editor, at: CGPoint(x: 100, y: 100))
         stages.append(try XCTUnwrap(editor.canvas.composedImage()))
 
-        try applyStandingCrop(editor)
+        try applyStandingCropByReturn(editor)
         stages.append(try XCTUnwrap(editor.canvas.composedImage()))
 
         editor.state.tool = .pen
@@ -320,6 +335,11 @@ final class CaptureCropJournalTests: XCTestCase {
         canvas.mouseDown(with: try XCTUnwrap(event(.leftMouseDown, at: CGPoint(x: 50, y: 100), window: window)))
         canvas.mouseDragged(with: try XCTUnwrap(event(.leftMouseDragged, at: CGPoint(x: 150, y: 200), window: window)))
         canvas.mouseUp(with: try XCTUnwrap(event(.leftMouseUp, at: CGPoint(x: 150, y: 200), window: window)))
+        // The staged flow (T4/S6): the drop only staged the rectangle; Return cuts.
+        canvas.keyDown(with: try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: "\r",
+            charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)))
         let cropped = try XCTUnwrap(canvas.composedImage())
         XCTAssertLessThan(cropped.width, 100, "the crop applied")
 
@@ -364,6 +384,11 @@ final class CaptureCropJournalTests: XCTestCase {
         canvas.mouseDown(with: try XCTUnwrap(event(.leftMouseDown, at: CGPoint(x: 50, y: 100), window: window)))
         canvas.mouseDragged(with: try XCTUnwrap(event(.leftMouseDragged, at: CGPoint(x: 150, y: 200), window: window)))
         canvas.mouseUp(with: try XCTUnwrap(event(.leftMouseUp, at: CGPoint(x: 150, y: 200), window: window)))
+        // The staged flow (T4/S6): the drop only staged the rectangle; Return cuts.
+        canvas.keyDown(with: try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: "\r",
+            charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)))
         let cropped = try XCTUnwrap(canvas.composedImage())
         XCTAssertLessThan(cropped.width, 100, "the crop applied")
 

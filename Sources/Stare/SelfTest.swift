@@ -387,6 +387,43 @@ enum SelfTest {
                 + "ok=\(firstCrop != nil && secondCrop == drawnSecond && cropUndoReturned && cropCutsFromOriginal)"
         )
 
+        // Staged crop (T4/S6): the drop leaves the rectangle waiting with
+        // its hint; Return confirms it as one region exactly as the old
+        // apply did; Escape drops it with nothing remembered; and a drag
+        // below the minimum side stages nothing, the old scratch-drag rule.
+        // The live pointer/key wiring is pinned by the XCTest suite
+        // (CaptureStagedCropTests); here the pure transition rules are the
+        // check the self test can drive deterministically.
+        var stagedCrop = EditorCropStage()
+        stagedCrop.updatePreview(CGRect(x: 20, y: 20, width: 100, height: 60))
+        stagedCrop.endPreview()
+        let stagedWaiting = stagedCrop.isWaiting && stagedCrop.showsHint
+            && stagedCrop.pending == CGRect(x: 20, y: 20, width: 100, height: 60)
+        let stagedAdjusted = {
+            var stage = stagedCrop
+            stage.updatePreview(CGRect(x: 28, y: 20, width: 200, height: 40))
+            stage.endPreview()
+            let confirmed = stage.confirm(in: cropFull)
+            return confirmed == CGRect(x: 28, y: 20, width: 200, height: 40) && !stage.isWaiting
+        }()
+        let stagedCancelled = {
+            var stage = EditorCropStage()
+            stage.updatePreview(CGRect(x: 5, y: 5, width: 90, height: 90))
+            stage.cancel()
+            return !stage.isWaiting && stage.confirm(in: cropFull) == nil
+        }()
+        let stagedScratch = {
+            var stage = EditorCropStage()
+            stage.updatePreview(CGRect(x: 0, y: 0, width: 4, height: 4))
+            stage.endPreview()
+            return !stage.isWaiting && stage.confirm(in: cropFull) == nil
+        }()
+        report.append(
+            "editor staged crop waiting=\(stagedWaiting) adjusted=\(stagedAdjusted) "
+                + "escape=\(stagedCancelled) scratch=\(stagedScratch) "
+                + "ok=\(stagedWaiting && stagedAdjusted && stagedCancelled && stagedScratch)"
+        )
+
         // Settings (T6 slice 2): the sidebar + panes shell renders in both
         // system appearances, one PNG per pane, and its window is resizable
         // and clearly wider than the old fixed 420-pt form.

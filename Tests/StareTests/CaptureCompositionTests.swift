@@ -74,6 +74,11 @@ final class CaptureCompositionTests: XCTestCase {
         canvas.mouseDown(with: try XCTUnwrap(event(.leftMouseDown, at: CGPoint(x: 100, y: 50), window: window)))
         canvas.mouseDragged(with: try XCTUnwrap(event(.leftMouseDragged, at: CGPoint(x: 200, y: 150), window: window)))
         canvas.mouseUp(with: try XCTUnwrap(event(.leftMouseUp, at: CGPoint(x: 200, y: 150), window: window)))
+        // The staged flow (T4/S6): the drop only staged the rectangle; Return cuts.
+        canvas.keyDown(with: try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: "\r",
+            charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)))
         let cropped = try XCTUnwrap(canvas.composedImage())
         XCTAssertEqual(cropped.width, 50, "the region (25,25,50,50) was applied")
         XCTAssertEqual(cropped.height, 50)

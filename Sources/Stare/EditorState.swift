@@ -424,7 +424,9 @@ final class EditorState: ObservableObject {
     }
 
     /// Ends the crop's turn as the armed item, giving the mark back to the
-    /// remembered tool — used when the crop gesture is cancelled or applied.
+    /// remembered tool — used when the staged rectangle is confirmed with
+    /// Return or cancelled with Escape (T4/S6). Picking a tool instead
+    /// reroutes through `select(_:)`, whose `didSet` does the same.
     func endCropSelection() {
         captureSelection = .tool(tool)
     }
