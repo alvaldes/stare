@@ -22,6 +22,29 @@ struct OnboardingView: View {
     let onRestart: () -> Void
     let onNotNow: () -> Void
 
+    /// The guide's supporting copy: the header's one-liner, the card's status
+    /// detail and the demoted "Not now". Kept as one named colour so the
+    /// contrast it must meet is pinned in one place (spec S5, WCAG AA) instead
+    /// of depending on whichever semantic colour each call site picked.
+    ///
+    /// Not `secondaryLabelColor`: that is a 50 % label in light mode, which
+    /// measures 3.95:1 on the guide's backgrounds — short of the 4.5:1 AA asks
+    /// for text this small (12–13 pt), even though it clears AA in dark mode.
+    /// A 60 % label measures ~5.7:1 in light and ~6.7:1 in dark and still reads
+    /// as secondary next to the 85 % label colour, so the hierarchy holds and
+    /// AA holds with it. `OnboardingContrastTests` pins the ratio.
+    ///
+    /// Built as a dynamic colour on purpose: `labelColor.withAlphaComponent(_:)`
+    /// settles on the appearance that happens to be current when it is created,
+    /// which is how a "dimmer label" can end up white-on-white in light mode.
+    static let supportingLabel = NSColor(name: nil) { appearance in
+        var label = NSColor.black
+        appearance.performAsCurrentDrawingAppearance {
+            label = NSColor.labelColor.usingColorSpace(.sRGB) ?? .black
+        }
+        return label.withAlphaComponent(0.6)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             Spacer(minLength: 12)
@@ -60,7 +83,7 @@ struct OnboardingView: View {
 
             Text("One permission, once: Screen Recording.")
                 .font(.callout)
-                .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+                .foregroundStyle(Color(nsColor: Self.supportingLabel))
                 .multilineTextAlignment(.center)
         }
     }
@@ -101,7 +124,7 @@ struct OnboardingView: View {
                     .font(.system(size: 14, weight: .semibold))
                 Text(model.access.detail)
                     .font(.subheadline)
-                    .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+                    .foregroundStyle(Color(nsColor: Self.supportingLabel))
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -185,7 +208,7 @@ struct OnboardingView: View {
             Button("Not now", action: onNotNow)
                 .buttonStyle(.plain)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+                .foregroundStyle(Color(nsColor: Self.supportingLabel))
                 .keyboardShortcut(.cancelAction)
                 .accessibilityLabel("Not now — close the setup guide")
         }
