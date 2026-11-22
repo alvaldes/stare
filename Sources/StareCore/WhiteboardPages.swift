@@ -133,6 +133,143 @@ public enum ScrollZoom: Sendable {
         guard delta.isFinite, delta != 0 else { return 1 }
         return pow(BoardTransform.zoomStep, delta / pointsPerStep)
     }
+
+    /// `NSEvent.Phase` without AppKit (v0.5/S2): the raw values match, so the
+    /// view maps one straight onto the other.
+    public enum Phase: Int, Sendable {
+        case none = 0
+        case began = 1
+        case changed = 2
+        case ended = 4
+        case cancelled = 8
+        case mayBegin = 32
+    }
+
+    /// `NSEvent.MomentumPhase` without AppKit (v0.5/S2): the raw values match,
+    /// so the view maps one straight onto the other.
+    public enum MomentumPhase: Int, Sendable {
+        case none = 0
+        case begin = 1
+        case continued = 2
+        case end = 4
+    }
+
+    /// One scroll event reduced to the properties the gesture's own state
+    /// machine decides on (v0.5/S2): the content-directed delta, the phase
+    /// pair that says whether a live gesture exists, and the device's
+    /// natural-scrolling preference. Pure values keep StareCore free of AppKit.
+    public struct Event: Equatable, Sendable {
+        /// `NSEvent.scrollingDeltaY`: content-directed, already normalised
+        /// against the device by AppKit.
+        public var deltaY: CGFloat
+        /// `NSEvent.phase`.
+        public var phase: ScrollZoom.Phase
+        /// `NSEvent.momentumPhase`.
+        public var momentumPhase: ScrollZoom.MomentumPhase
+
+        public init(
+            deltaY: CGFloat,
+            phase: ScrollZoom.Phase = .none,
+            momentumPhase: ScrollZoom.MomentumPhase = .none
+        ) {
+            self.deltaY = deltaY
+            self.phase = phase
+            self.momentumPhase = momentumPhase
+        }
+    }
+
+    /// What one scroll event does to the zoom (v0.5/S2): either it feeds the
+    /// one zoom model a multiplicative factor, or the gesture holds.
+    public enum Decision: Equatable, Sendable {
+        /// Multiply the zoom by `factor` (anchored, clamped, through
+        /// `BoardTransform` as every other zoom is).
+        case zoom(factor: CGFloat)
+        /// The event moves no zoom state.
+        case noZoom
+    }
+
+    /// ⌘ + scroll gesture state machine (v0.5/S2): the pure rule that keeps a
+    /// whole gesture monotonic on top of the one shared factor. Three
+    /// mechanisms, all the gesture's own state:
+    ///
+    /// - **Direction lock.** Inside a precise-delta gesture the deltas carry
+    ///   the fingers' micro-movements, so small opposite-signed deltas
+    ///   interleave with the dominant direction; under the multiplicative
+    ///   mapping each one visibly kicks the zoom back. The first nonzero
+    ///   delta latches the direction, and an event against it zooms nothing
+    ///   until the opposite evidence outweighs the jitter threshold — only
+    ///   then does the gesture deliberately continue the other way.
+    /// - **Momentum rejection.** After the fingers lift (`phase == .ended`)
+    ///   AppKit keeps delivering deltas with `momentumPhase != .none`; they
+    ///   belong to no live gesture and must not zoom, or a flick overshoots
+    ///   the zoom the user asked for.
+    /// - **Direction preserved, not normalised.** `scrollingDeltaY` is
+    ///   content-directed, so the two natural-scrolling settings report
+    ///   opposite signs for the same physical flick. Normalising through
+    ///   `isDirectionInvertedFromDevice` would make the settings agree, but it
+    ///   would invert the direction for whoever is on the default setting —
+    ///   the owner's machine among them — and a zoom that reverses overnight is
+    ///   worse than one that differs between devices. The raw delta keeps the
+    ///   mapping this board already had. The factor itself stays the one shared
+    ///   function, so a trackpad's fractions and a wheel's notches feed
+    ///   `BoardTransform` through the same zoom model.
+    public struct Gesture: Sendable {
+        /// Opposite points a gesture must show before they count as a
+        /// deliberate direction change rather than jitter: one full zoom
+        /// step's worth of scrolling. Jitter deltas are small and arrive
+        /// interleaved with consistent deltas (which reset the accounting),
+        /// while a wheel notch or a firm reversal crosses it in one event.
+        public static let reversalThresholdPoints: CGFloat = ScrollZoom.pointsPerStep
+
+        /// The direction locked while the gesture runs: +1 zooming in, −1
+        /// zooming out, nil while no gesture is live.
+        private var lockedDirection: CGFloat?
+        /// Opposite points seen since the last consistent event: the
+        /// evidence that the user is deliberately changing direction.
+        private var reversalPoints: CGFloat = 0
+
+        public init() {}
+
+        /// Decides what `event` does to the zoom (v0.5/S2).
+        public mutating func decide(for event: ScrollZoom.Event) -> ScrollZoom.Decision {
+            // Momentum belongs to no live gesture: reject it before touching
+            // any state, so the flick never overshoots and the lock waits
+            // untouched for the gesture's own phases.
+            guard event.momentumPhase == .none else { return .noZoom }
+            // Whatever the delta below decided, the gesture's phases close
+            // it here: the next gesture may zoom the other way.
+            defer {
+                if event.phase == .ended || event.phase == .cancelled {
+                    lockedDirection = nil
+                    reversalPoints = 0
+                }
+            }
+            // The delta stays as AppKit reports it: see the "direction
+            // preserved" note above — normalising across the natural-scrolling
+            // setting would have flipped the zoom for the default setting.
+            let delta = event.deltaY
+            guard delta.isFinite, delta != 0 else { return .noZoom }
+            let sign: CGFloat = delta > 0 ? 1 : -1
+            if let locked = lockedDirection {
+                if locked == sign {
+                    // Consistent with the lock: the opposite evidence was
+                    // jitter, forget it.
+                    reversalPoints = 0
+                } else {
+                    // Against the lock: hold unless the opposite evidence
+                    // says the user is deliberately changing direction.
+                    reversalPoints += abs(delta)
+                    guard reversalPoints >= Self.reversalThresholdPoints else { return .noZoom }
+                    lockedDirection = sign
+                    reversalPoints = 0
+                }
+            } else {
+                // The gesture's first nonzero delta latches the direction.
+                lockedDirection = sign
+            }
+            return .zoom(factor: ScrollZoom.zoomFactor(forScrollDelta: delta))
+        }
+    }
 }
 
 /// The Freeform-style dot grid over a board page (T6/S6). Dots live in page

@@ -32,9 +32,13 @@ class WhiteboardView: OverlayView {
     /// ⌘ + scroll is zooming (S1/S3): a zoom cursor shows while the gesture
     /// runs and is cleared when it ends.
     private var isZoomScrolling = false
-    /// The precise delta of the last ⌘ + scroll event: its sign picks which
-    /// direction the zoom cursor shows.
+    /// The direction the last applied ⌘ + scroll step zoomed: its sign picks
+    /// which magnifier cursor shows.
     private var lastZoomScrollDelta: CGFloat = 0
+    /// The ⌘ + scroll gesture's own state machine (v0.5/S2): direction lock,
+    /// momentum rejection and natural-scroll sign normalisation live in
+    /// `ScrollZoom.Gesture` (StareCore), and the view only consults it.
+    private var scrollZoomGesture = ScrollZoom.Gesture()
 
     init(frame: NSRect, state: EditorState, board: WhiteboardPages, onEscape: @escaping () -> Void) {
         self.board = board
@@ -635,9 +639,12 @@ class WhiteboardView: OverlayView {
 
     /// ⌘ + wheel / trackpad scroll zooms the board through the one zoom model
     /// (`BoardTransform.zoomed(forScrollDelta:isZooming:anchoredAt:)` in
-    /// StareCore), anchored at the pointer. Plain scroll without ⌘ never
-    /// changes the zoom — the pure rule refuses it, and this handler returns
-    /// without touching anything.
+    /// StareCore), anchored at the pointer, and the gesture's own state
+    /// machine (`ScrollZoom.Gesture`, v0.5/S2) decides what each event does:
+    /// an event against the gesture's locked direction holds, momentum holds,
+    /// and the sign is normalised against the system's natural-scrolling
+    /// preference. Plain scroll without ⌘ never changes the zoom — the pure
+    /// rule refuses it, and this handler returns without touching anything.
     override func scrollWheel(with event: NSEvent) {
         let zooming = event.modifierFlags.contains(.command)
         guard zooming || isZoomScrolling else {
@@ -652,19 +659,29 @@ class WhiteboardView: OverlayView {
             if event.phase == .ended { endZoomScroll() }
         }
         guard zooming else {
-            // ⌘ let go mid-momentum: the gesture is over.
+            // ⌘ let go mid-gesture: the gesture is over.
             endZoomScroll()
             return
         }
-        let delta = event.scrollingDeltaY
-        applyZoom(ScrollZoom.zoomFactor(forScrollDelta: delta), anchoredAt: convert(event.locationInWindow, from: nil))
+        let decision = scrollZoomGesture.decide(for: ScrollZoom.Event(
+            deltaY: event.scrollingDeltaY,
+            phase: ScrollZoom.Phase(rawValue: Int(event.phase.rawValue)) ?? .none,
+            momentumPhase: ScrollZoom.MomentumPhase(rawValue: Int(event.momentumPhase.rawValue)) ?? .none
+        ))
+        guard case let .zoom(factor) = decision else {
+            // The gesture's own rule rejects the event — momentum, or a delta
+            // against the locked direction: nothing zooms, nothing changes.
+            return
+        }
+        applyZoom(factor, anchoredAt: convert(event.locationInWindow, from: nil))
         isZoomScrolling = true
-        lastZoomScrollDelta = delta
+        lastZoomScrollDelta = factor > 1 ? 1 : -1
         reassertCursor()
     }
 
     private func endZoomScroll() {
         isZoomScrolling = false
+        scrollZoomGesture = ScrollZoom.Gesture()
         reassertCursor()
     }
 
@@ -684,6 +701,7 @@ class WhiteboardView: OverlayView {
         isMiddlePanning = false
         lastPanPoint = nil
         isZoomScrolling = false
+        scrollZoomGesture = ScrollZoom.Gesture()
     }
 
     // MARK: - Panning the endless canvas

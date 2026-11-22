@@ -541,6 +541,136 @@ final class WhiteboardPagesTests: XCTestCase {
         }
     }
 
+    // MARK: - v0.5/S2: the ⌘ + scroll gesture state machine
+
+    /// A delta against the locked direction inside one gesture is finger
+    /// jitter, not a decision: it must not zoom in the opposite direction.
+    /// The lock latches on the gesture's first nonzero delta and holds until
+    /// the gesture ends, so the zoom stays monotonic while the fingers move.
+    func testGestureRejectsADeltaAgainstTheLockedDirection() {
+        var gesture = ScrollZoom.Gesture()
+        XCTAssertEqual(
+            gesture.decide(for: ScrollZoom.Event(deltaY: 4)),
+            .zoom(factor: ScrollZoom.zoomFactor(forScrollDelta: 4)),
+            "the gesture's first nonzero delta zooms through the one shared factor"
+        )
+        XCTAssertEqual(
+            gesture.decide(for: ScrollZoom.Event(deltaY: -0.5)),
+            .noZoom,
+            "a small delta reversing the locked direction must not zoom out"
+        )
+        XCTAssertEqual(
+            gesture.decide(for: ScrollZoom.Event(deltaY: -4, phase: .changed)),
+            .noZoom,
+            "a full reversing delta still waits for enough opposite evidence"
+        )
+        XCTAssertEqual(
+            gesture.decide(for: ScrollZoom.Event(deltaY: 1.5)),
+            .zoom(factor: ScrollZoom.zoomFactor(forScrollDelta: 1.5)),
+            "consistent deltas keep zooming in the locked direction"
+        )
+    }
+
+    /// Momentum events travel behind the fingers' `.ended` phase: they belong
+    /// to no live gesture, so they must neither zoom nor disturb the lock —
+    /// a two-finger flick must not overshoot the zoom the user asked for.
+    func testMomentumNeverZoomsAndNeverDisturbsTheLock() {
+        var gesture = ScrollZoom.Gesture()
+        XCTAssertEqual(
+            gesture.decide(for: ScrollZoom.Event(deltaY: 4)),
+            .zoom(factor: ScrollZoom.zoomFactor(forScrollDelta: 4))
+        )
+        for momentum in [ScrollZoom.MomentumPhase.begin, .continued, .end] {
+            XCTAssertEqual(
+                gesture.decide(for: ScrollZoom.Event(deltaY: 300, momentumPhase: momentum)),
+                .noZoom,
+                "momentum phase \(momentum) must not move the zoom"
+            )
+        }
+        XCTAssertEqual(
+            gesture.decide(for: ScrollZoom.Event(deltaY: 2)),
+            .zoom(factor: ScrollZoom.zoomFactor(forScrollDelta: 2)),
+            "the gesture event after the momentum burst keeps its lock and zooms in"
+        )
+    }
+
+    /// The direction is the one the board already had: a positive
+    /// `scrollingDeltaY` zooms in, whatever the natural-scrolling preference.
+    /// Normalising across the preference would have agreed between devices at
+    /// the cost of flipping the zoom for whoever is on the default setting, so
+    /// it is deliberately not done (v0.5/S2).
+    func testPositiveDeltaZoomsInAsTheBoardAlwaysDid() {
+        var gesture = ScrollZoom.Gesture()
+        XCTAssertEqual(
+            gesture.decide(for: ScrollZoom.Event(deltaY: 12, phase: .began)),
+            .zoom(factor: ScrollZoom.zoomFactor(forScrollDelta: 12))
+        )
+        XCTAssertGreaterThan(ScrollZoom.zoomFactor(forScrollDelta: 12), 1)
+
+        var other = ScrollZoom.Gesture()
+        XCTAssertEqual(
+            other.decide(for: ScrollZoom.Event(deltaY: -12, phase: .began)),
+            .zoom(factor: ScrollZoom.zoomFactor(forScrollDelta: -12))
+        )
+        XCTAssertLessThan(ScrollZoom.zoomFactor(forScrollDelta: -12), 1)
+    }
+
+    /// `.ended` (and `.cancelled`) close the gesture: the lock releases, so
+    /// the next gesture is free to zoom the other way.
+    func testEndingTheGestureReleasesTheLockSoTheNextMayZoomOut() {
+        var gesture = ScrollZoom.Gesture()
+        XCTAssertEqual(
+            gesture.decide(for: ScrollZoom.Event(deltaY: 4, phase: .began)),
+            .zoom(factor: ScrollZoom.zoomFactor(forScrollDelta: 4))
+        )
+        XCTAssertEqual(
+            gesture.decide(for: ScrollZoom.Event(deltaY: 3, phase: .changed)),
+            .zoom(factor: ScrollZoom.zoomFactor(forScrollDelta: 3))
+        )
+        XCTAssertEqual(
+            gesture.decide(for: ScrollZoom.Event(deltaY: 0, phase: .ended)),
+            .noZoom,
+            "the closing event itself zooms nothing"
+        )
+        XCTAssertEqual(
+            gesture.decide(for: ScrollZoom.Event(deltaY: -4, phase: .began)),
+            .zoom(factor: ScrollZoom.zoomFactor(forScrollDelta: -4)),
+            "after the gesture ended a new one may zoom the other way"
+        )
+    }
+
+    /// Opposite deltas that keep coming are not jitter but the user changing
+    /// direction: once they outweigh the jitter threshold the gesture
+    /// continues zooming in the new direction instead of staying locked.
+    func testADeliberateReversalContinuesTheGestureInTheNewDirection() {
+        var gesture = ScrollZoom.Gesture()
+        XCTAssertEqual(gesture.decide(for: ScrollZoom.Event(deltaY: 4)), .zoom(factor: ScrollZoom.zoomFactor(forScrollDelta: 4)))
+        // Two −3 deltas (< the 8-point threshold) stay rejected jitter...
+        XCTAssertEqual(gesture.decide(for: ScrollZoom.Event(deltaY: -3)), .noZoom)
+        XCTAssertEqual(gesture.decide(for: ScrollZoom.Event(deltaY: -3)), .noZoom)
+        // ...the third crosses the threshold: the gesture re-locks out and
+        // that event's own delta zooms.
+        XCTAssertEqual(
+            gesture.decide(for: ScrollZoom.Event(deltaY: -3)),
+            .zoom(factor: ScrollZoom.zoomFactor(forScrollDelta: -3))
+        )
+        XCTAssertEqual(
+            gesture.decide(for: ScrollZoom.Event(deltaY: -3)),
+            .zoom(factor: ScrollZoom.zoomFactor(forScrollDelta: -3)),
+            "the gesture now zooms out monotonically"
+        )
+    }
+
+    /// `ScrollZoom.zoomFactor` answers 1 for a zero or non-finite delta in the
+    /// gesture too: the decision is a hold, and no zoom state moves.
+    func testAZeroDeltaHoldsInsteadOfZooming() {
+        var gesture = ScrollZoom.Gesture()
+        XCTAssertEqual(gesture.decide(for: ScrollZoom.Event(deltaY: 4, phase: .began)), .zoom(factor: ScrollZoom.zoomFactor(forScrollDelta: 4)))
+        XCTAssertEqual(gesture.decide(for: ScrollZoom.Event(deltaY: 0)), .noZoom)
+        XCTAssertEqual(gesture.decide(for: ScrollZoom.Event(deltaY: .infinity)), .noZoom)
+        XCTAssertEqual(gesture.decide(for: ScrollZoom.Event(deltaY: .nan)), .noZoom)
+    }
+
     // MARK: - T6/S6: the dot grid
 
     /// At very low zoom a fixed spacing turns into mush, so the spacing only
