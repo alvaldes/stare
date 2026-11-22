@@ -2,6 +2,19 @@ import AppKit
 import StareCore
 import os
 
+/// The capture calls the probe makes, narrowed from `CaptureService` so the
+/// adapter's wiring can run against a fake in the `StareTests` runner. (The
+/// capture-key protocol `ScreenCapturing` does not carry the reduced-size
+/// async capture the probe uses.) `CaptureService` conforms implicitly, so
+/// callers keep passing it unchanged.
+protocol ProbeCaptureService: AnyObject {
+    var hasPermission: Bool { get }
+    func requestPermission()
+    func captureDisplay(_ displayID: CGDirectDisplayID, downscale: CGFloat) async throws -> CGImage
+}
+
+extension CaptureService: ProbeCaptureService {}
+
 /// The real `ScreenRecordingClient` Stare ships: every method answers the same
 /// TCC question with the same call the capture path makes, so the onboarding
 /// model observes exactly what a real capture would run into.
@@ -30,7 +43,7 @@ final class SystemScreenRecordingClient: ScreenRecordingClient, @unchecked Senda
     /// real ScreenCaptureKit error is unrecoverable after the fact.
     private static let log = Logger(subsystem: "dev.alvaldes.stare", category: "screenRecording")
 
-    private let captureService: CaptureService
+    private let captureService: any ProbeCaptureService
 
     /// The size the last successful probe answered with, per display, so a
     /// display that only works at full size stops paying for a reduced attempt
@@ -39,9 +52,18 @@ final class SystemScreenRecordingClient: ScreenRecordingClient, @unchecked Senda
     /// only.
     private var plan = ProbeCapturePlan()
 
+    /// While one probe is still in flight, the refresh returns the last known
+    /// answer instead of launching another capture. The bounded wait does not
+    /// cancel the detached capture it abandoned, so a persistently stalled
+    /// ScreenCaptureKit call would otherwise accumulate one orphaned capture
+    /// per refresh tick while the caller has already returned. `ProbeInFlight`
+    /// owns the rule and its tests; this adapter only obeys it. Touched from
+    /// the main-thread refresh only.
+    private var inFlight = ProbeInFlight()
+
     /// Reuses the app's own capture service, so the probe cannot drift from
     /// what capturing actually does.
-    init(captureService: CaptureService) {
+    init(captureService: any ProbeCaptureService) {
         self.captureService = captureService
     }
 
@@ -55,6 +77,20 @@ final class SystemScreenRecordingClient: ScreenRecordingClient, @unchecked Senda
     }
 
     func canCapture() -> Bool {
+        // A second call while a probe pass is still in flight returns the last
+        // known answer without starting another capture the timeout will never
+        // reap.
+        switch inFlight.begin() {
+        case .answer(let known):
+            return known
+        case .proceed(let pass):
+            return runProbe(pass: pass)
+        }
+    }
+
+    /// One probe pass: pick the display the front-most window sits on and try
+    /// the sizes `ProbeCapturePlan` allows for it.
+    private func runProbe(pass: ProbeInFlight.Pass) -> Bool {
         // The probe must vouch for the capture the app actually performs, and
         // that capture targets the display holding the front-most window. A
         // probe pointed at a different display — the main one, or a display
@@ -64,6 +100,7 @@ final class SystemScreenRecordingClient: ScreenRecordingClient, @unchecked Senda
             ?? NSScreen.screens.first,
             let displayID = Self.displayID(of: screen) else {
             Self.log.error("probe: no display to capture")
+            inFlight.finish(pass, answer: false)
             return false
         }
 
@@ -72,13 +109,31 @@ final class SystemScreenRecordingClient: ScreenRecordingClient, @unchecked Senda
         // capture it vouches for. `ProbeCapturePlan` owns which sizes are tried
         // and remembers the one that worked — one capture per refresh once a
         // size is known, instead of two every second.
-        return plan.run(displayID: displayID, displayDownscale: Self.probeDownscale(for: screen)) { downscale in
+        //
+        // Captures started by this pass, so a completion from an abandoned
+        // attempt cannot free the pass while a later attempt is still running.
+        var started = 0
+        var lastAttemptTimedOut = false
+        let captured = plan.run(displayID: displayID, displayDownscale: Self.probeDownscale(for: screen)) { downscale in
+            started += 1
+            let attempt = started
+            lastAttemptTimedOut = false
             let failure = Self.capture(
                 displayID: displayID,
                 downscale: downscale,
                 using: captureService
-            )
+            ) { error in
+                // This capture ended after the wait stopped waiting for it —
+                // or is confirming an answer this pass already recorded. Only
+                // the newest attempt of the pass may free the guard, and
+                // `ProbeInFlight` ignores a pass a newer probe displaced.
+                DispatchQueue.main.async {
+                    guard attempt == started else { return }
+                    self.inFlight.finish(pass, answer: error == nil)
+                }
+            }
             if let failure {
+                lastAttemptTimedOut = failure is ProbeTimeout
                 let error = failure as NSError
                 Self.log.error(
                     "probe capture failed display=\(displayID) downscale=\(downscale, privacy: .public) error=\(error.domain, privacy: .public)/\(error.code) \(error.localizedDescription, privacy: .public)"
@@ -86,6 +141,18 @@ final class SystemScreenRecordingClient: ScreenRecordingClient, @unchecked Senda
             }
             return failure
         }
+
+        // When the last attempt's wait expired, the capture it abandoned may
+        // still be running, so the pass stays in flight — the next refresh
+        // repeats this answer instead of launching another capture — and the
+        // capture's completion frees the guard with the real answer. A pass
+        // whose last capture answered within the wait is finished here.
+        if lastAttemptTimedOut {
+            inFlight.timeOut(pass, answer: false)
+        } else {
+            inFlight.finish(pass, answer: captured)
+        }
+        return captured
     }
 
     /// One capture attempt, blocked on until it finishes or until
@@ -97,11 +164,18 @@ final class SystemScreenRecordingClient: ScreenRecordingClient, @unchecked Senda
     /// wait is bounded. Worst case for a first probe on an unknown display is
     /// one attempt per size, each bounded by that timeout.
     ///
+    /// The timeout does not cancel the capture: it keeps running detached, and
+    /// `onCompletion` reports how it really ended — `nil` for success — on an
+    /// arbitrary queue, possibly long after this call returned. That is what
+    /// lets the in-flight guard free the pass only when the abandoned capture
+    /// is actually gone.
+    ///
     /// Returns the failure, or nil when the capture succeeded.
     private static func capture(
         displayID: CGDirectDisplayID,
         downscale: CGFloat,
-        using captureService: CaptureService
+        using captureService: any ProbeCaptureService,
+        onCompletion: @escaping (Error?) -> Void
     ) -> Error? {
         let semaphore = DispatchSemaphore(value: 0)
         var failure: Error?
@@ -113,8 +187,10 @@ final class SystemScreenRecordingClient: ScreenRecordingClient, @unchecked Senda
                     displayID,
                     downscale: downscale
                 )
+                onCompletion(nil)
             } catch {
                 failure = error
+                onCompletion(error)
             }
         }
 
