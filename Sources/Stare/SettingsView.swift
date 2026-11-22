@@ -3,16 +3,51 @@ import SwiftUI
 import StareCore
 import UniformTypeIdentifiers
 
-/// The areas of the Settings window, in sidebar order.
+/// The groups the sidebar is divided into, in sidebar order. They are the
+/// product's objects, not the order the preferences happened to be added.
+enum SettingsGroup: String, CaseIterable, Identifiable {
+    case capture, draw, pointer, board, system
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .capture: "Capture"
+        case .draw: "Draw"
+        case .pointer: "Pointer"
+        case .board: "Board"
+        case .system: "System"
+        }
+    }
+
+    /// The areas in this group, in the order they appear here.
+    var areas: [SettingsArea] {
+        SettingsArea.allCases.filter { $0.group == self }
+    }
+}
+
+/// The areas of the Settings window, in sidebar order: one object per area,
+/// and a group as the heading over it.
 enum SettingsArea: String, CaseIterable, Identifiable {
-    case general, tools, shortcuts, marker, capture, whiteboard, permissions, about
+    // Capture
+    case capture
+    // Draw
+    case overlay, tools, bar
+    // Pointer
+    case marker
+    // Board
+    case whiteboard
+    // System
+    case shortcuts, general, permissions, about
 
     var id: Self { self }
 
     var title: String {
         switch self {
         case .general: "General"
+        case .overlay: "Overlay"
         case .tools: "Tools"
+        case .bar: "Bar"
         case .shortcuts: "Shortcuts"
         case .marker: "Pointer Highlight"
         case .capture: "Capture"
@@ -25,13 +60,25 @@ enum SettingsArea: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .general: "gearshape"
-        case .tools: "wrench.and.screwdriver"
+        case .overlay: "rectangle.dashed"
+        case .tools: "pencil.tip"
+        case .bar: "menubar.rectangle"
         case .shortcuts: "keyboard"
-        case .marker: "scope"
+        case .marker: "cursorarrow.rays"
         case .capture: "camera.viewfinder"
-        case .whiteboard: "square.grid.2x2"
+        case .whiteboard: "rectangle.on.rectangle"
         case .permissions: "lock.shield"
         case .about: "info.circle"
+        }
+    }
+
+    var group: SettingsGroup {
+        switch self {
+        case .capture: .capture
+        case .overlay, .tools, .bar: .draw
+        case .marker: .pointer
+        case .whiteboard: .board
+        case .shortcuts, .general, .permissions, .about: .system
         }
     }
 }
@@ -100,44 +147,63 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            sidebar
-            Divider()
-            ScrollView {
-                pane
-                    .padding(.horizontal, 24)
-                    .padding(.top, 20)
-                    .padding(.bottom, 24)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
+        // The shell is the one place that knows the sidebar's width, so it is
+        // the one place that turns the window into a cards width for the pane.
+        GeometryReader { proxy in
+            HStack(spacing: 0) {
+                sidebar
+                Divider()
+                Self.pane(
+                    for: area,
+                    width: cardsWidth(in: proxy.size.width),
+                    model: model,
+                    permission: permission
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
-        .frame(minWidth: 720, minHeight: 480)
+        .frame(minWidth: 860, minHeight: 560)
+    }
+
+    /// What a pane's cards get: the window, less the sidebar and a divider,
+    /// less the pane's own padding.
+    private func cardsWidth(in totalWidth: CGFloat) -> CGFloat {
+        max(0, totalWidth - SettingsMetrics.sidebarWidth - 1 - SettingsMetrics.panePadding * 2)
     }
 
     // MARK: Sidebar
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 10) {
-                AppMark(size: 34)
+                AppMark(size: 32)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Stare")
-                        .font(.system(size: 16, weight: .bold))
+                        .font(.system(size: 15, weight: .bold))
                     Text("Version \(AppVersion.short)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
             .padding(.horizontal, 8)
-            .padding(.bottom, 14)
+            .padding(.bottom, 8)
 
-            ForEach(SettingsArea.allCases) { area in
-                sidebarButton(for: area)
+            ForEach(SettingsGroup.allCases) { group in
+                Text(group.title.uppercased())
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(0.7)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 10)
+                    .padding(.top, 10)
+                    .padding(.bottom, 3)
+                ForEach(group.areas) { area in
+                    sidebarButton(for: area)
+                }
             }
-            Spacer()
+            Spacer(minLength: 0)
         }
-        .padding(12)
-        .frame(width: 180)
+        .padding(10)
+        .frame(width: SettingsMetrics.sidebarWidth)
         .frame(maxHeight: .infinity)
         .background(.ultraThinMaterial)
     }
@@ -179,135 +245,130 @@ struct SettingsView: View {
 
     // MARK: Panes
 
-    /// The pane content for an area — header and cards, without the shell's
-    /// sidebar and scroll container. The selftest renders each pane directly
+    /// The pane content for an area — header, stage and cards, each pane its
+    /// own scroll container. The selftest renders each pane directly
     /// (`renderSettings`), so the switch lives here for one writer.
     @ViewBuilder
-    static func pane(for area: SettingsArea, model: PreferencesModel, permission: PermissionProbe) -> some View {
+    static func pane(
+        for area: SettingsArea,
+        width: CGFloat,
+        model: PreferencesModel,
+        permission: PermissionProbe
+    ) -> some View {
         switch area {
-        case .general: GeneralPane(model: model)
-        case .tools: ToolsPane(model: model)
-        case .shortcuts: ShortcutsPane(model: model)
-        case .marker: MarkerPane(model: model)
-        case .capture: CapturePane(model: model)
-        case .whiteboard: WhiteboardPane(model: model)
+        case .general: GeneralPane(model: model, cardsWidth: width)
+        case .overlay: OverlayPane(model: model, cardsWidth: width)
+        case .tools: ToolsPane(model: model, cardsWidth: width)
+        case .bar: BarPane(model: model, cardsWidth: width)
+        case .shortcuts: ShortcutsPane(model: model, cardsWidth: width)
+        case .marker: MarkerPane(model: model, cardsWidth: width)
+        case .capture: CapturePane(model: model, cardsWidth: width)
+        case .whiteboard: WhiteboardPane(model: model, cardsWidth: width)
         case .permissions: PermissionsPane(permission: permission)
         case .about: AboutPane()
         }
     }
+}
 
-    @ViewBuilder
-    private var pane: some View {
-        Self.pane(for: area, model: model, permission: permission)
+// MARK: - Overlay
+
+/// What drawing over the screen does: the frame that arms it, the displays it
+/// reaches, and how long a laser mark lives. These rode along inside General
+/// until the settings grew enough for each object to own a pane.
+private struct OverlayPane: View {
+    @ObservedObject var model: PreferencesModel
+    let cardsWidth: CGFloat
+
+    var body: some View {
+        SettingsPane(
+            title: "Overlay",
+            subtitle: "What drawing over the screen does, and where it reaches."
+        ) {
+            SettingsColumns(width: cardsWidth, left: {
+                VStack(spacing: SettingsMetrics.cardSpacing) {
+                    drawingCard
+                    displaysCard
+                }
+            }, right: {
+                VStack(spacing: SettingsMetrics.cardSpacing) {
+                    laserCard
+                }
+            })
+        }
+    }
+
+    private var drawingCard: some View {
+        SettingsCard(title: "Drawing", symbol: "pencil.tip") {
+            SettingRow(
+                title: "Show drawing frame",
+                detail: "A thin frame in the active ink marks every display that will take a mark.",
+                content: Toggle("", isOn: $model.showArmedFrame)
+                    .labelsHidden()
+            )
+            SettingRow(
+                title: "Keep marks and pages",
+                detail: "What is drawn and the whiteboard pages survive closing Stare or leaving a mode, until the Mac restarts. Turning it off discards what was stored.",
+                content: Toggle("", isOn: $model.persistsSession)
+                    .labelsHidden()
+            )
+        }
+    }
+
+    private var displaysCard: some View {
+        SettingsCard(title: "Displays", symbol: "display.2") {
+            SettingRow(
+                title: "Draw on",
+                content: Picker("", selection: $model.scope) {
+                    ForEach(OverlayScope.allCases, id: \.self) { scope in
+                        Text(scope.title).tag(scope)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 220)
+            )
+            SettingRow(
+                title: "Open the palette",
+                content: Picker("", selection: $model.palettePlacement) {
+                    ForEach(PalettePlacement.allCases, id: \.self) { placement in
+                        Text(placement.title).tag(placement)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 220)
+            )
+            Text("Marking every display is the default; the palette follows the pointer unless told otherwise.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var laserCard: some View {
+        SettingsCard(title: "Laser", symbol: "cursor.rays") {
+            SettingRow(
+                title: "Laser lasts",
+                content: Picker("", selection: $model.laserLifetime) {
+                    ForEach(LaserLifetime.allCases, id: \.self) { lifetime in
+                        Text(lifetime.title).tag(lifetime)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 220)
+            )
+            Text("Laser marks fade out and never appear in a capture.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 }
 
-// MARK: - General
+// MARK: - Bar
 
-/// Drawing frame, displays and laser, plus startup and updates (T10/S6) —
-/// as cards.
-private struct GeneralPane: View {
+/// The bar: where it docks, and which tools it carries (T6/S5). The live bar is
+/// the pane's stage — the real `ToolbarView`, not a mock — so the order the
+/// organiser shows is the order the overlay draws.
+private struct BarPane: View {
     @ObservedObject var model: PreferencesModel
-    /// The real login-item service, re-read every time the pane appears; the
-    /// pane never caches a status the system has since changed.
-    @StateObject private var login = LaunchAtLogin()
-
-    var body: some View {
-        VStack(spacing: 16) {
-            PaneHeader(title: "General", subtitle: "How Stare draws over the screen.")
-
-            startupCard
-            updatesCard
-
-            SettingsCard(title: "Drawing", symbol: "pencil.tip") {
-                SettingRow(
-                    title: "Show drawing frame",
-                    detail: "A thin frame in the active ink marks every display that will take a mark.",
-                    content: Toggle("", isOn: $model.showArmedFrame)
-                        .labelsHidden()
-                )
-                SettingRow(
-                    title: "Keep marks and pages",
-                    detail: "What is drawn and the whiteboard pages survive closing Stare or leaving a mode, until the Mac restarts. Turning it off discards what was stored.",
-                    content: Toggle("", isOn: $model.persistsSession)
-                        .labelsHidden()
-                )
-            }
-
-            SettingsCard(title: "Displays", symbol: "display.2") {
-                SettingRow(
-                    title: "Draw on",
-                    content: Picker("", selection: $model.scope) {
-                        ForEach(OverlayScope.allCases, id: \.self) { scope in
-                            Text(scope.title).tag(scope)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(width: 220)
-                )
-                SettingRow(
-                    title: "Open the palette",
-                    content: Picker("", selection: $model.palettePlacement) {
-                        ForEach(PalettePlacement.allCases, id: \.self) { placement in
-                            Text(placement.title).tag(placement)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(width: 220)
-                )
-                Text("Marking every display is the default; the palette follows the pointer unless told otherwise.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            SettingsCard(title: "Toolbar", symbol: "slider.horizontal.3") {
-                SettingRow(
-                    title: "Bar orientation",
-                    detail: "Horizontal lays the tools in a row; vertical stacks them in one column.",
-                    content: Picker("", selection: toolbarOrientationSelection) {
-                        ForEach(ToolbarOrientation.allCases, id: \.self) { orientation in
-                            Text(orientation.title).tag(orientation)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(width: 220)
-                )
-                SettingRow(
-                    title: "Docked edge",
-                    detail: "The edge of the screen the bar rests at when it has not been dragged.",
-                    content: Picker("", selection: $model.toolbarBorder) {
-                        // Only the edges the chosen orientation can sit on
-                        // (T3/S4): horizontal → top/bottom, vertical → left/right.
-                        ForEach(ToolbarBorder.validEdges(for: model.toolbarOrientation), id: \.self) { border in
-                            Text(border.title).tag(border)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(width: 220)
-                )
-                toolbarOrganiser
-                Text("The bar moves to the new edge as soon as you pick, and right-clicking the ⠇⠇ handle always returns it there.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            SettingsCard(title: "Laser", symbol: "cursor.rays") {
-                SettingRow(
-                    title: "Laser lasts",
-                    content: Picker("", selection: $model.laserLifetime) {
-                        ForEach(LaserLifetime.allCases, id: \.self) { lifetime in
-                            Text(lifetime.title).tag(lifetime)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(width: 220)
-                )
-                Text("Laser marks fade out and never appear in a capture.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
+    let cardsWidth: CGFloat
 
     // MARK: Toolbar edge validity (T3/S4)
 
@@ -372,68 +433,12 @@ private struct GeneralPane: View {
         }
     }
 
-    /// The organiser, Bartender-style: a live preview of the bar built from
-    /// the draft layout — the real bar view — and a pool with the tools that
-    /// are not on the bar plus the separators. Items move between the zones
-    /// and reorder inside them by dragging, and every drop writes the draft
-    /// at once: it persists through `PreferencesModel`, no Save button. The
-    /// model's normalisation keeps every broken state unreachable while the
-    /// user is mid-arrangement.
-    private var toolbarOrganiser: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Tools on the bar")
-                .font(.system(size: 13, weight: .semibold))
-            toolbarPreviewCard
-            Text("Tools in the pool")
-                .font(.system(size: 13, weight: .semibold))
-                .padding(.top, 2)
-            toolbarPoolRow
-            Text("What the preview shows is the bar, in that order. Pool tools stay off the bar but keep their keyboard shortcuts; every change saves at once.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .onReceive(model.$toolbarTools) { _ in syncToolbarPreview() }
-        .onReceive(model.$toolbarOrientation) { _ in syncToolbarPreview() }
-        .onReceive(model.$toolbarBorder) { _ in syncToolbarPreview() }
-        .onReceive(model.$tool) { _ in syncToolbarPreview() }
-        .onReceive(model.$ink) { _ in syncToolbarPreview() }
-    }
-
     private func syncToolbarPreview() {
         toolbarPreviewState.toolbarTools = model.toolbarTools
         toolbarPreviewState.toolbarOrientation = model.toolbarOrientation
         toolbarPreviewState.toolbarBorder = model.toolbarBorder
         toolbarPreviewState.tool = model.tool
         toolbarPreviewState.ink = model.ink
-    }
-
-    /// The live preview: the drawing bar itself, on the draft item list, in
-    /// the shape and dock the settings keep. Its hooks make every item a
-    /// drag source and every item a two-sided drop target — the drag payload
-    /// is the item's stable identifier, so pool drafts and bar reorders read
-    /// the same wire format.
-    private var toolbarPreviewCard: some View {
-        HStack {
-            Spacer(minLength: 0)
-            ToolbarView(
-                state: toolbarPreviewState,
-                onUndo: {}, onRedo: {}, onClear: {}, onDone: {},
-                toolItems: model.toolbarTools.items,
-                organiser: ToolbarOrganiserHooks(
-                    dragProvider: { NSItemProvider(object: $0.identifier as NSString) },
-                    drop: { target, edge, payload in
-                        handleBarDrop(target: target, edge: edge, payload: payload)
-                    }
-                )
-            )
-            Spacer(minLength: 0)
-        }
-        .padding(.vertical, model.toolbarOrientation == .vertical ? 4 : 12)
-        .frame(maxWidth: .infinity, minHeight: 66, alignment: .center)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.secondary.opacity(0.08))
-        )
     }
 
     /// The pool: the tools that are not on the bar, in the pool's order,
@@ -580,6 +585,136 @@ private struct GeneralPane: View {
         }
     }
 
+    // MARK: Pane
+
+    var body: some View {
+        StageSettingsPane(
+            title: "Bar",
+            subtitle: "The tools palette, where it docks, and what it carries."
+        ) {
+            toolbarStage
+        } cards: {
+            VStack(spacing: SettingsMetrics.cardSpacing) {
+                placementCard
+                poolCard
+            }
+            // The bar is the stage above; the cards beside it are ordinary
+            // rows, so they take the same single-column cap as every other
+            // non-columnar pane.
+            .settingsSingleColumn()
+        }
+    }
+
+    /// The stage: the bar itself, on the draft layout, docked the way the
+    /// pickers below say. Every item is a drag source and a two-sided drop
+    /// target, and the pool below is the other half of the same draft. The
+    /// real bar with the default layout is wider than the stage, so it
+    /// scrolls along the bar's own axis instead of pushing the pane wider —
+    /// a vertical bar scrolls vertically and is capped in height. The bar
+    /// keeps its drag hooks: the scroller carries the view whole, so every
+    /// item stays a drag source and a drop target.
+    private var toolbarStage: some View {
+        SettingsStage(
+            label: "On the bar",
+            note: "Drag a tool out of the pool onto the bar."
+        ) {
+            ScrollView(model.toolbarOrientation == .vertical ? .vertical : .horizontal) {
+                ToolbarView(
+                    state: toolbarPreviewState,
+                    onUndo: {}, onRedo: {}, onClear: {}, onDone: {},
+                    toolItems: model.toolbarTools.items,
+                    organiser: ToolbarOrganiserHooks(
+                        dragProvider: { NSItemProvider(object: $0.identifier as NSString) },
+                        drop: { target, edge, payload in
+                            handleBarDrop(target: target, edge: edge, payload: payload)
+                        }
+                    )
+                )
+                .padding(.vertical, model.toolbarOrientation == .vertical ? 6 : 8)
+            }
+            .scrollIndicators(.hidden)
+            .frame(maxHeight: model.toolbarOrientation == .vertical ? 240 : nil)
+        }
+        // The stage is the preview: it follows the model on every change, and
+        // starts in step on appear instead of waiting for the first change.
+        .onAppear { syncToolbarPreview() }
+        .onReceive(model.$toolbarTools) { _ in syncToolbarPreview() }
+        .onReceive(model.$toolbarOrientation) { _ in syncToolbarPreview() }
+        .onReceive(model.$toolbarBorder) { _ in syncToolbarPreview() }
+        .onReceive(model.$tool) { _ in syncToolbarPreview() }
+        .onReceive(model.$ink) { _ in syncToolbarPreview() }
+    }
+
+    private var placementCard: some View {
+        SettingsCard(title: "Placement", symbol: "rectangle.inset.filled") {
+            SettingRow(
+                title: "Bar orientation",
+                detail: "Horizontal lays the tools in a row; vertical stacks them in one column.",
+                content: Picker("", selection: toolbarOrientationSelection) {
+                    ForEach(ToolbarOrientation.allCases, id: \.self) { orientation in
+                        Text(orientation.title).tag(orientation)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 220)
+            )
+            SettingRow(
+                title: "Docked edge",
+                detail: "The edge of the screen the bar rests at when it has not been dragged.",
+                content: Picker("", selection: $model.toolbarBorder) {
+                    // Only the edges the chosen orientation can sit on
+                    // (T3/S4): horizontal → top/bottom, vertical → left/right.
+                    ForEach(ToolbarBorder.validEdges(for: model.toolbarOrientation), id: \.self) { border in
+                        Text(border.title).tag(border)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 220)
+            )
+            SettingRow(
+                title: "Reset position",
+                detail: "Puts the bar back where a fresh install opens it, and moves it at once if it is on screen.",
+                content: Button("Reset") {
+                    ToolbarPanel.requestPositionReset()
+                }
+            )
+            Text("The bar moves to the new edge as soon as you pick, and right-clicking the ⠇⠇ handle always returns it there.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var poolCard: some View {
+        SettingsCard(title: "In the pool", symbol: "tray") {
+            toolbarPoolRow
+            Text("Pool tools stay off the bar but keep their keyboard shortcuts. Drag a chip onto the bar, or drag a placed separator onto the dashed zone to take it back off.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+// MARK: - General
+
+/// Startup and updates: what an app-level General pane owns now that drawing,
+/// the displays and the bar have panes of their own.
+private struct GeneralPane: View {
+    @ObservedObject var model: PreferencesModel
+    let cardsWidth: CGFloat
+    /// The real login-item service, re-read every time the pane appears; the
+    /// pane never caches a status the system has since changed.
+    @StateObject private var login = LaunchAtLogin()
+
+    var body: some View {
+        SettingsPane(title: "General", subtitle: "How Stare starts and keeps itself current.") {
+            VStack(spacing: SettingsMetrics.cardSpacing) {
+                startupCard
+                updatesCard
+            }
+            .settingsSingleColumn()
+        }
+    }
+
     // MARK: Startup (launch at login, T10/S6)
 
     /// The toggle drives the real login-item registration, the status is the
@@ -713,71 +848,24 @@ private struct RefusalNote: View {
     }
 }
 
-/// The starting tool and ink, the per-tool shortcuts and the palette's
-/// position (T8/S6). Every control writes through the one preferences blob.
+/// The starting ink and the per-tool shortcuts (T8/S6). Every control writes
+/// through the one preferences blob. The bar itself has its own pane now, so
+/// its Reset control lives there instead of riding along here.
 private struct ToolsPane: View {
     @ObservedObject var model: PreferencesModel
+    let cardsWidth: CGFloat
     /// The tool whose shortcut is being captured, if any.
     @State private var recordingTool: Tool?
     /// The last refusal, shown instead of a silent no-op.
     @State private var notice: String?
 
     var body: some View {
-        VStack(spacing: 16) {
-            PaneHeader(title: "Tools", subtitle: "The ink you start with, the tool keys and the palette.")
-
-            SettingsCard(title: "Starting ink", symbol: "paintpalette") {
-                SettingRow(
-                    title: "Start drawing with",
-                    detail: "The ink the palette opens with, wherever Stare draws.",
-                    content: HStack(spacing: 7) {
-                        ForEach(Ink.allCases) { ink in
-                            swatch(ink)
-                        }
-                    }
-                )
-                Text("The choice persists across launches; while drawing the swatches and the number keys still switch the ink at once.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        SettingsPane(title: "Tools", subtitle: "The ink you start with, the tool keys and the palette.") {
+            VStack(spacing: SettingsMetrics.cardSpacing) {
+                inkCard
+                toolShortcutsCard
             }
-
-            SettingsCard(title: "Tool shortcuts", symbol: "keyboard") {
-                ForEach(Tool.allCases) { tool in
-                    SettingRow(
-                        title: tool.displayName,
-                        content: HStack(spacing: 10) {
-                            KeyBadge(title: String(model.toolShortcuts[tool]))
-                            Button(recordingTool == tool ? "Recording…" : "Record") {
-                                startRecording(tool)
-                            }
-                            .disabled(recordingTool != nil && recordingTool != tool)
-                        }
-                    )
-                }
-                if let notice {
-                    RefusalNote(text: notice)
-                }
-                HStack {
-                    Spacer()
-                    Button("Restore defaults") {
-                        model.toolShortcuts = .standard
-                        notice = nil
-                    }
-                }
-                Text("One key per tool: assigning a key another tool already holds is refused, so every tool stays reachable while drawing.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            SettingsCard(title: "Toolbar", symbol: "rectangle.bottomthird.inset.filled") {
-                SettingRow(
-                    title: "Reset position",
-                    detail: "Puts the palette back where a fresh install opens it, and moves it at once if it is on screen.",
-                    content: Button("Reset") {
-                        ToolbarPanel.requestPositionReset()
-                    }
-                )
-            }
+            .settingsSingleColumn()
 
             KeyCaptureField(
                 includesModifiers: false,
@@ -787,6 +875,53 @@ private struct ToolsPane: View {
             )
             .frame(width: 0, height: 0)
             .accessibilityHidden(true)
+        }
+    }
+
+    private var inkCard: some View {
+        SettingsCard(title: "Starting ink", symbol: "paintpalette") {
+            SettingRow(
+                title: "Start drawing with",
+                detail: "The ink the palette opens with, wherever Stare draws.",
+                content: HStack(spacing: 7) {
+                    ForEach(Ink.allCases) { ink in
+                        swatch(ink)
+                    }
+                }
+            )
+            Text("The choice persists across launches; while drawing the swatches and the number keys still switch the ink at once.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var toolShortcutsCard: some View {
+        SettingsCard(title: "Tool shortcuts", symbol: "keyboard") {
+            ForEach(Tool.allCases) { tool in
+                SettingRow(
+                    title: tool.displayName,
+                    content: HStack(spacing: 10) {
+                        KeyBadge(title: String(model.toolShortcuts[tool]))
+                        Button(recordingTool == tool ? "Recording…" : "Record") {
+                            startRecording(tool)
+                        }
+                        .disabled(recordingTool != nil && recordingTool != tool)
+                    }
+                )
+            }
+            if let notice {
+                RefusalNote(text: notice)
+            }
+            HStack {
+                Spacer()
+                Button("Restore defaults") {
+                    model.toolShortcuts = .standard
+                    notice = nil
+                }
+            }
+            Text("One key per tool: assigning a key another tool already holds is refused, so every tool stays reachable while drawing.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -849,13 +984,12 @@ private struct ToolsPane: View {
 /// binding stays registered.
 private struct ShortcutsPane: View {
     @ObservedObject var model: PreferencesModel
+    let cardsWidth: CGFloat
     @State private var recording: HotkeyAction?
     @State private var notice: String?
 
     var body: some View {
-        VStack(spacing: 16) {
-            PaneHeader(title: "Shortcuts", subtitle: "The system-wide shortcuts Stare answers to.")
-
+        SettingsPane(title: "Shortcuts", subtitle: "The system-wide shortcuts Stare answers to.") {
             SettingsCard(title: "Global shortcuts", symbol: "keyboard") {
                 ForEach(HotkeyAction.allCases, id: \.self) { action in
                     SettingRow(
@@ -880,6 +1014,7 @@ private struct ShortcutsPane: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            .settingsSingleColumn()
 
             KeyCaptureField(
                 includesModifiers: true,
@@ -950,6 +1085,7 @@ private struct ShortcutsPane: View {
 /// exactly what ⌥⇧M shows.
 private struct MarkerPane: View {
     @ObservedObject var model: PreferencesModel
+    let cardsWidth: CGFloat
     /// Representative ink for the preview and the swatch-less case: the real
     /// highlight follows the active ink while drawing.
     private let sampleInk: Ink = .red
@@ -960,138 +1096,170 @@ private struct MarkerPane: View {
     }
 
     var body: some View {
-        VStack(spacing: 16) {
-            PaneHeader(title: "Pointer Highlight", subtitle: "The highlight that follows the pointer (⌥⇧M).")
-
-            SettingsCard(title: "Highlight", symbol: "scope") {
-                SettingRow(
-                    title: "Shape",
-                    content: Picker("", selection: $model.pointer.preset) {
-                        ForEach(PointerStylePreset.allCases, id: \.self) { preset in
-                            Text(preset.title).tag(preset)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(width: 180)
-                )
-                SettingRow(
-                    title: "Size",
-                    content: HStack(spacing: 8) {
-                        Slider(value: $model.pointer.size, in: PointerStyle.sizeRange)
-                            .frame(width: 180)
-                        Text("\(Int(model.pointer.size)) pt")
-                            .font(.callout.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .frame(width: 44, alignment: .trailing)
-                    }
-                )
-                SettingRow(
-                    title: "Band width",
-                    detail: bandDetail,
-                    content: HStack(spacing: 8) {
-                        Slider(value: $model.pointer.bandWidth, in: PointerStyle.bandWidthRange)
-                            .disabled(!bandApplies)
-                            .frame(width: 180)
-                        Text("\(Int((model.pointer.bandWidth * 100).rounded())) %")
-                            .font(.callout.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .frame(width: 44, alignment: .trailing)
-                    }
-                )
-                SettingRow(
-                    title: "Border style",
-                    detail: borderDetail,
-                    content: Picker("", selection: $model.pointer.borderStyle) {
-                        ForEach(PointerBorderStyle.allCases, id: \.self) { style in
-                            Text(style.title).tag(style)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(width: 180)
-                    .disabled(!borderApplies)
-                )
-                SettingRow(
-                    title: "Opacity",
-                    detail: "How translucent the whole highlight is, glow included.",
-                    content: HStack(spacing: 8) {
-                        Slider(value: $model.pointer.opacity, in: PointerStyle.opacityRange)
-                            .frame(width: 180)
-                        Text("\(Int((model.pointer.opacity * 100).rounded())) %")
-                            .font(.callout.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .frame(width: 44, alignment: .trailing)
-                    }
-                )
-                SettingRow(
-                    title: "Click animation",
-                    detail: "What a click does to the highlight: it grows, or it turns.",
-                    content: Picker("", selection: $model.pointer.clickAnimation) {
-                        ForEach(PointerClickAnimation.allCases, id: \.self) { animation in
-                            Text(animation.title).tag(animation)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .frame(width: 180)
-                )
-                SettingRow(
-                    title: "Glow",
-                    detail: "A soft halo outside the highlight's edge; zero turns it off.",
-                    content: HStack(spacing: 8) {
-                        Slider(value: $model.pointer.glowIntensity, in: PointerStyle.glowRange)
-                            .frame(width: 180)
-                        Text(glowLabel)
-                            .font(.callout.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .frame(width: 44, alignment: .trailing)
-                    }
-                )
-                SettingRow(
-                    title: "Fade when idle",
-                    detail: "Lower the highlight while the pointer stops moving.",
-                    content: Toggle("", isOn: $model.pointer.fadeWhenIdle)
-                        .labelsHidden()
-                )
-                Text("The highlight follows the pointer in presentation mode (⌥⇧M) and never takes focus.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            SettingsCard(title: "Colour", symbol: "paintpalette") {
-                SettingRow(
-                    title: "Colour",
-                    detail: "Either the ink active while drawing, or the highlight's own fixed one.",
-                    content: Picker("", selection: colourMode) {
-                        Text("Follow the current ink").tag(ColourMode.followInk)
-                        Text("Fixed colour").tag(ColourMode.fixed)
-                    }
-                    .pickerStyle(.segmented)
-                )
-                if case .fixed = model.pointer.colorSource {
-                    SettingRow(
-                        title: "Fixed colour",
-                        detail: nil,
-                        content: HStack(spacing: 7) {
-                            ForEach(Ink.allCases) { ink in
-                                swatch(ink)
-                            }
-                        }
-                    )
+        StageSettingsPane(
+            title: "Pointer Highlight",
+            subtitle: "The highlight that follows the pointer (⌥⇧M)."
+        ) {
+            pointerStage
+        } cards: {
+            SettingsColumns(width: cardsWidth, left: {
+                VStack(spacing: SettingsMetrics.cardSpacing) {
+                    shapeCard
+                    strokeCard
                 }
-            }
+            }, right: {
+                VStack(spacing: SettingsMetrics.cardSpacing) {
+                    motionCard
+                    colourCard
+                }
+            })
+        }
+    }
 
-            SettingsCard(title: "Preview", symbol: "eye") {
-                VStack(spacing: 10) {
-                    PointerPreviewView(style: model.pointer, ink: sampleInk)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                    Text("Drawn live by the same renderer the overlay uses. The preview canvas is fixed, so a size "
-                        + "too large for it is scaled down and the line under the tiles says the percentage; the "
-                        + "Size value above stays the real one. Shown in red; with “Follow the current ink” the "
-                        + "highlight takes the active ink while drawing.")
-                        .font(.caption)
+    /// The pane's stage (S4): the live preview sits pinned above the cards
+    /// instead of ending the pane below them, so every size and colour change
+    /// is visible the moment it is made. The tiles keep the 168-point canvas
+    /// the preview has always shown.
+    private var pointerStage: some View {
+        SettingsStage(
+            label: "Live preview",
+            note: "Same renderer the overlay uses. Too large a size is scaled down."
+        ) {
+            PointerPreviewView(style: model.pointer, ink: sampleInk)
+        }
+    }
+
+    private var shapeCard: some View {
+        SettingsCard(title: "Shape", symbol: "scope") {
+            // Under a card called Shape the row repeated the card's name,
+            // so the row reads Preset — the named preset it picks.
+            SettingRow(
+                title: "Preset",
+                content: Picker("", selection: $model.pointer.preset) {
+                    ForEach(PointerStylePreset.allCases, id: \.self) { preset in
+                        Text(preset.title).tag(preset)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 130)
+            )
+            SettingRow(
+                title: "Size",
+                content: HStack(spacing: 8) {
+                    Slider(value: $model.pointer.size, in: PointerStyle.sizeRange)
+                        .frame(width: 130)
+                    Text("\(Int(model.pointer.size)) pt")
+                        .font(.callout.monospacedDigit())
                         .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(width: 44, alignment: .trailing)
                 }
+            )
+            SettingRow(
+                title: "Band width",
+                detail: bandDetail,
+                content: HStack(spacing: 8) {
+                    Slider(value: $model.pointer.bandWidth, in: PointerStyle.bandWidthRange)
+                        .disabled(!bandApplies)
+                        .frame(width: 130)
+                    Text("\(Int((model.pointer.bandWidth * 100).rounded())) %")
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 44, alignment: .trailing)
+                }
+            )
+            Text("The highlight follows the pointer in presentation mode (⌥⇧M) and never takes focus.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var strokeCard: some View {
+        SettingsCard(title: "Stroke", symbol: "circle.dashed") {
+            SettingRow(
+                title: "Border style",
+                detail: borderDetail,
+                content: Picker("", selection: $model.pointer.borderStyle) {
+                    ForEach(PointerBorderStyle.allCases, id: \.self) { style in
+                        Text(style.title).tag(style)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 130)
+                .disabled(!borderApplies)
+            )
+            SettingRow(
+                title: "Opacity",
+                detail: "How translucent the whole highlight is, glow included.",
+                content: HStack(spacing: 8) {
+                    Slider(value: $model.pointer.opacity, in: PointerStyle.opacityRange)
+                        .frame(width: 130)
+                    Text("\(Int((model.pointer.opacity * 100).rounded())) %")
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 44, alignment: .trailing)
+                }
+            )
+        }
+    }
+
+    private var motionCard: some View {
+        SettingsCard(title: "Motion", symbol: "sparkles") {
+            SettingRow(
+                title: "Click animation",
+                detail: "What a click does: it grows, or it turns.",
+                content: Picker("", selection: $model.pointer.clickAnimation) {
+                    ForEach(PointerClickAnimation.allCases, id: \.self) { animation in
+                        Text(animation.title).tag(animation)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 130)
+            )
+            SettingRow(
+                title: "Glow",
+                detail: "Soft halo outside the edge; zero turns it off.",
+                content: HStack(spacing: 8) {
+                    Slider(value: $model.pointer.glowIntensity, in: PointerStyle.glowRange)
+                        .frame(width: 130)
+                    Text(glowLabel)
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 44, alignment: .trailing)
+                }
+            )
+            SettingRow(
+                title: "Fade when idle",
+                detail: "Lower the highlight while the pointer stops moving.",
+                content: Toggle("", isOn: $model.pointer.fadeWhenIdle)
+                    .labelsHidden()
+            )
+        }
+    }
+
+    private var colourCard: some View {
+        SettingsCard(title: "Colour", symbol: "paintpalette") {
+            SettingRow(
+                title: "Colour",
+                detail: "Either the ink active while drawing, or the highlight's own fixed one.",
+                content: Picker("", selection: colourMode) {
+                    // Short enough to fit a two-column card: the row's detail
+                    // already spells out what each side means.
+                    Text("Follow ink").tag(ColourMode.followInk)
+                    Text("Fixed").tag(ColourMode.fixed)
+                }
+                .pickerStyle(.segmented)
+            )
+            if case .fixed = model.pointer.colorSource {
+                SettingRow(
+                    title: "Fixed colour",
+                    detail: nil,
+                    content: HStack(spacing: 7) {
+                        ForEach(Ink.allCases) { ink in
+                            swatch(ink)
+                        }
+                    }
+                )
             }
         }
     }
@@ -1125,7 +1293,7 @@ private struct MarkerPane: View {
 
     private var bandDetail: String {
         bandApplies
-            ? "Thickness of the band, as a share of the highlight's size."
+            ? "Thickness of the band, as a share of size."
             : "The \(model.pointer.preset.title) style has no band; thickness is ignored."
     }
 
@@ -1189,77 +1357,93 @@ private struct MarkerPane: View {
 /// in-overlay pill says where it went.
 private struct CapturePane: View {
     @ObservedObject var model: PreferencesModel
+    let cardsWidth: CGFloat
 
     var body: some View {
-        VStack(spacing: 16) {
-            PaneHeader(title: "Capture", subtitle: "How captures are encoded and where they go.")
+        SettingsPane(title: "Capture", subtitle: "How captures are encoded and where they go.") {
+            SettingsColumns(width: cardsWidth, left: {
+                VStack(spacing: SettingsMetrics.cardSpacing) {
+                    destinationCard
+                    formatCard
+                }
+            }, right: {
+                VStack(spacing: SettingsMetrics.cardSpacing) {
+                    fileNameCard
+                }
+            })
+        }
+    }
 
-            SettingsCard(title: "Destination", symbol: "tray.full") {
+    private var destinationCard: some View {
+        SettingsCard(title: "Destination", symbol: "tray.full") {
+            SettingRow(
+                title: "Capture goes to",
+                content: Picker("", selection: destinationSelection) {
+                    Text("Clipboard").tag(0)
+                    Text("Folder").tag(1)
+                }
+                .labelsHidden()
+                .frame(width: 180)
+            )
+            if case .folder(let path) = model.capture.destination {
                 SettingRow(
-                    title: "Capture goes to",
-                    content: Picker("", selection: destinationSelection) {
-                        Text("Clipboard").tag(0)
-                        Text("Folder").tag(1)
+                    title: "Folder",
+                    detail: path,
+                    content: Button("Choose…") { chooseFolder() }
+                )
+                Text(
+                    "The capture is written into this folder in the chosen format and its in-overlay "
+                        + "confirmation names the file; the corner card still shows it."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            } else {
+                Text(
+                    "The capture lands on the pasteboard as PNG and TIFF, ready to paste into "
+                        + "another app, and its in-overlay confirmation says so."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var formatCard: some View {
+        SettingsCard(title: "Format", symbol: "photo") {
+            SettingRow(
+                title: "File format",
+                detail: "PNG is lossless, JPEG is smaller. The clipboard always carries PNG and TIFF.",
+                content: Picker("", selection: $model.capture.format) {
+                    ForEach(CaptureFormat.allCases, id: \.self) { format in
+                        Text(format.title).tag(format)
                     }
-                    .labelsHidden()
+                }
+                .labelsHidden()
+                .frame(width: 140)
+                .disabled(isClipboard)
+            )
+            if isClipboard {
+                Text("The clipboard carries PNG and TIFF only; the format applies to folder saves.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var fileNameCard: some View {
+        SettingsCard(title: "File name", symbol: "doc.text") {
+            SettingRow(
+                title: "Name prefix",
+                detail: "Letters, numbers, hyphen, underscore and dot. Anything else falls back to “Stare”.",
+                content: TextField("", text: $model.capture.fileNamePrefix)
                     .frame(width: 180)
-                )
-                if case .folder(let path) = model.capture.destination {
-                    SettingRow(
-                        title: "Folder",
-                        detail: path,
-                        content: Button("Choose…") { chooseFolder() }
-                    )
-                    Text(
-                        "The capture is written into this folder in the chosen format and its in-overlay "
-                            + "confirmation names the file; the corner card still shows it."
-                    )
+            )
+            HStack(spacing: 6) {
+                Text("Files are named like")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                } else {
-                    Text(
-                        "The capture lands on the pasteboard as PNG and TIFF, ready to paste into "
-                            + "another app, and its in-overlay confirmation says so."
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-            }
-
-            SettingsCard(title: "Format", symbol: "photo") {
-                SettingRow(
-                    title: "File format",
-                    detail: "PNG is lossless, JPEG is smaller. The clipboard always carries PNG and TIFF.",
-                    content: Picker("", selection: $model.capture.format) {
-                        ForEach(CaptureFormat.allCases, id: \.self) { format in
-                            Text(format.title).tag(format)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(width: 140)
-                    .disabled(isClipboard)
-                )
-                if isClipboard {
-                    Text("The clipboard carries PNG and TIFF only; the format applies to folder saves.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            SettingsCard(title: "File name", symbol: "doc.text") {
-                SettingRow(
-                    title: "Name prefix",
-                    detail: "Letters, numbers, hyphen, underscore and dot. Anything else falls back to “Stare”.",
-                    content: TextField("", text: $model.capture.fileNamePrefix)
-                        .frame(width: 180)
-                )
-                HStack(spacing: 6) {
-                    Text("Files are named like")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(exampleName)
-                        .font(.caption.monospaced())
-                }
+                Text(exampleName)
+                    .font(.caption.monospaced())
             }
         }
     }
@@ -1333,64 +1517,80 @@ private struct CapturePane: View {
 /// the stepper names the cap instead of faking a bigger one.
 private struct WhiteboardPane: View {
     @ObservedObject var model: PreferencesModel
+    let cardsWidth: CGFloat
 
     var body: some View {
-        VStack(spacing: 16) {
-            PaneHeader(title: "Whiteboard", subtitle: "What a new board opens with (⌥⇧W).")
+        SettingsPane(title: "Whiteboard", subtitle: "What a new board opens with (⌥⇧W).") {
+            SettingsColumns(width: cardsWidth, left: {
+                VStack(spacing: SettingsMetrics.cardSpacing) {
+                    backgroundCard
+                    pagesCard
+                }
+            }, right: {
+                VStack(spacing: SettingsMetrics.cardSpacing) {
+                    boardCard
+                }
+            })
+        }
+    }
 
-            SettingsCard(title: "Background", symbol: "square.fill") {
-                SettingRow(
-                    title: "New pages start",
-                    // The detail follows the selection: the System entry states
-                    // what it resolves to in either appearance (T13/S8).
-                    detail: model.whiteboard.background.detail + " ⌘B still flips the page you are on, at any time.",
-                    content: Picker("", selection: $model.whiteboard.background) {
-                        ForEach(WhiteboardBackgroundChoice.allCases, id: \.self) { choice in
-                            Text(choice.title).tag(choice)
-                        }
+    private var backgroundCard: some View {
+        SettingsCard(title: "Background", symbol: "square.fill") {
+            SettingRow(
+                title: "New pages start",
+                // The detail follows the selection: the System entry states
+                // what it resolves to in either appearance (T13/S8).
+                detail: model.whiteboard.background.detail + " ⌘B still flips the page you are on, at any time.",
+                content: Picker("", selection: $model.whiteboard.background) {
+                    ForEach(WhiteboardBackgroundChoice.allCases, id: \.self) { choice in
+                        Text(choice.title).tag(choice)
                     }
-                    .labelsHidden()
-                    .frame(width: 160)
-                )
-            }
+                }
+                .labelsHidden()
+                .frame(width: 160)
+            )
+        }
+    }
 
-            SettingsCard(title: "Pages", symbol: "square.grid.2x2") {
-                Stepper(
-                    "Opens with \(model.whiteboard.pagesOnOpen) \(model.whiteboard.pagesOnOpen == 1 ? "page" : "pages")",
-                    value: $model.whiteboard.pagesOnOpen,
-                    in: WhiteboardDefaults.pageRange
-                )
-                Text(
-                    "Up to \(WhiteboardDefaults.pageRange.upperBound) pages are opened ahead. Going past the last one with › "
-                        + "keeps creating empty pages, as before."
-                )
+    private var pagesCard: some View {
+        SettingsCard(title: "Pages", symbol: "square.grid.2x2") {
+            Stepper(
+                "Opens with \(model.whiteboard.pagesOnOpen) \(model.whiteboard.pagesOnOpen == 1 ? "page" : "pages")",
+                value: $model.whiteboard.pagesOnOpen,
+                in: WhiteboardDefaults.pageRange
+            )
+            Text(
+                "Up to \(WhiteboardDefaults.pageRange.upperBound) pages are opened ahead. Going past the last one with › "
+                    + "keeps creating empty pages, as before."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    private var boardCard: some View {
+        SettingsCard(title: "Board", symbol: "rectangle.on.rectangle") {
+            SettingRow(
+                title: "Open the board on",
+                // The same values the drawing pane's "Draw on" row uses, so
+                // both surfaces speak one language (whiteboard-2/S3).
+                content: Picker("", selection: $model.whiteboard.scope) {
+                    ForEach(OverlayScope.allCases, id: \.self) { scope in
+                        Text(scope.title).tag(scope)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 220)
+            )
+            Text("Every display is the default; the scope applies while the board is open, and a display that leaves it keeps its pages.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            }
-
-            SettingsCard(title: "Board", symbol: "rectangle.on.rectangle") {
-                SettingRow(
-                    title: "Open the board on",
-                    // The same values the drawing pane's "Draw on" row uses, so
-                    // both surfaces speak one language (whiteboard-2/S3).
-                    content: Picker("", selection: $model.whiteboard.scope) {
-                        ForEach(OverlayScope.allCases, id: \.self) { scope in
-                            Text(scope.title).tag(scope)
-                        }
-                    }
+            SettingRow(
+                title: "Show border",
+                detail: "The board's own frame, whatever the drawing frame does.",
+                content: Toggle("", isOn: $model.whiteboard.showsBorder)
                     .labelsHidden()
-                    .frame(width: 220)
-                )
-                Text("Every display is the default; the scope applies while the board is open, and a display that leaves it keeps its pages.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                SettingRow(
-                    title: "Show border",
-                    detail: "The board's own frame, whatever the drawing frame does.",
-                    content: Toggle("", isOn: $model.whiteboard.showsBorder)
-                        .labelsHidden()
-                )
-            }
+            )
         }
     }
 }
@@ -1403,9 +1603,7 @@ private struct PermissionsPane: View {
     @ObservedObject var permission: PermissionProbe
 
     var body: some View {
-        VStack(spacing: 16) {
-            PaneHeader(title: "Permissions", subtitle: "What Stare needs from macOS.")
-
+        SettingsPane(title: "Permissions", subtitle: "What Stare needs from macOS.") {
             SettingsCard(title: "Screen Recording", symbol: "lock.shield") {
                 HStack(spacing: 12) {
                     StatusDot(state: permission.access)
@@ -1430,6 +1628,7 @@ private struct PermissionsPane: View {
                 }
                 .onAppear { permission.refresh() }
             }
+            .settingsSingleColumn()
         }
     }
 }
@@ -1440,9 +1639,7 @@ private struct PermissionsPane: View {
 /// pane shows the mark, name, version and one description line.
 private struct AboutPane: View {
     var body: some View {
-        VStack(spacing: 16) {
-            PaneHeader(title: "About", subtitle: "Draw over your screen, together.")
-
+        SettingsPane(title: "About", subtitle: "Draw over your screen, together.") {
             SettingsCard(title: "Stare", symbol: "app") {
                 HStack(alignment: .top, spacing: 14) {
                     AppMark(size: 56)
@@ -1459,6 +1656,7 @@ private struct AboutPane: View {
                     Spacer()
                 }
             }
+            .settingsSingleColumn()
         }
     }
 }

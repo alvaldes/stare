@@ -1,0 +1,28 @@
+{
+  "title": "Stare Settings — look and feel",
+  "brief": "Reorganise the macOS Settings window now that it holds 31 preferences: group the sidebar into a natural map, use space better, and keep every live preview in view while the user edits it (today the pointer preview is the last card of a long scrolling pane, so the user cannot see what they are changing).",
+  "feature": "odd/tasks/settings-look-and-feel.md",
+  "artboards": [
+    {
+      "file": "01-pinned-preview-rail.html",
+      "title": "01 · Pinned preview rail",
+      "tradeoff": "The preview never scrolls and never leaves the viewport, at the cost of a permanent 266 pt column that panes without a preview cannot use. Bar pane reuses the rail with the vertical bar preview.",
+      "width": 1056,
+      "height": 744
+    },
+    {
+      "file": "02-stage-first-band.html",
+      "title": "02 · Stage-first band",
+      "tradeoff": "Preview pinned as a full-width stage above the controls, so the wide bar preview and the square pointer tiles both fit, and the controls below use two columns. Costs ~200 pt of vertical space on every previewable pane; rows get ~350 pt each instead of full width.",
+      "width": 1056,
+      "height": 744
+    },
+    {
+      "file": "03-promoted-preview-column.html",
+      "title": "03 · Promoted preview, compact column",
+      "tradeoff": "Cheapest and least structural: today's cards, one capped 620 pt column, preview moved directly under the first group. It is visible on open, but it still scrolls away on the long panes.",
+      "width": 1056,
+      "height": 744
+    }
+  ]
+}

@@ -3463,10 +3463,12 @@ enum SelfTest {
     }
 
     /// Renders one Settings pane in a fixed appearance. The pane content
-    /// (header + cards) is hosted at fixed pane width inside a real on-screen
-    /// borderless window — the pattern the board section uses — because a
-    /// windowless hosting view lays text out shifted, which drew pane headers
-    /// clipped outside the image.
+    /// (header, stage and cards, the pane owning its own scrolling) is hosted
+    /// at a fixed 810x620 inside a real on-screen borderless window — the
+    /// pattern the board section uses — because a windowless hosting view lays
+    /// text out shifted, which drew pane headers clipped outside the image.
+    /// The pane's cards width is 766, above the two-column minimum, so the
+    /// fixture exercises the wide layout the real window shows.
     @MainActor
     private static func renderSettings(
         area: SettingsArea,
@@ -3475,14 +3477,15 @@ enum SelfTest {
         permission: PermissionProbe,
         to path: String
     ) -> Bool {
-        let size = CGSize(width: 640, height: 560)
+        let size = CGSize(width: 810, height: 620)
         let hosting = NSHostingView(rootView: SettingsView.pane(
             for: area,
+            width: 766,
             model: model,
             permission: permission
         )
-        // Fixture only: pin the pane to the top like the shell's ScrollView
-        // does, and give the render the window background the pane area gets
+        // Fixture only: pin the pane to the top like the shell's frame does,
+        // and give the render the window background the pane area gets
         // behind the material. The app view itself stays unstyled.
         .frame(width: size.width, height: size.height, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor)))

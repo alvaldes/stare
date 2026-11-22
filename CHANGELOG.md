@@ -6,6 +6,8 @@ user gets.
 
 ## Unreleased
 
+- Settings: regrouped into Capture, Draw, Pointer, Board and System, with the bar, the overlay and the laser on panes of their own instead of inside General
+- Settings: the pointer highlight and the bar are previewed in a fixed stage above the controls, so a change is visible while you make it
 - Drawing: `⌘Z` brings back everything `Escape` cleared, and `⇧⌘Z` clears it again
 - Drawing: every tool shows its own cursor
 - Pointer tool: drag a box to select everything under it, `⇧`-click to add or remove a mark, and move the whole selection as one undoable step
