@@ -36,21 +36,58 @@ final class SettingsBarPreviewTests: XCTestCase {
         func openPrivacySettings() {}
     }
 
-    // MARK: - The fit factor's chrome (T2/S2)
+    // MARK: - The fit factor's chrome (T1/S4)
 
-    /// S2: the stage subtracts `SettingsMetrics.stageChrome` from the pane
-    /// width to get the width available to the scaled bar, so that one factor
-    /// must equal exactly what the stage's own layout takes: the lead column,
-    /// the spacing after it and the stage's padding on both sides. If the
-    /// stage's tokens and the factor's chrome ever drift apart, the fit claim
-    /// the pixel tests below pin silently breaks.
+    /// S4: the stage's label and note sit in a row above the preview, so
+    /// nothing stands to the left of the bar any more and the stage's
+    /// horizontal chrome is only its own padding — exactly what the fit
+    /// factor subtracts from the pane width to get the width available to
+    /// the scaled bar. If the stage's tokens and the factor's chrome ever
+    /// drift apart, the fit claim the pixel tests below pin silently breaks.
     func testStageChromeIsTheSumOfTheStageOwnTokens() {
         XCTAssertEqual(
             SettingsMetrics.stageChrome,
-            SettingsMetrics.stageLeadingColumn
-                + SettingsMetrics.stageSpacing
-                + SettingsMetrics.stagePadding * 2,
-            "S2: the fit factor's chrome must be the stage's own lead column, spacing and both paddings"
+            SettingsMetrics.stagePadding * 2,
+            "S4: the fit factor's chrome must be the stage's own horizontal padding — the label row costs no width"
+        )
+    }
+
+    /// S4: with the label above the bar, the width the old 140-pt lead
+    /// column took goes to the preview: at the minimum window width
+    /// (cards 625) the bar's ink span fills the width the fit factor hands
+    /// it — `cardsWidth - SettingsMetrics.stageChrome` — up to the same
+    /// proportion of the bar's own extent the default width already shows.
+    /// A lead column beside the bar (chrome 180 instead of 24) shrinks the
+    /// available width and with it the span, so the probe fails if the
+    /// label ever moves back beside the bar.
+    func testTheMinimumWindowBarUsesTheWidthTheLeadColumnUsedToTake() throws {
+        let runsAtDefault = try Self.inkRuns(in: Self.renderPane(cardsWidth: 766, orientation: .horizontal))
+        let runsAtMinimum = try Self.inkRuns(in: Self.renderPane(cardsWidth: 625, orientation: .horizontal))
+
+        let spanAtDefault = runsAtDefault.last!.center + runsAtDefault.last!.width / 2
+            - (runsAtDefault.first!.center - runsAtDefault.first!.width / 2)
+        let spanAtMinimum = runsAtMinimum.last!.center + runsAtMinimum.last!.width / 2
+            - (runsAtMinimum.first!.center - runsAtMinimum.first!.width / 2)
+        let availableAtDefault = 766.0 - SettingsMetrics.stageChrome
+        let availableAtMinimum = 625.0 - SettingsMetrics.stageChrome
+
+        // The bar never grows past its own extent, so the narrow pane's
+        // span can at worst match the default span's share of a bigger
+        // available width; a small antialias tolerance keeps the edge in.
+        XCTAssertGreaterThanOrEqual(
+            spanAtMinimum,
+            spanAtDefault * availableAtMinimum / availableAtDefault - 2,
+            "S4: at the minimum window width the bar must use all the width the stage's chrome leaves"
+        )
+        // The gain, pinned against the old layout: with the label beside the
+        // bar (chrome 180: a 140-pt lead column, 16 pt of spacing and two
+        // 12-pt paddings) the same item set rendered 298.5 pt at cards 625.
+        // A floor no lead-column geometry can reach, so the label ever
+        // moving back beside the bar fails here instead of silently
+        // shrinking the preview.
+        XCTAssertGreaterThan(
+            spanAtMinimum, 330,
+            "S4: the bar at the minimum window width must be wider than the 298.5 pt the old lead-column layout gave it"
         )
     }
 

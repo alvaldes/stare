@@ -21,16 +21,20 @@ enum SettingsMetrics {
     static let singleColumnMaximum: CGFloat = 700
     /// Between two cards, and between the cards and the stage.
     static let cardSpacing: CGFloat = 14
-    /// The stage's lead column: the label and the note beside the preview.
-    static let stageLeadingColumn: CGFloat = 140
-    /// Between the stage's lead column and the preview, and the padding around
-    /// both.
-    static let stageSpacing: CGFloat = 16
+    /// Between the stage's label and its note, on the top row above the
+    /// preview.
+    static let stageLabelSpacing: CGFloat = 4
+    /// Between the stage's label row and the preview beneath it.
+    static let stageHeaderSpacing: CGFloat = 8
+    /// The stage's padding around its content, on every side.
     static let stagePadding: CGFloat = 12
-    /// What the stage's own chrome takes from a pane's width, so a stage that
-    /// scales its content down to fit knows the width it really has.
+    /// What the stage's own chrome takes from a pane's width, so a stage
+    /// that scales its content down to fit knows the width it really has.
+    /// The label row stands above the preview (S4), so the only horizontal
+    /// chrome is the stage's padding — nothing stands to the left of the
+    /// bar any more.
     static var stageChrome: CGFloat {
-        stageLeadingColumn + stageSpacing + stagePadding * 2
+        stagePadding * 2
     }
 }
 
@@ -94,16 +98,17 @@ struct StageSettingsPane<Stage: View, Cards: View>: View {
 }
 
 /// The pinned region a preview lives in: a label that says what the stage is
-/// showing, and the live view itself. The lead column keeps the stage's
-/// explanation out of the way instead of pushing the preview down.
+/// showing, and the live view beneath it. The label and the note stand on a
+/// top row of their own (S4), so the preview gets the pane's whole width
+/// underneath instead of the width a lead column left it.
 struct SettingsStage<Content: View>: View {
     let label: String
     let note: String
     @ViewBuilder let content: Content
 
     var body: some View {
-        HStack(alignment: .center, spacing: SettingsMetrics.stageSpacing) {
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: SettingsMetrics.stageHeaderSpacing) {
+            VStack(alignment: .leading, spacing: SettingsMetrics.stageLabelSpacing) {
                 Text(label.uppercased())
                     .font(.system(size: 10, weight: .bold))
                     .tracking(0.8)
@@ -113,7 +118,6 @@ struct SettingsStage<Content: View>: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .frame(width: SettingsMetrics.stageLeadingColumn, alignment: .leading)
 
             content
                 .frame(maxWidth: .infinity, alignment: .center)
