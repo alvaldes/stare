@@ -100,7 +100,7 @@ reopen it any time from the menu bar with **Setup Guide…**.
 
 | Where | Keys |
 | --- | --- |
-| Drawing | Hold `⇧` for a straight line with the pen or highlighter, or a square or circle with the rectangle or ellipse · with the pointer tool, drag a box to select everything under it and hold `⇧` to add to the selection |
+| Drawing | Hold `⇧` for a straight line with the pen or highlighter, or a square or circle with the rectangle or ellipse · with the pointer tool, drag a box to select everything under it and hold `⇧` to add to the selection · hold `⇧` while dragging a capture area (`⇧S`) to force a square |
 | Drawing | `Esc` clears the marks, and `⌘Z` brings back everything it cleared |
 | Whiteboard | `⌘←` `⌘→` change page (going past the last one adds a page) · `⌘B` flips the page between white and black · hold space and drag to pan (the pointer becomes a grabbing hand) · pinch, `⌘` + scroll or `⌘+`/`⌘−` zooms, `⌘0` resets pan and zoom |
 | Whiteboard | `S` captures the marks over the page colour, no Screen Recording needed · `Esc` closes the board and keeps the pages for the session |

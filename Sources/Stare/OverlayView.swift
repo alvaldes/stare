@@ -617,7 +617,12 @@ class OverlayView: NSView {
         if isSelectingArea {
             let point = convert(event.locationInWindow, from: nil)
             guard let origin = selectionOrigin else { return }
-            selectionRect = PathBuilder.normalizedRect(from: origin, to: point)
+            selectionRect = AreaSelectionGeometry.rect(
+                from: origin,
+                to: point,
+                square: event.modifierFlags.contains(.shift),
+                bounds: bounds
+            )
             needsDisplay = true
             return
         }
@@ -688,7 +693,7 @@ class OverlayView: NSView {
             selectionOrigin = nil
             selectionRect = nil
             needsDisplay = true
-            if let rect, rect.width >= 4, rect.height >= 4 {
+            if let rect, AreaSelectionGeometry.isCaptureWorthy(rect) {
                 onCaptureRequest?(rect)
             } else {
                 Diag.log("capture area too small, ignored")
