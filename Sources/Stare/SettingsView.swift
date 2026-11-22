@@ -616,11 +616,21 @@ struct BarPane: View {
     }
 
     /// Handles a drop on a pool chip: a payload already in the pool
-    /// reorders, a payload on the bar enters the pool at that very spot.
+    /// reorders, a payload on the bar enters the pool at that very spot, and
+    /// a placed separator comes off the bar (T4/S3) — the pool never stores
+    /// separators as pool items, so the drop's side lands it nowhere but
+    /// off the bar. The bar's first tool cannot leave (T3/S2): the drag-out
+    /// refuses on either half of a chip and the draft stays as it was.
     /// Internal (T4/S4) so the tests drive the real handler on a real model.
     func handlePoolDrop(target: ToolbarLayoutItem, edge: ToolbarOrganiserHooks.Edge, payload: ToolbarLayoutItem) {
-        guard case .tool(let tool) = payload, case .tool(let targetTool) = target else { return }
         let layout = model.toolbarTools
+        if case .separator = payload {
+            guard layout.items.contains(payload) else { return }
+            model.toolbarTools = layout.removing(.separator)
+            return
+        }
+        guard case .tool(let tool) = payload, case .tool(let targetTool) = target else { return }
+        guard layout.canLeave(payload) else { return }
         guard let targetIndex = layout.pool.firstIndex(of: targetTool) else { return }
         let slot = targetIndex + (edge == .after ? 1 : 0)
         if layout.pool.contains(tool) {
@@ -633,11 +643,13 @@ struct BarPane: View {
     }
 
     /// Handles a drop on the pool's end zone: a bar tool lands at the end of
-    /// the pool, a pool tool moves there, and a placed separator comes off
-    /// the bar — the one way to take a placed separator back out.
-    /// Internal (T4/S4) so the tests drive the real handler on a real model.
+    /// the pool and a pool tool moves there, a placed separator comes off
+    /// the bar, and the bar's first tool cannot leave (T3/S2) — the drag-out
+    /// refuses and the draft stays as it was. Internal (T4/S4) so the tests
+    /// drive the real handler on a real model.
     func handlePoolEndDrop(payload: ToolbarLayoutItem) {
         let layout = model.toolbarTools
+        guard layout.canLeave(payload) else { return }
         if case .tool(let tool) = payload {
             if layout.items.contains(payload) {
                 model.toolbarTools = layout.removing(.tool(tool))
@@ -689,7 +701,8 @@ struct BarPane: View {
                     dragProvider: { NSItemProvider(object: $0.identifier as NSString) },
                     drop: { target, edge, payload in
                         handleBarDrop(target: target, edge: edge, payload: payload)
-                    }
+                    },
+                    fixed: { item in !model.toolbarTools.canLeave(item) }
                 )
             )
             .fixedSize()
@@ -760,7 +773,7 @@ struct BarPane: View {
     private var poolCard: some View {
         SettingsCard(title: "In the pool", symbol: "tray") {
             toolbarPoolRow
-            Text("Pool tools stay off the bar but keep their keyboard shortcuts. Drag a chip onto the bar, or drag a placed separator onto the dashed zone to take it back off.")
+            Text("Pool tools stay off the bar but keep their keyboard shortcuts. Drag a chip onto the bar, or drag a placed separator back onto any pool spot. The bar keeps its first tool — it cannot leave, and the preview dims it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

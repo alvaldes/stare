@@ -219,6 +219,10 @@ struct ToolbarOrganiserHooks {
     /// main actor before it delivers anything, so the handlers here can
     /// mutate the `@MainActor` `PreferencesModel` without a second hop.
     var drop: @MainActor (ToolbarLayoutItem, Edge, ToolbarLayoutItem) -> Void
+    /// Which items cannot leave the bar (T3/S2): the pool refuses their
+    /// drag-out and the preview marks them fixed. Nil — the default, on
+    /// every surface but the organiser — means everything placed can leave.
+    var fixed: ((ToolbarLayoutItem) -> Bool)?
 
     /// The single payload hop (S5, verifier finding): the completion of
     /// `NSItemProvider.loadObject` is NOT the main thread — pinned by
@@ -471,26 +475,59 @@ struct ToolbarView: View {
 
     /// Wraps an item in the organiser's drag and drop handling (T6/S5): a
     /// drag source carrying the item's stable identifier, and a two-sided
-    /// drop target. Only the Settings preview installs the hooks.
+    /// drop target. Only the Settings preview installs the hooks. An item
+    /// the organiser reports as unable to leave (T3/S2) says so: it reads as
+    /// fixed in the same vocabulary the bar already dims an uninteractive
+    /// control with (the delete-page button's 0.3 opacity), its help names
+    /// the pin instead of its shortcut, and it stays a drop target for
+    /// reordering (S5). Its drag hook stays too, so the item can still be
+    /// reordered inside the bar; the pool targets are the ones that refuse
+    /// it.
     @ViewBuilder
     private func organiserWrapped(_ view: some View, _ item: ToolbarLayoutItem) -> some View {
         if let organiser {
-            view
-                .onDrag { organiser.dragProvider(item) }
-                .background(
-                    GeometryReader { geo in
-                        Color.clear.preference(key: ToolbarItemSizeKey.self, value: [item: geo.size])
-                    }
-                )
-                .onDrop(of: [UTType.plainText], delegate: ToolbarSlotDropDelegate(
-                    target: item,
-                    size: itemSizes[item] ?? Self.fallbackItemSize(item),
-                    axisVertical: isVertical,
-                    onDrop: { target, edge, payload in organiser.drop(target, edge, payload) }
-                ))
+            if organiser.fixed?(item) == true {
+                view
+                    .opacity(0.3)
+                    .help(Text(verbatim: Self.fixedHelp(item)))
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.preference(key: ToolbarItemSizeKey.self, value: [item: geo.size])
+                        }
+                    )
+                    .onDrop(of: [UTType.plainText], delegate: ToolbarSlotDropDelegate(
+                        target: item,
+                        size: itemSizes[item] ?? Self.fallbackItemSize(item),
+                        axisVertical: isVertical,
+                        onDrop: { target, edge, payload in organiser.drop(target, edge, payload) }
+                    ))
+            } else {
+                view
+                    .onDrag { organiser.dragProvider(item) }
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.preference(key: ToolbarItemSizeKey.self, value: [item: geo.size])
+                        }
+                    )
+                    .onDrop(of: [UTType.plainText], delegate: ToolbarSlotDropDelegate(
+                        target: item,
+                        size: itemSizes[item] ?? Self.fallbackItemSize(item),
+                        axisVertical: isVertical,
+                        onDrop: { target, edge, payload in organiser.drop(target, edge, payload) }
+                    ))
+            }
         } else {
             view
         }
+    }
+
+    /// The help a fixed item carries (T3/S2): the reason, in the pane's own
+    /// voice, instead of the shortcut tooltip.
+    private static func fixedHelp(_ item: ToolbarLayoutItem) -> String {
+        if case .tool(let tool) = item {
+            return "\(tool.displayName) cannot leave the bar: the bar keeps its first tool."
+        }
+        return "This item cannot leave the bar."
     }
 
     /// The size an item renders before the first measurement pass answers.

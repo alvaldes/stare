@@ -317,7 +317,13 @@ public struct ToolbarToolLayout: Codable, Equatable, Sendable {
             target = min(max(index, 0), copy.count)
         }
         copy.insert(item, at: target)
-        return ToolbarToolLayout(items: copy, pool: pool)
+        // T5/S5: a bar-to-bar move may leave a separator where normalisation
+        // would erase it — stranded at a bar end or beside another one. It
+        // relocates to the nearest legal slot instead of being deleted, so
+        // reordering in place never costs a placed separator; one with no
+        // legal home left (no tool-tool gap) still goes, as normalisation
+        // always did.
+        return ToolbarToolLayout(items: Self.relocatingOrphanedSeparators(in: copy), pool: pool)
     }
 
     /// Where a separator may sit: only strictly between two tools, so the
@@ -343,6 +349,49 @@ public struct ToolbarToolLayout: Codable, Equatable, Sendable {
             }
         }
         return best
+    }
+
+    /// T5/S5: slides every separator a move would orphan — leading, trailing
+    /// or beside another separator — to the nearest legal slot (strictly
+    /// between two tools), judged from where the separator sits. Each
+    /// relocation lands in a legal slot and so can never orphan another
+    /// one, so the rescan settles; a separator with no legal slot on the
+    /// whole bar is dropped, exactly what normalisation would have done.
+    private static func relocatingOrphanedSeparators(
+        in items: [ToolbarLayoutItem]
+    ) -> [ToolbarLayoutItem] {
+        var result = items
+        var changed = true
+        while changed {
+            changed = false
+            for index in result.indices {
+                guard result[index].tool == nil else { continue }
+                let orphaned = index == 0
+                    || index == result.count - 1
+                    || (index > 0 && result[index - 1].tool == nil)
+                    || (index < result.count - 1 && result[index + 1].tool == nil)
+                guard orphaned else { continue }
+                let separator = result.remove(at: index)
+                if let slot = nearestSeparatorSlot(near: index, in: result) {
+                    result.insert(separator, at: slot)
+                }
+                changed = true
+                break
+            }
+        }
+        return result
+    }
+
+    /// Whether `item` can be dragged out of the bar into the pool (T3/S2): the
+    /// bar keeps its first tool, so the leading tool cannot leave, and every
+    /// other item — placed separators included — can. The pool's handlers
+    /// refuse the drag-out on this answer and the preview marks the item
+    /// fixed by it, so the two halves of the organiser can never disagree;
+    /// the model's own `removing` keeps its last-tool guard, and a pinned
+    /// item stays draggable inside the bar (S5), so the pin never blocks
+    /// in-place reordering.
+    public func canLeave(_ item: ToolbarLayoutItem) -> Bool {
+        item.tool == nil ? true : visibleTools.first != item.tool
     }
 
     /// Takes `item` off the bar into the pool. The last tool is refused — the

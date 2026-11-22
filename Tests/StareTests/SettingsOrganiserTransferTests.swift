@@ -76,56 +76,58 @@ final class SettingsOrganiserTransferTests: XCTestCase {
 
     /// Dropping a bar tool on the pool's dashed end zone takes it off the bar
     /// and puts it at the end of the pool, behind what was already there.
-    /// (The separator pen bordered is consumed here by normalisation's own
-    /// invariant — with one tool left no tool-tool gap remains for it — which
-    /// is normalisation behaviour, not this drop's rule.)
+    /// The payload is the trailing tool — the bar's first tool cannot leave
+    /// (T3/S2), so the drag-out fixtures use one that may. (The separator's
+    /// emptying here is normalisation's own invariant — with one tool left
+    /// no tool-tool gap remains for it.)
     func testDroppingABarToolOnThePoolEndZoneTakesItOffTheBarIntoThePool() {
         let (pane, model) = makePane(
             items: [.tool(.pen), .separator, .tool(.eraser)],
             pool: [.laser]
         )
 
-        pane.handlePoolEndDrop(payload: .tool(.pen))
+        pane.handlePoolEndDrop(payload: .tool(.eraser))
 
         XCTAssertEqual(
             model.toolbarTools,
             expect(
-                items: [.tool(.eraser)],
-                pool: [.laser] + offBar(items: [.tool(.eraser)], except: [.pen]) + [.pen]),
-            "the pen left the bar and waits at the very end of the pool")
+                items: [.tool(.pen)],
+                pool: [.laser] + offBar(items: [.tool(.pen)], except: [.eraser]) + [.eraser]),
+            "the eraser left the bar and waits at the very end of the pool")
     }
 
     /// Dropping a bar tool onto a pool chip places it in the pool at the
     /// dropped spot — before or after the chip, whatever the drop's side
-    /// says — and it is off the bar in the same write.
+    /// says — and it is off the bar in the same write. The payload is the
+    /// trailing tool, because the bar's first tool cannot leave (T3/S2).
     func testDroppingABarToolOnAPoolChipEntersThePoolAtThatSpot() {
         let (pane, model) = makePane(
             items: [.tool(.pen), .tool(.eraser)],
             pool: [.laser, .blur]
         )
 
-        // The pen lands on the blur chip's before-half.
-        pane.handlePoolDrop(target: .tool(.blur), edge: .before, payload: .tool(.pen))
+        // The eraser lands on the blur chip's before-half.
+        pane.handlePoolDrop(target: .tool(.blur), edge: .before, payload: .tool(.eraser))
 
         XCTAssertEqual(
             model.toolbarTools,
-            expect(items: [.tool(.eraser)], pool: [.laser, .pen, .blur]),
-            "the pen entered the pool exactly where it was dropped")
+            expect(items: [.tool(.pen)], pool: [.laser, .eraser, .blur]),
+            "the eraser entered the pool exactly where it was dropped")
 
         // And the same drop on a chip's after-half lands after it.
         let (later, laterModel) = makePane(
             items: [.tool(.pen), .tool(.eraser)],
             pool: [.laser, .blur]
         )
-        later.handlePoolDrop(target: .tool(.blur), edge: .after, payload: .tool(.pen))
+        later.handlePoolDrop(target: .tool(.blur), edge: .after, payload: .tool(.eraser))
         XCTAssertEqual(
             laterModel.toolbarTools,
-            expect(items: [.tool(.eraser)], pool: [.laser, .blur, .pen]))
+            expect(items: [.tool(.pen)], pool: [.laser, .blur, .eraser]))
     }
 
-    /// A placed separator comes back off the bar through the pool's end zone —
-    /// the only way out for a placed separator, as the pool card's caption
-    /// promises. It never becomes a pool item: the pool ends unchanged.
+    /// A placed separator comes back off the bar through the pool's end
+    /// zone — one of the ways out now, since every pool target takes it
+    /// (T4/S3). It never becomes a pool item: the pool ends unchanged.
     func testDroppingAPlacedSeparatorOnThePoolEndZoneTakesItOffTheBar() {
         let (pane, model) = makePane(
             items: [.tool(.pen), .separator, .tool(.eraser)],
@@ -227,6 +229,93 @@ final class SettingsOrganiserTransferTests: XCTestCase {
             model.toolbarTools,
             expect(items: [.tool(.pen)], pool: [.select, .laser, .blur]),
             "the pool reordered at the dropped spot; the bar is untouched")
+    }
+
+    /// T3/S2: the bar's first tool cannot leave, on any pool target — the
+    /// drag-out refuses and the draft stays exactly as it was. Before the
+    /// fix the same drop "worked" (the gesture completed) and the pen
+    /// silently left the bar.
+    func testTheFirstToolCannotLeaveThroughThePoolEndZone() {
+        let (pane, model) = makePane(
+            items: [.tool(.pen), .separator, .tool(.eraser)],
+            pool: [.laser]
+        )
+        let draft = model.toolbarTools
+
+        pane.handlePoolEndDrop(payload: .tool(.pen))
+
+        XCTAssertEqual(
+            model.toolbarTools, draft,
+            "the bar's first tool cannot leave: the drag-out is refused and the draft is unchanged")
+    }
+
+    /// T3/S2: the same refusal on a pool chip, either half of it.
+    func testTheFirstToolCannotLeaveThroughAPoolChip() {
+        let (pane, model) = makePane(
+            items: [.tool(.pen), .tool(.eraser)],
+            pool: [.laser, .blur]
+        )
+        let draft = model.toolbarTools
+
+        pane.handlePoolDrop(target: .tool(.laser), edge: .before, payload: .tool(.pen))
+        XCTAssertEqual(
+            model.toolbarTools, draft,
+            "the bar's first tool cannot leave through a pool chip either")
+
+        pane.handlePoolDrop(target: .tool(.blur), edge: .after, payload: .tool(.pen))
+        XCTAssertEqual(model.toolbarTools, draft)
+    }
+
+    // MARK: - Separators come off onto any pool target (T4/S3)
+
+    /// T4/S3: a placed separator used to leave only through the pool's
+    /// dashed end zone, because the pool chips accepted tools only. Now any
+    /// pool target takes it off the bar; the drop's side lands it nowhere
+    /// but off the bar, because the pool never stores separators as pool
+    /// items.
+    func testAPlacedSeparatorComesOffOntoAnyPoolChip() {
+        let (pane, model) = makePane(
+            items: [.tool(.pen), .separator, .tool(.eraser)],
+            pool: [.laser]
+        )
+
+        pane.handlePoolDrop(target: .tool(.laser), edge: .before, payload: .separator)
+
+        XCTAssertEqual(
+            model.toolbarTools,
+            expect(items: [.tool(.pen), .tool(.eraser)], pool: [.laser]),
+            "the placed separator came off through a pool chip; the pool never stores separators")
+
+        let (later, laterModel) = makePane(
+            items: [.tool(.pen), .separator, .tool(.eraser)],
+            pool: [.laser]
+        )
+        later.handlePoolDrop(target: .tool(.laser), edge: .after, payload: .separator)
+        XCTAssertEqual(
+            laterModel.toolbarTools,
+            expect(items: [.tool(.pen), .tool(.eraser)], pool: [.laser]),
+            "either half of the chip takes the separator off")
+    }
+
+    // MARK: - Reordering in place, across a placed separator (T5/S5)
+
+    /// T5/S5: moving a bar tool across a placed separator used to drop that
+    /// separator — `[pen, sep, eraser]`, pen onto the eraser's after-edge,
+    /// produced `[eraser, pen]` while `[eraser, sep, pen]` was reachable —
+    /// forcing a round trip through the pool to keep the divider. Now the
+    /// separator relocates to the nearest legal slot instead.
+    func testAMovedToolAcrossAPlacedSeparatorRelocatesTheSeparator() {
+        let (pane, model) = makePane(
+            items: [.tool(.pen), .separator, .tool(.eraser)],
+            pool: []
+        )
+
+        pane.handleBarDrop(target: .tool(.eraser), edge: .after, payload: .tool(.pen))
+
+        XCTAssertEqual(
+            model.toolbarTools,
+            expect(items: [.tool(.eraser), .separator, .tool(.pen)], pool: []),
+            "the pen landed where it was dropped and the separator it crossed was relocated, not deleted")
     }
 
     // MARK: - One draft, two zones

@@ -341,6 +341,86 @@ final class GeneralPreferencesTests: XCTestCase {
         XCTAssertEqual(layout.moving(.tool(.select), to: 0), layout)
     }
 
+    // MARK: What cannot leave the bar (T3/S2)
+
+    /// The bar keeps its first tool: the leading tool cannot leave, every
+    /// other item — placed separators included — can. This is the one
+    /// predicate the pool's handlers and the preview's fixed marking both
+    /// read, and a one-tool bar's only tool is its first, which is also the
+    /// case `removing` itself refuses.
+    func testTheLeadingToolCannotLeaveWhileEveryOtherItemCan() {
+        let layout = ToolbarToolLayout(items: [.tool(.pen), .separator, .tool(.eraser)])
+        XCTAssertFalse(
+            layout.canLeave(.tool(.pen)),
+            "the bar's first tool cannot leave")
+        XCTAssertTrue(layout.canLeave(.tool(.eraser)))
+        XCTAssertTrue(layout.canLeave(.separator), "a placed separator always can (T4/S3)")
+        XCTAssertTrue(layout.canLeave(.tool(.select)), "a pool tool is never the bar's first tool")
+
+        // A one-tool bar's only tool is also its first tool.
+        let solo = ToolbarToolLayout(items: [.tool(.pen)])
+        XCTAssertFalse(solo.canLeave(.tool(.pen)))
+    }
+
+    // MARK: Reordering in place across a placed separator (T5/S5)
+
+    /// T5/S5: a bar-to-bar move used to run through normalisation, which ate
+    /// a separator the move stranded at a bar end — [pen, sep, eraser] with
+    /// the pen moved onto the eraser's after-edge came back [eraser, pen]
+    /// and the only way to keep the divider was a round trip through the
+    /// pool. Now the moved item lands where it was dropped and the orphaned
+    /// separator relocates to the nearest legal slot.
+    func testMovingAToolAcrossAPlacedSeparatorRelocatesTheSeparatorInsteadOfDroppingIt() {
+        let layout = ToolbarToolLayout(items: [.tool(.pen), .separator, .tool(.eraser)])
+        let moved = layout.moving(.tool(.pen), to: 2)
+        XCTAssertEqual(
+            moved.items,
+            [.tool(.eraser), .separator, .tool(.pen)],
+            "the pen lands where it was dropped and the separator it crossed is relocated, not deleted")
+    }
+
+    /// A separator stranded at a bar's tail by a move slides to the nearest
+    /// legal slot instead of being eaten.
+    func testAMovedToolLeavesAnOrphanedTrailingSeparatorInItsNearestLegalSlot() {
+        let layout = ToolbarToolLayout(items: [.tool(.pen), .separator, .tool(.eraser)])
+        let moved = layout.moving(.tool(.eraser), to: 0)
+        XCTAssertEqual(
+            moved.items,
+            [.tool(.eraser), .separator, .tool(.pen)],
+            "the trailing separator is relocated to the bar's only legal slot")
+    }
+
+    /// Reordering inside one group crosses no separator and must touch none.
+    func testReorderingWithinAGroupKeepsEverySeparator() {
+        let layout = ToolbarToolLayout(items: [
+            .tool(.pen), .tool(.eraser), .separator, .tool(.arrow),
+        ])
+        let moved = layout.moving(.tool(.pen), to: 1)
+        XCTAssertEqual(
+            moved.items,
+            [.tool(.eraser), .tool(.pen), .separator, .tool(.arrow)],
+            "in-place reordering inside one group needs no pool round trip and touches no separator")
+    }
+
+    /// Two consecutive in-place reorders: each lands the moved item where the
+    /// drop said, repairs its own stranded separator, and the end state is
+    /// predictable with no separator lost or duplicated.
+    func testTwoConsecutiveReordersEndInAPredictableBar() {
+        var layout = ToolbarToolLayout(items: [
+            .tool(.pen), .separator, .tool(.eraser), .tool(.arrow),
+        ])
+        layout = layout.moving(.tool(.pen), to: 3)
+        XCTAssertEqual(
+            layout.items,
+            [.tool(.eraser), .separator, .tool(.arrow), .tool(.pen)],
+            "first reorder: the crossed separator follows into the nearest legal slot")
+        layout = layout.moving(.tool(.eraser), to: 3)
+        XCTAssertEqual(
+            layout.items,
+            [.tool(.arrow), .separator, .tool(.pen), .tool(.eraser)],
+            "second reorder: still in place, and still exactly one separator")
+    }
+
     func testASeparatorClampsIntoTheSlotsBetweenTwoTools() {
         let layout = ToolbarToolLayout(items: [.tool(.pen), .separator, .tool(.eraser)])
         // A stray drag before the first item or after the last one must not
