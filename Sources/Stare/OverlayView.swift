@@ -22,6 +22,11 @@ class OverlayView: NSView {
     /// A committed transform of an existing mark (move, scale, rotate), so the
     /// global history records it in real order: one drag is one undo step.
     var onTransform: ((Stroke) -> Void)?
+    /// A committed group move (T6b/S8): every mark of a multi-selection moved
+    /// together in one drag. The session journalled the batch, so the global
+    /// history records it as ONE entry — one ⌘Z returns every mark, ⇧⌘Z moves
+    /// them again.
+    var onBatchTransform: (([Stroke]) -> Void)?
     /// A mark deleted with the cursor, so the global history can hand it to
     /// the owning display's redo stack.
     var onDelete: ((UUID) -> Void)?
@@ -145,6 +150,13 @@ class OverlayView: NSView {
     private var selectionOriginal: Stroke?
     /// The transformed mark drawn live on top during a drag.
     private var selectionPreview: Stroke?
+    /// Group move (T6b/S8): the untouched snapshots of every selected mark,
+    /// non-empty only while a group move drag runs on a multi-selection. Each
+    /// frame translates them all by the same delta; the session is journalled
+    /// exactly once, as one batch, on mouse up.
+    private var groupOriginals: [Stroke] = []
+    /// The translated previews matching `groupOriginals`, same order.
+    private var groupPreviews: [Stroke] = []
 
     /// What a drag on the selected mark does. The handle decides: the body
     /// moves, a corner resizes uniformly, the knob rotates. The shape never
@@ -168,6 +180,8 @@ class OverlayView: NSView {
         selectionDrag = nil
         selectionOriginal = nil
         selectionPreview = nil
+        groupOriginals = []
+        groupPreviews = []
         marqueeOrigin = nil
         marqueeRect = nil
         marqueeAdditive = false
@@ -366,6 +380,33 @@ class OverlayView: NSView {
     @discardableResult
     func redoClearedMarks() -> Bool {
         guard session.canRedoClear, session.redo() else { return false }
+        noteBlurInterestChanged()
+        noteSessionChanged()
+        needsDisplay = true
+        return true
+    }
+
+    /// Global undo of the group move (T6b/S8): the batch the drag moved comes
+    /// back in one step. The guard keeps the global order and the session's
+    /// journal from drifting — a popped batch entry can never undo a different
+    /// change than the one it names, just like the clear entry above.
+    @discardableResult
+    func undoBatchMove() -> Bool {
+        guard session.canUndoBatchMove, session.undo() else { return false }
+        pruneSelection()
+        committedBounds.removeAll()
+        noteBlurInterestChanged()
+        noteSessionChanged()
+        needsDisplay = true
+        return true
+    }
+
+    /// Global redo of the group move (T6b/S8): the undone batch moves again,
+    /// with the same session agreement as the undo side.
+    @discardableResult
+    func redoBatchMove() -> Bool {
+        guard session.canRedoBatchMove, session.redo() else { return false }
+        committedBounds.removeAll()
         noteBlurInterestChanged()
         noteSessionChanged()
         needsDisplay = true
@@ -747,16 +788,23 @@ class OverlayView: NSView {
             return
         }
         var selection = MarkMultiSelection(ids: selectedMarkIDs)
-        if selection.single != hit.id {
+        if !selection.contains(hit.id) {
+            // A mark outside the selection: today's behaviour — the selection
+            // collapses to it, and the drag moves it alone.
             selection.replace(with: hit.id)
             selectedMarkIDs = selection.ids
             onSelectionChanged?(hit.id)
         }
-        let handle = MarkSelection(stroke: hit).handle(
-            at: point,
-            handleSize: selectionHandleSize,
-            rotationHandleOffset: selectionRotationHandleOffset
-        ) ?? .body
+        // A mark already part of a multi-selection starts the group move, not
+        // a collapse (T6b/S8): only dashed boxes are visible there, so the
+        // body alone is grabbed — resize and rotation are one-mark edits.
+        let handle: MarkHandle = selection.count > 1
+            ? .body
+            : MarkSelection(stroke: hit).handle(
+                at: point,
+                handleSize: selectionHandleSize,
+                rotationHandleOffset: selectionRotationHandleOffset
+            ) ?? .body
         startSelectionDrag(handle, on: hit, at: point)
     }
 
@@ -829,9 +877,20 @@ class OverlayView: NSView {
     private func startSelectionDrag(_ handle: MarkHandle, on stroke: Stroke, at point: CGPoint) {
         selectionOriginal = stroke
         selectionPreview = nil
+        groupOriginals = []
+        groupPreviews = []
         switch handle {
         case .body:
             selectionDrag = .move(start: point)
+            // T6b/S8: a move on a multi-selection drags every member. A
+            // single selected mark keeps today's one-mark path untouched —
+            // the group arrays stay empty and the drag commits through
+            // the same `replace` it always did.
+            if selectedMarkIDs.count > 1 {
+                groupOriginals = selectedMarkIDs.compactMap { id in
+                    session.strokes.first(where: { $0.id == id })
+                }
+            }
         case .topLeft, .topRight, .bottomLeft, .bottomRight:
             selectionDrag = .scale(handle: handle)
         case .rotation:
@@ -845,10 +904,13 @@ class OverlayView: NSView {
         guard let drag = selectionDrag, let original = selectionOriginal else { return }
         switch drag {
         case let .move(start):
-            selectionPreview = MarkTransform.translated(
-                original,
-                by: CGPoint(x: point.x - start.x, y: point.y - start.y)
-            )
+            let delta = CGPoint(x: point.x - start.x, y: point.y - start.y)
+            selectionPreview = MarkTransform.translated(original, by: delta)
+            // T6b/S8: every member of the group follows the same delta, from
+            // its own untouched snapshot.
+            if !groupOriginals.isEmpty {
+                groupPreviews = groupOriginals.map { MarkTransform.translated($0, by: delta) }
+            }
         case let .scale(handle):
             selectionPreview = MarkTransform.scaled(original, dragging: handle, to: point)
         case let .rotate(startAngle):
@@ -862,11 +924,32 @@ class OverlayView: NSView {
     /// Ends the drag: the preview replaces the committed mark exactly once, so
     /// the global history sees one transform, not one per mouse event.
     private func commitSelectionDrag() {
+        let group = groupOriginals
         defer {
             selectionDrag = nil
             selectionOriginal = nil
             selectionPreview = nil
+            groupOriginals = []
+            groupPreviews = []
             needsDisplay = true
+        }
+        // Group move (T6b/S8): the whole multi-selection is replaced through
+        // the session's batch op — ONE journal op — and the selection stays
+        // exactly as it was. The controller turns the callback into ONE
+        // global-history entry, so ⌘Z returns every mark and ⇧⌘Z moves them
+        // again.
+        if group.count > 1 {
+            guard groupPreviews.count == group.count,
+                  groupPreviews != group,
+                  session.replaceBatch(groupPreviews) else { return }
+            for stroke in groupPreviews {
+                committedBounds[stroke.id] = stroke.displayBounds
+            }
+            noteBlurInterestChanged()
+            noteSessionChanged()
+            onBatchTransform?(groupPreviews)
+            Diag.log("transform batch count=\(groupPreviews.count)")
+            return
         }
         guard let preview = selectionPreview, let original = selectionOriginal,
               preview != original, session.replace(preview) else {
@@ -1368,6 +1451,7 @@ class OverlayView: NSView {
             // The live preview of a transform takes over: the mark is drawn
             // transformed on top instead of both versions at once.
             if let preview = selectionPreview, stroke.id == preview.id { continue }
+            if !groupPreviews.isEmpty, groupPreviews.contains(where: { $0.id == stroke.id }) { continue }
             let box = committedBounds[stroke.id] ?? {
                 let computed = stroke.displayBounds
                 committedBounds[stroke.id] = computed
@@ -1380,7 +1464,10 @@ class OverlayView: NSView {
         if let active = session.active {
             render(active, in: context)
         }
-        if let preview = selectionPreview {
+        if let preview = selectionPreview, !groupPreviews.contains(where: { $0.id == preview.id }) {
+            render(preview, in: context)
+        }
+        for preview in groupPreviews {
             render(preview, in: context)
         }
         context.restoreGState()
@@ -1426,7 +1513,10 @@ class OverlayView: NSView {
         // handles — a drag can still only move the primary.
         if multi {
             for id in selectedMarkIDs.dropFirst() {
-                guard let other = session.strokes.first(where: { $0.id == id }) else { continue }
+                // During a group move (T6b/S8) a member's box follows its
+                // live preview, never the stale committed geometry.
+                guard let other = groupPreviews.first(where: { $0.id == id })
+                    ?? session.strokes.first(where: { $0.id == id }) else { continue }
                 let box = MarkSelection(stroke: other)
                 context.saveGState()
                 context.setStrokeColor(accent)

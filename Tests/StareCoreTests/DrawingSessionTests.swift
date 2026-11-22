@@ -831,4 +831,178 @@ final class DrawingSessionTests: XCTestCase {
         session.begin(at: CGPoint(x: 300, y: 0), tool: .number, ink: .green)
         XCTAssertEqual(session.strokes.compactMap(\.stepNumber), [1, 2, 3, 4], "no duplicate where number 1 was")
     }
+
+    // MARK: - T6b/S8: the group move is one undoable step
+
+    // Dragging a multi-selection moves every selected mark by the same delta:
+    // the batch replacement carries one journal op for the whole group, ids
+    // and draw order stay put, and a mark outside the selection never moves.
+    func testGroupMoveTranslatesEveryMemberByTheSameDelta() {
+        var session = DrawingSession()
+        drawLine(in: &session, tool: .rectangle, points: [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 50)])
+        drawLine(in: &session, tool: .rectangle, points: [CGPoint(x: 200, y: 20), CGPoint(x: 260, y: 70)])
+        drawLine(in: &session, tool: .pen, points: [CGPoint(x: 500, y: 500), CGPoint(x: 600, y: 540)])
+        let first = session.strokes[0]
+        let second = session.strokes[1]
+        let outsider = session.strokes[2]
+        let delta = CGPoint(x: 17, y: -9)
+        let moved = [first, second].map { MarkTransform.translated($0, by: delta) }
+
+        XCTAssertTrue(session.replaceBatch(moved), "the group move journals one batch step")
+        XCTAssertEqual(session.strokes.map(\.id), [first.id, second.id, outsider.id],
+                       "ids and draw order survive the batch"
+        )
+        XCTAssertEqual(session.strokes[0].points, [CGPoint(x: delta.x, y: delta.y), CGPoint(x: 100 + delta.x, y: 50 + delta.y)])
+        XCTAssertEqual(session.strokes[1].points, [CGPoint(x: 200 + delta.x, y: 20 + delta.y), CGPoint(x: 260 + delta.x, y: 70 + delta.y)])
+        XCTAssertEqual(session.strokes[2], outsider, "a mark outside the selection never moves")
+    }
+
+    // The owner's S8 words: a multi-selection moves together. The batch is
+    // journalled once, so one ⌘Z puts every mark back exactly where it was —
+    // never one undo step per mark.
+    func testTheBatchMoveIsOneUndoStepThatRestoresEveryMark() {
+        var session = DrawingSession()
+        drawLine(in: &session, tool: .rectangle, points: [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 50)])
+        drawLine(in: &session, tool: .rectangle, points: [CGPoint(x: 200, y: 20), CGPoint(x: 260, y: 70)])
+        let original = session.strokes
+        let delta = CGPoint(x: -12, y: 6)
+        let moved = Array(session.strokes).map { MarkTransform.translated($0, by: delta) }
+
+        XCTAssertTrue(session.replaceBatch(moved))
+        XCTAssertEqual(session.strokes, original.map { MarkTransform.translated($0, by: delta) },
+                       "every mark moved by the same delta"
+        )
+
+        XCTAssertTrue(session.undo(), "one undo step restores the whole group")
+        XCTAssertEqual(session.strokes, original, "every mark is back exactly: ids, geometry, inks")
+    }
+
+    // ⇧⌘Z after the ⌘Z apply the whole move again, and the round trip starts
+    // over — the journal forks like every edit, so nothing stale follows.
+    func testBatchMoveRedoReappliesTheWholeMoveInOneStep() {
+        var session = DrawingSession()
+        drawLine(in: &session, tool: .rectangle, points: [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 50)])
+        drawLine(in: &session, tool: .rectangle, points: [CGPoint(x: 200, y: 20), CGPoint(x: 260, y: 70)])
+        let original = session.strokes
+        let delta = CGPoint(x: 30, y: 30)
+        let moved = Array(session.strokes).map { MarkTransform.translated($0, by: delta) }
+
+        XCTAssertTrue(session.replaceBatch(moved))
+        XCTAssertTrue(session.undo())
+        XCTAssertTrue(session.canRedoBatchMove, "the undone batch waits for redo")
+
+        XCTAssertTrue(session.redo(), "one redo step reapplies the whole move")
+        XCTAssertEqual(session.strokes, moved, "every mark is moved again")
+
+        XCTAssertTrue(session.undo())
+        XCTAssertEqual(session.strokes, original, "the round trip can start over")
+    }
+
+    // A group move with a single selected mark must be today's single-mark
+    // move: one transform step, one undo restores it, the second mark untouched.
+    func testABatchMoveOfASingleMarkEqualsTodaysSingleMarkMove() {
+        var batch = DrawingSession()
+        var single = DrawingSession()
+        drawLine(in: &batch, tool: .rectangle, points: [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 50)])
+        drawLine(in: &batch, tool: .rectangle, points: [CGPoint(x: 200, y: 20), CGPoint(x: 260, y: 70)])
+        drawLine(in: &single, tool: .rectangle, points: [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 50)])
+        drawLine(in: &single, tool: .rectangle, points: [CGPoint(x: 200, y: 20), CGPoint(x: 260, y: 70)])
+        let batchOutsider = batch.strokes[1]
+        let singleOutsider = single.strokes[1]
+        let delta = CGPoint(x: 8, y: 4)
+        let batchFirst = MarkTransform.translated(batch.strokes[0], by: delta)
+        let singleFirst = MarkTransform.translated(single.strokes[0], by: delta)
+
+        XCTAssertTrue(batch.replaceBatch([batchFirst]))
+        XCTAssertTrue(single.replace(singleFirst))
+        XCTAssertEqual(batch.strokes.map(\.points), single.strokes.map(\.points), "one moved mark ends exactly where the single route ends")
+        XCTAssertEqual(batch.strokes.count, single.strokes.count)
+
+        XCTAssertTrue(batch.undo())
+        XCTAssertTrue(single.undo())
+        XCTAssertEqual(batch.strokes.map(\.points), single.strokes.map(\.points), "and one undo leaves the same rest state")
+        XCTAssertEqual(batch.strokes[1].points, batchOutsider.points, "the mark outside the selection never moved")
+        XCTAssertEqual(single.strokes[1], singleOutsider)
+    }
+
+    // Unknown ids report failure, all-no-op batches journal nothing and fork
+    // no redo history — the same no-step invariants the single replace keeps.
+    func testReplaceBatchIgnoresUnknownIdsAndNoOpsWithoutAJournalledStep() {
+        var session = DrawingSession()
+        drawLine(in: &session, tool: .rectangle, points: [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 50)])
+        let snapshot = session
+
+        XCTAssertFalse(session.replaceBatch([Stroke(
+            tool: .rectangle,
+            ink: .red,
+            points: [CGPoint(x: 99, y: 0), CGPoint(x: 10, y: 10)]
+        )]), "no mark has that id")
+        XCTAssertEqual(session, snapshot, "an unknown id touched nothing, journals included")
+
+        let noOp = Array(session.strokes)
+        XCTAssertFalse(session.replaceBatch(noOp), "nothing changed, so there is no step")
+        XCTAssertEqual(session, snapshot, "a no-op batch never touches the journals")
+    }
+
+    // A batch member the eraser took away afterwards stays gone: the undo
+    // skips the stale member and still restores the live ones.
+    func testBatchMoveUndoSkipsAMemberErasedAfterwards() {
+        var session = DrawingSession()
+        drawLine(in: &session, tool: .rectangle, points: [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 50)])
+        drawLine(in: &session, tool: .rectangle, points: [CGPoint(x: 200, y: 20), CGPoint(x: 260, y: 70)])
+        let original = [session.strokes[1]]
+        let delta = CGPoint(x: 10, y: 0)
+        let moved = Array(session.strokes).map { MarkTransform.translated($0, by: delta) }
+
+        XCTAssertTrue(session.replaceBatch(moved))
+        XCTAssertTrue(!session.erase(at: CGPoint(x: 13, y: 25), radius: 6).isEmpty, "the eraser takes the first mark away")
+        XCTAssertEqual(session.strokes.count, 1)
+
+        XCTAssertTrue(session.undo(), "the batch undo still answers")
+        XCTAssertEqual(session.strokes, original, "the live member comes back; the erased one stays gone")
+    }
+
+    // The contract the global history needs: after a batch move the newest
+    // live op is the batch, so a popped batch-move entry can never undo a
+    // different change than the one it names — and no single-mark entry is
+    // answered first either.
+    func testCanUndoBatchMoveMatchesTheNewestLiveOp() {
+        var session = DrawingSession()
+        drawLine(in: &session)
+        drawLine(in: &session, points: [CGPoint(x: 20, y: 20), CGPoint(x: 40, y: 40)])
+
+        XCTAssertFalse(session.canUndoBatchMove, "no group moved yet")
+        session.replaceBatch(Array(session.strokes).map { MarkTransform.translated($0, by: CGPoint(x: 5, y: 5)) })
+        XCTAssertTrue(session.canUndoBatchMove)
+        for stroke in session.strokes {
+            XCTAssertFalse(session.canUndo(markWithID: stroke.id),
+                           "a single-mark entry is never answered while the batch is newest live"
+            )
+        }
+
+        drawLine(in: &session, points: [CGPoint(x: 70, y: 70), CGPoint(x: 80, y: 80)])
+        XCTAssertFalse(session.canUndoBatchMove, "a later draw is the newest live op")
+
+        XCTAssertTrue(session.undo())
+        XCTAssertTrue(session.canUndoBatchMove, "the batch is newest again once the draw is undone")
+        XCTAssertTrue(session.undo())
+        XCTAssertFalse(session.canUndoBatchMove, "and once it is undone, nothing batch is live")
+    }
+
+    func testCanRedoBatchMoveTracksTheRedoJournal() {
+        var session = DrawingSession()
+        drawLine(in: &session)
+
+        let moved = [MarkTransform.translated(session.strokes[0], by: CGPoint(x: 5, y: 5))]
+        XCTAssertTrue(session.replaceBatch(moved))
+        XCTAssertFalse(session.canRedoBatchMove, "a move is an edit: the redo history forked")
+
+        XCTAssertTrue(session.undo())
+        XCTAssertTrue(session.canRedoBatchMove)
+        XCTAssertFalse(session.canRedo(markWithID: session.strokes.first?.id ?? UUID()),
+                       "a batch entry is not a single mark's entry")
+
+        XCTAssertTrue(session.redo())
+        XCTAssertFalse(session.canRedoBatchMove)
+    }
 }

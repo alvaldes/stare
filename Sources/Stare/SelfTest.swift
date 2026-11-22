@@ -1783,6 +1783,51 @@ enum SelfTest {
         )
         marqueeOk = marqueeOk && replaced
 
+        // T6b/S8: the group move. Both marks selected again, then ONE drag on
+        // a mark that is already part of the multi-selection moves BOTH by
+        // the same delta through the real drag path; the selection survives
+        // the drag, and the batch is ONE undo step of the session's batch
+        // journal — ⌘Z (the batch-route undo) puts both back exactly, ⇧⌘Z
+        // moves them all again.
+        drag(from: CGPoint(x: 60, y: 380), to: CGPoint(x: 600, y: 520))
+        guard view.selectedMarkIDs.count == 2, let primaryID = view.selectedMarkID,
+              let primary = view.session.strokes.first(where: { $0.id == primaryID }) else {
+            report.append("FAIL: the marquee did not reselect the group")
+            return report
+        }
+        let groupBefore = view.session.strokes
+        let groupDelta = CGPoint(x: 24, y: 14)
+        let primaryCentre = view.viewPoint(fromPage: primary.anchor)
+        drag(
+            from: primaryCentre,
+            to: CGPoint(x: primaryCentre.x + groupDelta.x, y: primaryCentre.y + groupDelta.y)
+        )
+        let movedPoints = groupBefore.map { stroke in
+            stroke.points.map { CGPoint(x: $0.x + groupDelta.x, y: $0.y + groupDelta.y) }
+        }
+        let groupMoved = view.selectedMarkIDs.count == 2
+            && view.selectedMarkIDs.contains(primaryID)
+            && view.session.strokes.count == 2
+            && view.session.strokes.map(\.points) == movedPoints
+        report.append(
+            "select group-move moved=\(view.session.strokes.count) expect 2 "
+                + "selection=\(view.selectedMarkIDs.count) expect 2 "
+                + "ok=\(groupMoved)"
+        )
+
+        // ONE undo step: the batch route the controller drives restores every
+        // member; redo moves the whole group again.
+        let undoRestoresGroup = view.undoBatchMove()
+            && view.session.strokes.map(\.points) == groupBefore.map(\.points)
+            && view.selectedMarkIDs.count == 2
+        let redoMovesGroup = view.redoBatchMove()
+            && view.session.strokes.map(\.points) == movedPoints
+        report.append(
+            "select group-undo undoRestores=\(undoRestoresGroup) redoReapplies=\(redoMovesGroup) "
+                + "ok=\(undoRestoresGroup && redoMovesGroup)"
+        )
+        marqueeOk = marqueeOk && groupMoved && undoRestoresGroup && redoMovesGroup
+
         let passed = moveOk && undoRestoresMove && scaleOk && quarterTurn && hitOk && escapeOk && deleteOk && marqueeOk
         report.append("select result=\(passed ? "PASS" : "FAIL")")
         return report

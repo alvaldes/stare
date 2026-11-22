@@ -38,31 +38,39 @@ enum CaptureFile {
 private enum HistoryEntry {
     case mark(displayID: CGDirectDisplayID, strokeID: UUID)
     case clear(displayID: CGDirectDisplayID)
+    /// A group move (T6b/S8): every mark of one display's multi-selection
+    /// moved together in one drag — ONE undo step, never one per mark, the
+    /// same batch routing the clear entry keeps.
+    case batchMove(displayID: CGDirectDisplayID)
 
     /// The display the entry routes to.
     var owningDisplayID: CGDirectDisplayID {
         switch self {
         case let .mark(displayID, _): return displayID
         case let .clear(displayID): return displayID
+        case let .batchMove(displayID): return displayID
         }
     }
 
     /// Whether this entry was wiped out of the owning display's session by a
     /// hard clear: marks with these ids are gone with no journal trail and
     /// the journal itself was emptied, so both kinds are unroutable and
-    /// leave the history.
+    /// leave the history. A batch entry dies with the display's journal the
+    /// same way a clear entry does.
     func isWipedByHardClear(displayID: CGDirectDisplayID, clearedIDs: Set<UUID>) -> Bool {
         switch self {
         case let .mark(id, strokeID): return id == displayID && clearedIDs.contains(strokeID)
         case let .clear(id): return id == displayID
+        case let .batchMove(id): return id == displayID
         }
     }
 
     /// Whether this entry names one of the marks removed by an erase or a
     /// per-mark delete — the session op it named is stale where it sits.
-    /// Clear entries are never touched here: the batch a clear names was
-    /// already off the canvas when the erase happened, and the session's
-    /// journal still holds it, so the entry keeps its routing.
+    /// Clear and batch-move entries are never touched here: the batch each
+    /// names holds the marks' snapshots inside the display's journal, and
+    /// the session op skips a member gone by hand — so the entry keeps its
+    /// routing.
     func namesErasedMark(displayID: CGDirectDisplayID, erasedIDs: Set<UUID>) -> Bool {
         guard case let .mark(id, strokeID) = self, id == displayID else { return false }
         return erasedIDs.contains(strokeID)
@@ -815,6 +823,14 @@ final class OverlayController {
             historyOrder.append(.mark(displayID: displayID, strokeID: stroke.id))
             redoOrder.removeAll()
         }
+        view.onBatchTransform = { [weak self] strokes in
+            guard let self else { return }
+            // The group move (T6b/S8) is ONE global-history entry: ⌘Z pops it
+            // and the owning view's batch journal restores every mark, ⇧⌘Z
+            // moves them all again. The session forked its redo journal too.
+            historyOrder.append(.batchMove(displayID: displayID))
+            redoOrder.removeAll()
+        }
         view.onDelete = { [weak self] id in
             guard let self else { return }
             // Deleting is its own undo: the mark's entries leave the history
@@ -1096,12 +1112,13 @@ final class DisplayCanvas {
     func undoMark(id: UUID) -> Bool { view.undoMark(id: id) }
 
     /// Routes one global-history entry against this display's session: a
-    /// single mark (draw or transform) or the batch the Escape clear took
-    /// away (T4/S5).
+    /// single mark (draw or transform), the batch the Escape clear took
+    /// away (T4/S5), or the batch a group move transformed (T6b/S8).
     fileprivate func undo(entry: HistoryEntry) -> Bool {
         switch entry {
         case let .mark(_, id): return undoMark(id: id)
         case .clear: return view.undoClearedMarks()
+        case .batchMove: return view.undoBatchMove()
         }
     }
 
@@ -1109,6 +1126,7 @@ final class DisplayCanvas {
         switch entry {
         case let .mark(_, id): return redoMark(id: id)
         case .clear: return view.redoClearedMarks()
+        case .batchMove: return view.redoBatchMove()
         }
     }
 }

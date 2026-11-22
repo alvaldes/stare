@@ -29,6 +29,11 @@ public struct DrawingSession: Equatable, Sendable {
         /// T4/S5); undo restores the whole batch. The strokes are journalled
         /// in draw order as they were when the clear took them.
         case cleared([Stroke])
+        /// The marks of a multi-selection moved together in one drag
+        /// (T6b/S8); undo restores every member's previous geometry. The
+        /// arrays are journalled in draw order, one entry per group: the
+        /// batch is ONE undo step, never one per mark.
+        case movedBatch(previous: [Stroke], transformed: [Stroke])
     }
 
     /// What redo can reapply, newest last.
@@ -39,6 +44,9 @@ public struct DrawingSession: Equatable, Sendable {
         case transformed(previous: Stroke, transformed: Stroke)
         /// The cleared batch was restored; redo clears it again (T4/S5).
         case cleared([Stroke])
+        /// The batch move was undone; redo reapplies it to every member
+        /// whose mark still exists.
+        case movedBatch(previous: [Stroke], transformed: [Stroke])
     }
 
     private var undoOps: [UndoOp] = []
@@ -245,6 +253,23 @@ public struct DrawingSession: Equatable, Sendable {
                 }
                 redoOps.append(.cleared(restored))
                 return true
+            case let .movedBatch(previous, transformed):
+                // The group move comes back all at once (T6b/S8). A member
+                // the eraser took away in the meantime stays gone and the
+                // batch member deleted by hand never undoes the group — the
+                // same skip-stale rule the clear keeps.
+                var restored: [Stroke] = []
+                var restoredTransformed: [Stroke] = []
+                for target in transformed {
+                    guard let index = strokes.firstIndex(where: { $0.id == target.id }),
+                          let original = previous.first(where: { $0.id == target.id }) else { continue }
+                    restoredTransformed.append(strokes[index])
+                    restored.append(original)
+                    strokes[index] = original
+                }
+                guard !restored.isEmpty else { continue }
+                redoOps.append(.movedBatch(previous: restored, transformed: restoredTransformed))
+                return true
             }
         }
         return false
@@ -285,7 +310,48 @@ public struct DrawingSession: Equatable, Sendable {
             }
             undoOps.append(.cleared(cleared))
             return !cleared.isEmpty
+        case let .movedBatch(previous, transformed):
+            // The undone group move is applied again to every member whose
+            // mark still exists (T6b/S8), exactly the subset rule the undo
+            // side keeps; the journal walks back with the applied subset.
+            var restoredPrevious: [Stroke] = []
+            var reapplied: [Stroke] = []
+            for target in transformed {
+                guard let index = strokes.firstIndex(where: { $0.id == target.id }),
+                      let original = previous.first(where: { $0.id == target.id }) else { continue }
+                restoredPrevious.append(strokes[index])
+                reapplied.append(target)
+                strokes[index] = target
+            }
+            guard !reapplied.isEmpty else { return false }
+            undoOps.append(.movedBatch(previous: restoredPrevious, transformed: reapplied))
+            return true
         }
+    }
+
+    /// The group move (T6b/S8): several committed marks — the marks of a
+    /// multi-selection — are replaced by their translated copies and ONE
+    /// history op holds the whole batch, so a later undo restores every
+    /// member in a single step and redo reapplies it. Members whose id no
+    /// longer exists are skipped, and a member whose geometry did not
+    /// change journals nothing — so an empty batch never eats an undo step
+    /// and never forks the redo history. Returns false when nothing changed.
+    @discardableResult
+    public mutating func replaceBatch(_ replacements: [Stroke]) -> Bool {
+        var previous: [Stroke] = []
+        var transformed: [Stroke] = []
+        for stroke in replacements {
+            guard let index = strokes.firstIndex(where: { $0.id == stroke.id }),
+                  strokes[index] != stroke else { continue }
+            previous.append(strokes[index])
+            transformed.append(stroke)
+            strokes[index] = stroke
+        }
+        guard !transformed.isEmpty else { return false }
+        // A transform is an edit like a new mark: the redo history forks.
+        redoOps.removeAll()
+        undoOps.append(.movedBatch(previous: previous, transformed: transformed))
+        return true
     }
 
     /// Replaces a committed mark with a transformed copy — a move, a uniform
@@ -347,6 +413,11 @@ public struct DrawingSession: Equatable, Sendable {
             case let .transformed(_, transformed):
                 guard strokes.contains(where: { $0.id == transformed.id }) else { continue }
                 return false
+            case let .movedBatch(_, transformed):
+                // A live batch move blocks any clear: the scan stops here,
+                // the same point `undo` will act on.
+                guard strokes.contains(where: { stroke in transformed.contains { $0.id == stroke.id } }) else { continue }
+                return false
             case .cleared:
                 return true
             }
@@ -385,7 +456,7 @@ public struct DrawingSession: Equatable, Sendable {
         switch op {
         case let .removed(stroke): return stroke.id == id
         case let .transformed(_, transformed): return transformed.id == id
-        case .cleared: return false
+        case .cleared, .movedBatch: return false
         }
     }
 
@@ -403,6 +474,13 @@ public struct DrawingSession: Equatable, Sendable {
             case let .transformed(_, transformed):
                 guard strokes.contains(where: { $0.id == transformed.id }) else { continue }
                 return transformed.id == id
+            case let .movedBatch(_, transformed):
+                // The group move is the newest live op: no single mark can
+                // match it — its own entry is the batch one (T6b/S8). A
+                // member deleted by hand makes it stale, and the scan walks
+                // on exactly like `undo` does.
+                guard strokes.contains(where: { stroke in transformed.contains { $0.id == stroke.id } }) else { continue }
+                return false
             case .cleared:
                 // The clear is the newest live op: no single mark can match
                 // it, and the scan must stop here like `undo` will.
@@ -410,5 +488,38 @@ public struct DrawingSession: Equatable, Sendable {
             }
         }
         return false
+    }
+
+    /// Whether the newest *live* undo entry is a group move (T6b/S8), so the
+    /// global history can route a popped batch-move entry here and never undo
+    /// a different change than the one it named. The scan skips stale entries
+    /// exactly the way `undo` skips them, so both scans always stop on the
+    /// same op.
+    public var canUndoBatchMove: Bool {
+        for op in undoOps.reversed() {
+            switch op {
+            case let .added(stroke):
+                guard strokes.contains(where: { $0.id == stroke.id }) else { continue }
+                return false
+            case let .transformed(_, transformed):
+                guard strokes.contains(where: { $0.id == transformed.id }) else { continue }
+                return false
+            case .cleared:
+                return false
+            case let .movedBatch(_, transformed):
+                // The batch is live while at least one member's moved copy
+                // is still on the canvas — a member erased in the meantime
+                // never blocks the group step unraveling at large.
+                return strokes.contains { stroke in transformed.contains { $0.id == stroke.id } }
+            }
+        }
+        return false
+    }
+
+    /// Whether the newest redo entry is a group move (T6b/S8), so the global
+    /// history can route a popped batch-move entry here.
+    public var canRedoBatchMove: Bool {
+        guard case let .movedBatch(_, transformed) = redoOps.last else { return false }
+        return strokes.contains { stroke in transformed.contains { $0.id == stroke.id } }
     }
 }
