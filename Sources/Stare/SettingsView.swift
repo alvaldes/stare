@@ -253,6 +253,34 @@ private struct GeneralPane: View {
                     .foregroundStyle(.secondary)
             }
 
+            SettingsCard(title: "Toolbar", symbol: "slider.horizontal.3") {
+                SettingRow(
+                    title: "Bar orientation",
+                    detail: "Horizontal lays the tools in a row; vertical stacks them in one column.",
+                    content: Picker("", selection: $model.toolbarOrientation) {
+                        ForEach(ToolbarOrientation.allCases, id: \.self) { orientation in
+                            Text(orientation.title).tag(orientation)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 220)
+                )
+                SettingRow(
+                    title: "Docked edge",
+                    detail: "The edge of the screen the bar rests at when it has not been dragged.",
+                    content: Picker("", selection: $model.toolbarBorder) {
+                        ForEach(ToolbarBorder.allCases, id: \.self) { border in
+                            Text(border.title).tag(border)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 220)
+                )
+                Text("The bar moves to the new edge as soon as you pick, and right-clicking the ⠇⠇ handle always returns it there.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             SettingsCard(title: "Laser", symbol: "cursor.rays") {
                 SettingRow(
                     title: "Laser lasts",

@@ -90,6 +90,19 @@ final class EditorState: ObservableObject {
             }
         }
     }
+    /// Mirror of the toolbar's orientation (T9/S12): a horizontal row or a
+    /// vertical stack. The Settings pane writes the model, this state mirrors
+    /// it, and the toolbar panel and view react from here; detached state
+    /// (capture editor, selftest) keeps the shipped horizontal default.
+    @Published var toolbarOrientation: ToolbarOrientation {
+        didSet { writeIfNotSyncing { $0.toolbarOrientation = toolbarOrientation } }
+    }
+    /// Mirror of the toolbar's docked border (T9/S12): the edge the bar rests
+    /// at when it has not been dragged, which is also the gripper's reset
+    /// target for the current choice.
+    @Published var toolbarBorder: ToolbarBorder {
+        didSet { writeIfNotSyncing { $0.toolbarBorder = toolbarBorder } }
+    }
     /// Mirror of the pointer highlight diameter, in points.
     @Published var pointerSize: CGFloat {
         didSet { writeIfNotSyncing { $0.pointer.size = Double(pointerSize) } }
@@ -224,6 +237,8 @@ final class EditorState: ObservableObject {
             let scope = MainActor.assumeIsolated { preferences.scope }
             let placement = MainActor.assumeIsolated { preferences.palettePlacement }
             let lifetime = MainActor.assumeIsolated { preferences.laserLifetime }
+            let orientation = MainActor.assumeIsolated { preferences.toolbarOrientation }
+            let border = MainActor.assumeIsolated { preferences.toolbarBorder }
             let whiteboard = MainActor.assumeIsolated { preferences.whiteboard }
             pointerSize = CGFloat(style.size)
             pointerShape = style.preset == .squircle ? "squircle" : "circle"
@@ -242,6 +257,8 @@ final class EditorState: ObservableObject {
             overlayScope = scope.rawValue
             palettePlacement = placement.rawValue
             laserLifetime = lifetime.rawValue
+            toolbarOrientation = orientation
+            toolbarBorder = border
             boardPageBackground = whiteboard.background.rawValue
             boardScope = whiteboard.scope.rawValue
             boardShowBorder = whiteboard.showsBorder
@@ -263,6 +280,8 @@ final class EditorState: ObservableObject {
             overlayScope = OverlayScope.all.rawValue
             palettePlacement = PalettePlacement.cursor.rawValue
             laserLifetime = LaserLifetime.twoPointFive.rawValue
+            toolbarOrientation = .horizontal
+            toolbarBorder = .top
             boardPageBackground = WhiteboardDefaults.standard.background.rawValue
             boardScope = WhiteboardDefaults.standard.scope.rawValue
             boardShowBorder = WhiteboardDefaults.standard.showsBorder
@@ -308,6 +327,12 @@ final class EditorState: ObservableObject {
         }.store(in: &preferenceCancellables)
         model.$laserLifetime.dropFirst().sink { [weak self] value in
             self?.syncFromModel { $0.laserLifetime = value.rawValue }
+        }.store(in: &preferenceCancellables)
+        model.$toolbarOrientation.dropFirst().sink { [weak self] value in
+            self?.syncFromModel { $0.toolbarOrientation = value }
+        }.store(in: &preferenceCancellables)
+        model.$toolbarBorder.dropFirst().sink { [weak self] value in
+            self?.syncFromModel { $0.toolbarBorder = value }
         }.store(in: &preferenceCancellables)
         model.$tool.dropFirst().sink { [weak self] value in
             self?.syncFromModel { $0.tool = value }

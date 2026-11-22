@@ -45,6 +45,16 @@ final class PreferencesModel: ObservableObject {
     @Published var laserLifetime: LaserLifetime {
         didSet { persist() }
     }
+    /// Mirror of the toolbar's orientation (T9/S12); writing it persists the
+    /// whole blob.
+    @Published var toolbarOrientation: ToolbarOrientation {
+        didSet { persist() }
+    }
+    /// Mirror of the toolbar's docked border (T9/S12); writing it persists
+    /// the whole blob.
+    @Published var toolbarBorder: ToolbarBorder {
+        didSet { persist() }
+    }
     /// Mirror of the first-run flag; writing it persists the whole blob.
     @Published var hasCompletedOnboarding: Bool {
         didSet { persist() }
@@ -115,6 +125,8 @@ final class PreferencesModel: ObservableObject {
         self.scope = loaded.general.scope
         self.palettePlacement = loaded.general.palettePlacement
         self.laserLifetime = loaded.general.laserLifetime
+        self.toolbarOrientation = loaded.general.toolbarOrientation
+        self.toolbarBorder = loaded.general.toolbarBorder
         self.hasCompletedOnboarding = loaded.hasCompletedOnboarding
         self.tool = loaded.tool
         self.ink = loaded.ink
@@ -135,7 +147,9 @@ final class PreferencesModel: ObservableObject {
             showArmedFrame: showArmedFrame,
             scope: scope,
             palettePlacement: palettePlacement,
-            laserLifetime: laserLifetime
+            laserLifetime: laserLifetime,
+            toolbarOrientation: toolbarOrientation,
+            toolbarBorder: toolbarBorder
         )
         preferences.hasCompletedOnboarding = hasCompletedOnboarding
         preferences.tool = tool

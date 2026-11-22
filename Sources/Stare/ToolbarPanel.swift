@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import StareCore
 import SwiftUI
 
@@ -107,7 +108,26 @@ final class ToolbarPanel: NSPanel {
             name: Self.resetPositionNotification,
             object: nil
         )
+        // T9/S12: a Settings change to the orientation or the border re-docks
+        // the bar at once. The saved drag anchor belonged to the previous
+        // choice, so the same reset path the gripper's right-click uses
+        // clears it and lands the bar on the new border's default spot.
+        state.$toolbarOrientation
+            .dropFirst()
+            .sink { _ in
+                Self.requestPositionReset()
+                // Flipping the stacking direction also changes the panel's
+                // size; re-dock once the window has taken the new size.
+                DispatchQueue.main.async { Self.requestPositionReset() }
+            }
+            .store(in: &settingCancellables)
+        state.$toolbarBorder
+            .dropFirst()
+            .sink { _ in Self.requestPositionReset() }
+            .store(in: &settingCancellables)
     }
+
+    private var settingCancellables: Set<AnyCancellable> = []
 
     /// Re-anchors a visible palette at the fresh-install spot immediately, so
     /// the Settings action is seen and not just stored for next time.
@@ -123,25 +143,21 @@ final class ToolbarPanel: NSPanel {
     /// Places the palette on the display that has the pointer, at the relative
     /// spot the user last chose. Moving it between displays keeps the offset,
     /// so it lands near the same place on whichever screen you are working.
+    /// With nothing saved the bar rests at the default anchor of the chosen
+    /// border (T9/S12) — the same centre-and-clamp math
+    /// `ToolbarGripperSpec.barRect` pins for the tests.
     func positionNearPointerDisplay(placement: PalettePlacement) {
         guard let target = targetScreen(for: placement) else { return }
 
-        let anchor = savedAnchor() ?? ToolbarGripperSpec.defaultAnchor
-        let center = CGPoint(
-            x: target.frame.minX + anchor.x * target.frame.width,
-            y: target.frame.minY + anchor.y * target.frame.height
+        let anchor = savedAnchor()
+            ?? ToolbarGripperSpec.defaultAnchor(border: state.toolbarBorder)
+        let rect = ToolbarGripperSpec.barRect(
+            barSize: frame.size,
+            anchor: anchor,
+            screenFrame: target.frame,
+            visibleFrame: target.visibleFrame
         )
-        var origin = CGPoint(
-            x: (center.x - frame.width / 2).rounded(),
-            y: (center.y - frame.height / 2).rounded()
-        )
-
-        let visible = target.visibleFrame
-        let margin: CGFloat = 8
-        origin.x = min(max(origin.x, visible.minX + margin), visible.maxX - frame.width - margin)
-        origin.y = min(max(origin.y, visible.minY + margin), visible.maxY - frame.height - margin)
-
-        setFrameOrigin(origin)
+        setFrameOrigin(rect.origin)
     }
 
     /// Resolves the display the palette should open on.

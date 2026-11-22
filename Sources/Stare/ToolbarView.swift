@@ -115,8 +115,40 @@ struct ToolbarView: View {
 
     static let trailingItems: [TrailingItem] = TrailingItem.allCases
 
+    /// The stacking direction the bar draws in (T9/S12), read from the
+    /// state's mirror of the persisted preference so a Settings change re-lays
+    /// out the bar live.
+    private var isVertical: Bool {
+        state.toolbarOrientation == .vertical
+    }
+
     var body: some View {
-        HStack(spacing: 4) {
+        Group {
+            if isVertical {
+                VStack(alignment: .center, spacing: 4) { barItems }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 12)
+            } else {
+                HStack(spacing: 4) { barItems }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+            }
+        }
+        .background(
+            .ultraThinMaterial,
+            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+        )
+    }
+
+    /// Everything the bar offers, in the same order both orientations draw:
+    /// tool groups, inks, crop/extra actions, page controls, then undo, redo,
+    /// clear, close and the gripper tail (T3/S4).
+    @ViewBuilder
+    private var barItems: some View {
             ForEach(Array(toolGroups.enumerated()), id: \.offset) { index, group in
                 if index > 0 { divider }
                 ForEach(group) { tool in
@@ -182,22 +214,21 @@ struct ToolbarView: View {
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            .ultraThinMaterial,
-            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
-        )
-    }
 
+    /// The separator the bar places between groups: a vertical rule in the
+    /// horizontal row, a horizontal rule in the vertical stack.
     private var divider: some View {
-        Divider()
-            .frame(height: 20)
-            .padding(.horizontal, 4)
+        Group {
+            if isVertical {
+                Divider()
+                    .frame(width: 20)
+            } else {
+                Divider()
+                    .frame(height: 20)
+            }
+        }
+        .padding(.horizontal, isVertical ? 0 : 4)
+        .padding(.vertical, isVertical ? 4 : 0)
     }
 
     private func toolButton(_ tool: Tool) -> some View {

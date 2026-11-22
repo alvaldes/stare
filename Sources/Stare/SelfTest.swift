@@ -184,6 +184,42 @@ enum SelfTest {
                 + "ok=\(gripperAfterClose && gripperAnchorsAtFreshInstall)"
         )
 
+        // Palette orientation and border (T9/S12): the gripper's reset lands
+        // the bar on the border the settings keep, and every orientation ×
+        // border pair produces a frame inside the screen's visible frame —
+        // asserted with the bar sizes the two orientations really render. The
+        // vertical stack renders through the real view path too.
+        let dockState = EditorState()
+        let dockScreenFrame = CGRect(x: 0, y: 0, width: 1512, height: 982)
+        let dockVisibleFrame = CGRect(x: 0, y: 0, width: 1512, height: 944)
+        var dockRects: [String] = []
+        var dockAllInside = true
+        for orientation in ToolbarOrientation.allCases {
+            let rendered = renderPalette(
+                appearanceName: NSAppearance.Name.aqua,
+                orientation: orientation,
+                to: "/tmp/stare-palette-\(orientation.rawValue).png"
+            )
+            for border in ToolbarBorder.allCases {
+                let barSize = orientation == .horizontal ? CGSize(width: 600, height: 42) : CGSize(width: 42, height: 600)
+                let rect = ToolbarGripperSpec.resetRect(
+                    barSize: barSize,
+                    screenFrame: dockScreenFrame,
+                    visibleFrame: dockVisibleFrame,
+                    border: border
+                )
+                let inside = dockVisibleFrame.contains(rect)
+                dockAllInside = dockAllInside && inside
+                dockRects.append("\(orientation.rawValue)-\(border.rawValue)=\(Int(rect.minX)),\(Int(rect.minY)) inside=\(inside)")
+            }
+            report.append("palette \(orientation.rawValue) rendered=\(rendered)")
+        }
+        let dockDefaults = dockState.toolbarOrientation == .horizontal && dockState.toolbarBorder == .top
+        report.append(
+            "palette dock defaults=\(dockDefaults) allInside=\(dockAllInside) \(dockRects.joined(separator: " ")) "
+                + "ok=\(dockDefaults && dockAllInside)"
+        )
+
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
             let rendered = renderEditorChrome(appearanceName: appearance, to: "/tmp/stare-editor-\(name).png")
             report.append("editor chrome \(name) rendered=\(rendered)")
@@ -3003,11 +3039,18 @@ enum SelfTest {
         return (try? png.write(to: URL(fileURLWithPath: path))) != nil
     }
 
-    /// Renders the drawing palette offscreen with a fixed appearance.
-    private static func renderPalette(appearanceName: NSAppearance.Name, to path: String) -> Bool {
+    /// Renders the drawing palette offscreen with a fixed appearance. The
+    /// orientation follows the T9/S12 preference so the vertical stack is
+    /// rendered through the same path the bar really draws.
+    private static func renderPalette(
+        appearanceName: NSAppearance.Name,
+        orientation: ToolbarOrientation = .horizontal,
+        to path: String
+    ) -> Bool {
         let state = EditorState()
         state.tool = .arrow
         state.ink = .green
+        state.toolbarOrientation = orientation
         let hosting = NSHostingView(
             rootView: ToolbarView(state: state, onUndo: {}, onRedo: {}, onClear: {}, onDone: {})
         )
