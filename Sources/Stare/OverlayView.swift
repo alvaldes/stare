@@ -199,7 +199,21 @@ class OverlayView: NSView {
     /// `.activeAlways` keeps the tool cursor working even when the app is not the
     /// active one, which cursor rectangles alone do not allow.
     override func cursorUpdate(with event: NSEvent) {
-        cursorForTool.set()
+        reassertCursor()
+    }
+
+    /// The cursor an active canvas gesture (pan, zoom) shows instead of the
+    /// tool cursor (S3). Nil in the plain overlay and whenever no gesture
+    /// runs; the board view sets it at gesture start and clears it on every
+    /// exit path (drag end, space release, scroll end, view disappearing).
+    /// While set, every cursor re-assertion below shows it, so moving the
+    /// pointer mid-gesture never flashes the tool cursor back.
+    var gestureCursor: NSCursor? { nil }
+
+    /// The cursor this layer shows right now: the gesture cursor while a
+    /// gesture runs, the tool cursor otherwise.
+    func reassertCursor() {
+        (gestureCursor ?? cursorForTool).set()
     }
 
     /// Each tool shouts what it does: text wants an I-beam, the edit cursor
@@ -213,14 +227,15 @@ class OverlayView: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        cursorForTool.set()
+        reassertCursor()
     }
 
     override func mouseMoved(with event: NSEvent) {
-        // Re-assert the tool cursor on every move: cursor rectangles only fire
+        // Re-assert the cursor on every move: cursor rectangles only fire
         // when the pointer crosses a boundary, which is why the cursor used to
-        // change only after jumping to another display.
-        cursorForTool.set()
+        // change only after jumping to another display. A gesture cursor (S3)
+        // wins while it is set.
+        reassertCursor()
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -237,7 +252,7 @@ class OverlayView: NSView {
     func syncPreferences() {
         session.laserLifetime = state.laserLifetime
         window?.invalidateCursorRects(for: self)
-        cursorForTool.set()
+        reassertCursor()
     }
 
     func clear() {

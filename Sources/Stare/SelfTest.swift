@@ -1200,7 +1200,50 @@ enum SelfTest {
                 + String(format: "%.1f", distanceReported)
         )
 
-        let passed = drawOk && landingOk && movedOk && resetOk && knobOk
+        // 5. ⌘ + scroll (S1): synthesized wheel events through the real view
+        // handler — the pure rule refuses plain scroll, ⌘ + scroll zooms in
+        // the delta's direction and clamps at the range ends. The event is
+        // built in memory and handed to the view directly (the removed
+        // `NSEvent.scrollWheelEvent(with:)` factory took a window number; the
+        // CGEvent path doesn't): the assertion is about the zoom rule, not
+        // the window server's routing.
+        view.resetPageView()
+        func scrollEvent(deltaY: CGFloat, command: Bool) -> NSEvent? {
+            guard let cg = CGEvent(
+                scrollWheelEvent2Source: nil,
+                units: .pixel,
+                wheelCount: 1,
+                wheel1: Int32(deltaY), // pixel units carry plain pixels
+                wheel2: 0,
+                wheel3: 0
+            ) else { return nil }
+            if command { cg.flags = .maskCommand }
+            return NSEvent(cgEvent: cg)
+        }
+        let baseZoom = board.currentPage.zoom
+        if let plain = scrollEvent(deltaY: 50, command: false) { view.scrollWheel(with: plain) }
+        let plainOk = board.currentPage.zoom == baseZoom
+        // Small unclamped steps first: the direction must show without the
+        // range clamp interfering (AppKit rescales pixel deltas, so the exact
+        // step is not pinned — only the direction and the no-clamp band).
+        if let zoomIn = scrollEvent(deltaY: 1, command: true) { view.scrollWheel(with: zoomIn) }
+        let inZoom = board.currentPage.zoom
+        if let zoomOut = scrollEvent(deltaY: -1, command: true) { view.scrollWheel(with: zoomOut) }
+        let outZoom = board.currentPage.zoom
+        let directionOk = inZoom > baseZoom && inZoom < BoardTransform.maxZoom
+            && outZoom < inZoom && outZoom > BoardTransform.minZoom
+        for _ in 0..<20 {
+            if let far = scrollEvent(deltaY: 500, command: true) { view.scrollWheel(with: far) }
+        }
+        let clampedZoom = board.currentPage.zoom
+        let scrollOk = plainOk && directionOk
+            && clampedZoom == BoardTransform.maxZoom
+        report.append(
+            "board zoom scroll base=\(baseZoom) plainUnchanged=\(plainOk) zoomIn=\(inZoom) expect > \(baseZoom), "
+                + "zoomOut=\(outZoom) expect < \(inZoom), clamped=\(clampedZoom) expect \(BoardTransform.maxZoom) ok=\(scrollOk)"
+        )
+
+        let passed = drawOk && landingOk && movedOk && resetOk && knobOk && scrollOk
         report.append("board zoom result=\(passed ? "PASS" : "FAIL")")
         return report
     }

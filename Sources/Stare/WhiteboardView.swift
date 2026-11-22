@@ -23,6 +23,12 @@ class WhiteboardView: OverlayView {
     /// Middle-button drag pans the canvas too.
     private var isMiddlePanning = false
     private var lastPanPoint: CGPoint?
+    /// ⌘ + scroll is zooming (S1/S3): a zoom cursor shows while the gesture
+    /// runs and is cleared when it ends.
+    private var isZoomScrolling = false
+    /// The precise delta of the last ⌘ + scroll event: its sign picks which
+    /// direction the zoom cursor shows.
+    private var lastZoomScrollDelta: CGFloat = 0
 
     init(frame: NSRect, state: EditorState, board: WhiteboardPages, onEscape: @escaping () -> Void) {
         self.board = board
@@ -332,6 +338,83 @@ class WhiteboardView: OverlayView {
         onPageChanged?()
     }
 
+    // MARK: - Gesture cursors (S3)
+
+    /// The running gesture's cursor, shown instead of the tool cursor through
+    /// the base class's cursor re-assertions (cursorUpdate, mouseMoved, …):
+    /// closed hand while a pan drag runs, open hand while space is held, a
+    /// zoom cursor while ⌘ + scroll runs. Derived from the gesture state, so
+    /// every exit path (drag end, space release, scroll end, view
+    /// disappearing) reverts it simply by clearing that state.
+    override var gestureCursor: NSCursor? {
+        if isPanning { return .closedHand }
+        if isSpacePanning { return .openHand }
+        if isZoomScrolling { return zoomScrollCursor }
+        return nil
+    }
+
+    /// The zoom cursor while ⌘ + scroll runs. AppKit ships `NSCursor.zoomIn` /
+    /// `.zoomOut` — the magnifier cursors — and they are used here rather
+    /// than inventing art. The documented gap (S2's "dentro de lo posible"):
+    /// AppKit has no dynamic in/out zoom cursor, so the sign of the event's
+    /// delta picks which magnifier shows; a zero delta keeps the last one.
+    private var zoomScrollCursor: NSCursor { lastZoomScrollDelta >= 0 ? .zoomIn : .zoomOut }
+
+    // MARK: - Zooming with ⌘ + scroll (S1)
+
+    /// ⌘ + wheel / trackpad scroll zooms the board through the one zoom model
+    /// (`BoardTransform.zoomed(forScrollDelta:isZooming:anchoredAt:)` in
+    /// StareCore), anchored at the pointer. Plain scroll without ⌘ never
+    /// changes the zoom — the pure rule refuses it, and this handler returns
+    /// without touching anything.
+    override func scrollWheel(with event: NSEvent) {
+        let zooming = event.modifierFlags.contains(.command)
+        guard zooming || isZoomScrolling else {
+            // A plain scroll is not a zoom gesture: hand it down the responder
+            // chain untouched rather than swallowing it here.
+            super.scrollWheel(with: event)
+            return
+        }
+        defer {
+            // The trackpad's final `.ended` event closes the gesture; momentum
+            // events that follow no longer zoom.
+            if event.phase == .ended { endZoomScroll() }
+        }
+        guard zooming else {
+            // ⌘ let go mid-momentum: the gesture is over.
+            endZoomScroll()
+            return
+        }
+        let delta = event.scrollingDeltaY
+        applyZoom(ScrollZoom.zoomFactor(forScrollDelta: delta), anchoredAt: convert(event.locationInWindow, from: nil))
+        isZoomScrolling = true
+        lastZoomScrollDelta = delta
+        reassertCursor()
+    }
+
+    private func endZoomScroll() {
+        isZoomScrolling = false
+        reassertCursor()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        // A phaseless mouse-wheel scroll has no end event: the pointer moving
+        // again is what says the zoom gesture is over.
+        if isZoomScrolling { endZoomScroll() }
+        super.mouseMoved(with: event)
+    }
+
+    /// The view going away ends any gesture: nothing stale survives the board
+    /// closing, so the next window shows its own cursor.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window == nil else { return }
+        isSpacePanning = false
+        isMiddlePanning = false
+        lastPanPoint = nil
+        isZoomScrolling = false
+    }
+
     // MARK: - Panning the endless canvas
 
     private var isPanning: Bool { (isSpacePanning || isMiddlePanning) && lastPanPoint != nil }
@@ -349,6 +432,7 @@ class WhiteboardView: OverlayView {
         if isSpacePanning || event.buttonNumber == 2 {
             isMiddlePanning = event.buttonNumber == 2
             lastPanPoint = convert(event.locationInWindow, from: nil)
+            reassertCursor() // pan drag starts → closed hand (S3)
             return
         }
         super.mouseDown(with: event)
@@ -367,12 +451,15 @@ class WhiteboardView: OverlayView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        let wasPanning = isPanning
         if event.buttonNumber == 2 {
             isMiddlePanning = false
             lastPanPoint = nil
+            if wasPanning { reassertCursor() } // drag end → open hand (space held) or the tool cursor
             return
         }
         lastPanPoint = nil
+        if wasPanning { reassertCursor() }
         super.mouseUp(with: event)
     }
 
@@ -381,7 +468,10 @@ class WhiteboardView: OverlayView {
     override func keyDown(with event: NSEvent) {
         // Space pans (the app-wide convention); holding it never draws.
         if event.keyCode == 49 {
-            if !event.isARepeat { isSpacePanning = true }
+            if !event.isARepeat {
+                isSpacePanning = true
+                reassertCursor() // space held → open hand (S3)
+            }
             return
         }
         let modifiers = event.modifierFlags
@@ -431,6 +521,9 @@ class WhiteboardView: OverlayView {
     override func keyUp(with event: NSEvent) {
         if event.keyCode == 49 {
             isSpacePanning = false
+            // Space release → the tool cursor, or the closed hand if a pan
+            // drag is still running.
+            reassertCursor()
             return
         }
         super.keyUp(with: event)

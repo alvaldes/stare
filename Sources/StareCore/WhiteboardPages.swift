@@ -102,6 +102,37 @@ public struct BoardTransform: Equatable, Sendable {
         CGAffineTransform(translationX: -offset.width, y: -offset.height)
             .concatenating(CGAffineTransform(scaleX: zoom, y: zoom))
     }
+
+    /// ⌘ + scroll zoom (S1): a zoom step from a scroll event's delta, anchored
+    /// at a view point like every other zoom — the same one model of zoom
+    /// (`BoardTransform`), never a second state. Without the command
+    /// (`isZooming` false) the transform is returned untouched: plain scroll
+    /// never changes the zoom.
+    public func zoomed(forScrollDelta delta: CGFloat, isZooming: Bool, anchoredAt anchor: CGPoint) -> BoardTransform {
+        guard isZooming else { return self }
+        return zoomed(to: zoom * ScrollZoom.zoomFactor(forScrollDelta: delta), anchoredAt: anchor)
+    }
+}
+
+/// ⌘ + scroll zoom (S1): the pure scroll-delta → zoom-step decision, kept in
+/// StareCore next to the zoom model it feeds. Scrolling up (positive delta)
+/// zooms in, scrolling down zooms out, and the factor is continuous in the
+/// delta so trackpad precision scrolling and mouse wheel notches both feel
+/// like steps of the same zoom.
+public enum ScrollZoom: Sendable {
+    /// The accumulated precise-scroll points that amount to one
+    /// `BoardTransform.zoomStep`. A mouse wheel notch reports ~10 points, so
+    /// one notch lands between one and two keyboard steps; trackpad events
+    /// report small fractions and accumulate smoothly.
+    public static let pointsPerStep: CGFloat = 8
+
+    /// The multiplicative zoom factor a scroll event's precise delta applies:
+    /// `zoomStep ^ (delta / pointsPerStep)`. A zero or non-finite delta changes
+    /// nothing (factor 1).
+    public static func zoomFactor(forScrollDelta delta: CGFloat) -> CGFloat {
+        guard delta.isFinite, delta != 0 else { return 1 }
+        return pow(BoardTransform.zoomStep, delta / pointsPerStep)
+    }
 }
 
 /// The Freeform-style dot grid over a board page (T6/S6). Dots live in page

@@ -469,6 +469,78 @@ final class WhiteboardPagesTests: XCTestCase {
         XCTAssertEqual(board.currentPage.background, .black, "the background never changes")
     }
 
+    // MARK: - S1: ⌘ + scroll zoom
+
+    /// One wheel notch's worth of delta zooms in one direction and out the
+    /// other, continuously scaled between the keyboard steps.
+    func testCommandScrollZoomsInForPositiveDeltaAndOutForNegative() {
+        let anchor = CGPoint(x: 300, y: 200)
+        let up = BoardTransform.identity.zoomed(forScrollDelta: 10, isZooming: true, anchoredAt: anchor)
+        let down = BoardTransform.identity.zoomed(forScrollDelta: -10, isZooming: true, anchoredAt: anchor)
+        XCTAssertGreaterThan(up.zoom, 1, "scrolling up (⌘ held) zooms in")
+        XCTAssertLessThan(down.zoom, 1, "scrolling down (⌘ held) zooms out")
+        // The rule is continuous in the delta: a bigger scroll zooms further.
+        let further = BoardTransform.identity.zoomed(forScrollDelta: 30, isZooming: true, anchoredAt: anchor)
+        XCTAssertGreaterThan(further.zoom, up.zoom, "a bigger delta zooms further")
+        // A zero delta changes nothing.
+        XCTAssertEqual(
+            BoardTransform.identity.zoomed(forScrollDelta: 0, isZooming: true, anchoredAt: anchor),
+            BoardTransform.identity,
+            "a zero delta must not zoom"
+        )
+    }
+
+    /// The scroll zoom is anchored like every other zoom: the page point under
+    /// the view anchor never moves.
+    func testCommandScrollAnchorsTheViewPointLikeEveryOtherZoom() {
+        let anchors = [CGPoint(x: 0, y: 0), CGPoint(x: 640, y: 420), CGPoint(x: 123.5, y: 87.25)]
+        let deltas: [CGFloat] = [10, -10, 3.5, -1.25]
+        for anchor in anchors {
+            let before = BoardTransform(offset: CGSize(width: 55, height: -20), zoom: 1.5)
+            let pageUnderAnchor = before.point(toPage: anchor)
+            for delta in deltas {
+                let after = before.zoomed(forScrollDelta: delta, isZooming: true, anchoredAt: anchor)
+                let kept = after.point(toPage: anchor)
+                XCTAssertEqual(
+                    kept.x, pageUnderAnchor.x, accuracy: 1e-9,
+                    "the page point under the anchor moved scrolling \(delta) at \(anchor)"
+                )
+                XCTAssertEqual(
+                    kept.y, pageUnderAnchor.y, accuracy: 1e-9,
+                    "the page point under the anchor moved scrolling \(delta) at \(anchor)"
+                )
+            }
+        }
+    }
+
+    /// A huge scroll lands on the range boundary and pushing past an already
+    /// clamped end is a no-op, exactly like the keyboard steps.
+    func testCommandScrollClampsIntoTheZoomRange() {
+        let anchor = CGPoint(x: 400, y: 300)
+        let wayIn = BoardTransform.identity.zoomed(forScrollDelta: 500, isZooming: true, anchoredAt: anchor)
+        XCTAssertEqual(wayIn.zoom, BoardTransform.maxZoom, "a huge scroll clamps at the range top")
+        let wayOut = BoardTransform.identity.zoomed(forScrollDelta: -500, isZooming: true, anchoredAt: anchor)
+        XCTAssertEqual(wayOut.zoom, BoardTransform.minZoom, "a huge scroll clamps at the range bottom")
+        XCTAssertEqual(
+            wayIn.zoomed(forScrollDelta: 500, isZooming: true, anchoredAt: anchor), wayIn,
+            "scrolling past an already clamped end changes nothing"
+        )
+        XCTAssertEqual(wayOut.point(toPage: anchor).x, 400, "a clamped scroll still anchors")
+    }
+
+    /// Without ⌘ the scroll never touches the zoom: the transform is returned
+    /// exactly as it was.
+    func testPlainScrollNeverChangesTheZoom() {
+        let transform = BoardTransform(offset: CGSize(width: 42, height: -7), zoom: 2.5)
+        for delta: CGFloat in [10, -10, 0.5] {
+            XCTAssertEqual(
+                transform.zoomed(forScrollDelta: delta, isZooming: false, anchoredAt: CGPoint(x: 100, y: 100)),
+                transform,
+                "plain scroll (no ⌘) must not change the zoom (delta \(delta))"
+            )
+        }
+    }
+
     // MARK: - T6/S6: the dot grid
 
     /// At very low zoom a fixed spacing turns into mush, so the spacing only
