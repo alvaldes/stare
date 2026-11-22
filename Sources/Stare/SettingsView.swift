@@ -399,7 +399,10 @@ private struct OverlayPane: View {
 /// The bar: where it docks, and which tools it carries (T6/S5). The live bar is
 /// the pane's stage — the real `ToolbarView`, not a mock — so the order the
 /// organiser shows is the order the overlay draws.
-private struct BarPane: View {
+/// Internal, not private, so the tests can instantiate the pane and drive its
+/// real drop handlers against a real `PreferencesModel` (T4/S4): the handlers
+/// and the draft they write are the organiser's behaviour.
+struct BarPane: View {
     @ObservedObject var model: PreferencesModel
     let cardsWidth: CGFloat
 
@@ -595,7 +598,8 @@ private struct BarPane: View {
     /// place, a payload from the pool is inserted — a tool comes out of the
     /// pool at that very spot, a separator joins the bar. The destination
     /// slot is the target item's position plus the drop's side.
-    private func handleBarDrop(target: ToolbarLayoutItem, edge: ToolbarOrganiserHooks.Edge, payload: ToolbarLayoutItem) {
+    /// Internal (T4/S4) so the tests drive the real handler on a real model.
+    func handleBarDrop(target: ToolbarLayoutItem, edge: ToolbarOrganiserHooks.Edge, payload: ToolbarLayoutItem) {
         let layout = model.toolbarTools
         guard let targetIndex = layout.items.firstIndex(of: target) else { return }
         let slot = targetIndex + (edge == .after ? 1 : 0)
@@ -613,7 +617,8 @@ private struct BarPane: View {
 
     /// Handles a drop on a pool chip: a payload already in the pool
     /// reorders, a payload on the bar enters the pool at that very spot.
-    private func handlePoolDrop(target: ToolbarLayoutItem, edge: ToolbarOrganiserHooks.Edge, payload: ToolbarLayoutItem) {
+    /// Internal (T4/S4) so the tests drive the real handler on a real model.
+    func handlePoolDrop(target: ToolbarLayoutItem, edge: ToolbarOrganiserHooks.Edge, payload: ToolbarLayoutItem) {
         guard case .tool(let tool) = payload, case .tool(let targetTool) = target else { return }
         let layout = model.toolbarTools
         guard let targetIndex = layout.pool.firstIndex(of: targetTool) else { return }
@@ -630,7 +635,8 @@ private struct BarPane: View {
     /// Handles a drop on the pool's end zone: a bar tool lands at the end of
     /// the pool, a pool tool moves there, and a placed separator comes off
     /// the bar — the one way to take a placed separator back out.
-    private func handlePoolEndDrop(payload: ToolbarLayoutItem) {
+    /// Internal (T4/S4) so the tests drive the real handler on a real model.
+    func handlePoolEndDrop(payload: ToolbarLayoutItem) {
         let layout = model.toolbarTools
         if case .tool(let tool) = payload {
             if layout.items.contains(payload) {
