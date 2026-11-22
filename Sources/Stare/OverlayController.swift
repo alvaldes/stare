@@ -748,10 +748,6 @@ final class OverlayController {
     /// the same display capture every other path uses, so the marks land exactly
     /// where they were drawn; the window only decides what gets cropped out.
     func captureFrontWindow() {
-        if isBoardActive {
-            canvasUnderPointer()?.view.showHint("The board has no windows to capture", seconds: 3)
-            return
-        }
         guard let target = WindowCaptureTarget.frontWindow() else {
             canvasUnderPointer()?.view.showHint("No window to capture · press S for the display", seconds: 3.5)
             Diag.log("window capture skipped: no eligible window")

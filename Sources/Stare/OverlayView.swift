@@ -52,6 +52,8 @@ class OverlayView: NSView {
     /// Asks to capture the front window only, the mark space of this display
     /// included. Separate from `onCaptureRequest` because the target is not a
     /// rectangle the user dragged: it is whatever window the server puts first.
+    /// Nil where there are no windows to shoot — on the whiteboard — so `⌥S`
+    /// there falls through to the board capture it always did.
     var onCaptureWindowRequest: (() -> Void)?
     /// Latest live frames per display, owned by the controller. Blur marks
     /// paint the real screen content from here; nil in headless renders.
@@ -1291,9 +1293,16 @@ class OverlayView: NSView {
         }
 
         // ⌥S captures the front window. Checked before the tool router so a
-        // rebound tool key can never shadow the capture keys.
-        if characters.lowercased() == "s", event.modifierFlags.contains(.option) {
-            onCaptureWindowRequest?()
+        // rebound tool key can never shadow the capture keys, and only when the
+        // display can serve it: the whiteboard has no handler, and there ⌥S must
+        // keep meaning what it meant before — a capture of the board itself.
+        // ⇧ is excluded on purpose, so ⌥⇧S stays the area drag it always was.
+        if characters.lowercased() == "s",
+            event.modifierFlags.contains(.option),
+            !event.modifierFlags.contains(.shift),
+            let onCaptureWindowRequest
+        {
+            onCaptureWindowRequest()
             return
         }
 
