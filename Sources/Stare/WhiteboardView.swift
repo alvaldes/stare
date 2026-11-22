@@ -35,9 +35,9 @@ class WhiteboardView: OverlayView {
     /// The direction the last applied ⌘ + scroll step zoomed: its sign picks
     /// which magnifier cursor shows.
     private var lastZoomScrollDelta: CGFloat = 0
-    /// The ⌘ + scroll gesture's own state machine (v0.5/S2): direction lock,
-    /// momentum rejection and natural-scroll sign normalisation live in
-    /// `ScrollZoom.Gesture` (StareCore), and the view only consults it.
+    /// The ⌘ + scroll gesture's own state machine (v0.5/S2): the direction
+    /// lock and the momentum rejection live in `ScrollZoom.Gesture`
+    /// (StareCore), and the view only consults it.
     private var scrollZoomGesture = ScrollZoom.Gesture()
 
     init(frame: NSRect, state: EditorState, board: WhiteboardPages, onEscape: @escaping () -> Void) {
@@ -637,14 +637,16 @@ class WhiteboardView: OverlayView {
 
     // MARK: - Zooming with ⌘ + scroll (S1)
 
-    /// ⌘ + wheel / trackpad scroll zooms the board through the one zoom model
+    /// ⌘ + scroll zooms the board through the one zoom model
     /// (`BoardTransform.zoomed(forScrollDelta:isZooming:anchoredAt:)` in
     /// StareCore), anchored at the pointer, and the gesture's own state
     /// machine (`ScrollZoom.Gesture`, v0.5/S2) decides what each event does:
     /// an event against the gesture's locked direction holds, momentum holds,
-    /// and the sign is normalised against the system's natural-scrolling
-    /// preference. Plain scroll without ⌘ never changes the zoom — the pure
-    /// rule refuses it, and this handler returns without touching anything.
+    /// and the delta stays raw — content-directed as AppKit reports it, never
+    /// normalised across the natural-scrolling setting (see the
+    /// "direction preserved" note in `ScrollZoom.Gesture`). Plain scroll
+    /// without ⌘ never changes the zoom — the pure rule refuses it, and this
+    /// handler returns without touching anything.
     override func scrollWheel(with event: NSEvent) {
         let zooming = event.modifierFlags.contains(.command)
         guard zooming || isZoomScrolling else {
@@ -654,9 +656,13 @@ class WhiteboardView: OverlayView {
             return
         }
         defer {
-            // The trackpad's final `.ended` event closes the gesture; momentum
-            // events that follow no longer zoom.
-            if event.phase == .ended { endZoomScroll() }
+            // The trackpad's closing events end the gesture — `.ended` when
+            // the fingers lift, `.cancelled` when the system interrupts the
+            // gesture — so the momentum events that follow and the next
+            // gesture start from a released lock. AppKit's raw phase values
+            // match `ScrollZoom.Phase` (probed: began 1, changed 4, ended 8,
+            // cancelled 16), so the map below is a straight renumbering.
+            if event.phase == .ended || event.phase == .cancelled { endZoomScroll() }
         }
         guard zooming else {
             // ⌘ let go mid-gesture: the gesture is over.

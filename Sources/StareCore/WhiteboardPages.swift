@@ -134,24 +134,42 @@ public enum ScrollZoom: Sendable {
         return pow(BoardTransform.zoomStep, delta / pointsPerStep)
     }
 
-    /// `NSEvent.Phase` without AppKit (v0.5/S2): the raw values match, so the
-    /// view maps one straight onto the other.
+    /// `NSEvent.Phase` without AppKit (v0.5/S2): the raw values are AppKit's
+    /// real ones — a bit set, probed against `NSEvent.Phase` on this machine:
+    /// began 1, stationary 2, changed 4, ended 8, cancelled 16, mayBegin 32.
+    /// A live trackpad scroll event reports `.changed` (4); the gesture-closing
+    /// values are `.ended` (8) and `.cancelled` (16). The view maps AppKit's
+    /// numbers straight onto these (same numbering), so a wrong value here
+    /// would close the gesture on every event or never close it — the bit
+    /// indices this table once carried did exactly that. A synthesized
+    /// `CGEvent(scrollWheelEvent2Source:)` maps its
+    /// `scrollWheelEventScrollPhase` field 1 → `.began`, 2 → `.changed`,
+    /// 4 → `.ended`, 8 → `.cancelled`, and its
+    /// `scrollWheelEventMomentumPhase` field 1 → momentum begin,
+    /// 2 → momentum continued, 3 → momentum end (probe-verified), which is
+    /// what the selftest and hardware-shaped tests drive.
     public enum Phase: Int, Sendable {
         case none = 0
         case began = 1
-        case changed = 2
-        case ended = 4
-        case cancelled = 8
+        case stationary = 2
+        case changed = 4
+        case ended = 8
+        case cancelled = 16
         case mayBegin = 32
     }
 
-    /// `NSEvent.MomentumPhase` without AppKit (v0.5/S2): the raw values match,
-    /// so the view maps one straight onto the other.
+    /// `NSEvent.MomentumPhase` without AppKit (v0.5/S2): the momentum phase
+    /// shares `NSEvent.Phase`'s bit numbering (probed through
+    /// `NSEvent(cgEvent:)` on this machine): begin 1, stationary 2,
+    /// continued 4 (the changed bit), end 8 (the ended bit). Every nonzero
+    /// value therefore decodes to a named momentum case the gesture rejects;
+    /// none of them falls through to `.none`, which would zoom the flick.
     public enum MomentumPhase: Int, Sendable {
         case none = 0
         case begin = 1
-        case continued = 2
-        case end = 4
+        case stationary = 2
+        case continued = 4
+        case end = 8
     }
 
     /// One scroll event reduced to the properties the gesture's own state

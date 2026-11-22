@@ -1649,12 +1649,19 @@ enum SelfTest {
         // CGEvent path doesn't): the assertion is about the zoom rule, not
         // the window server's routing.
         view.resetPageView()
-        // The CG scroll-phase fields do not carry the `NSEvent.Phase` raw
-        // values (observed from the synthesized stream this helper produces):
-        // scroll field 1 decodes to `.began`, 2 to `.ended`, and the momentum
-        // field 1 decodes to `momentumPhase == .begin`.
-        let cgScrollPhaseEnded: Int64 = 2
+        // The synthesized CG scroll events carry hardware-shaped phase fields,
+        // verified by probing `NSEvent(cgEvent:)` on this machine: the
+        // `scrollWheelEventScrollPhase` field 1 decodes to `.began`, 2 to
+        // `.changed` (what a live trackpad event reports), 4 to `.ended` and
+        // 8 to `.cancelled`; the `scrollWheelEventMomentumPhase` field 1
+        // decodes to momentum begin, 2 to momentum continued and 3 to
+        // momentum end. Live events carry the `.changed` field so this
+        // exercises one live gesture, not a phaseless stream.
+        let cgScrollPhaseBegan: Int64 = 1
+        let cgScrollPhaseChanged: Int64 = 2
+        let cgScrollPhaseEnded: Int64 = 4
         let cgMomentumPhaseBegin: Int64 = 1
+        let cgMomentumPhaseEnd: Int64 = 3
         func scrollEvent(
             deltaY: CGFloat,
             command: Bool,
@@ -1680,7 +1687,7 @@ enum SelfTest {
         // Small unclamped steps first: the direction must show without the
         // range clamp interfering (AppKit rescales pixel deltas, so the exact
         // step is not pinned — only the direction and the no-clamp band).
-        if let zoomIn = scrollEvent(deltaY: 1, command: true) { view.scrollWheel(with: zoomIn) }
+        if let zoomIn = scrollEvent(deltaY: 1, command: true, scrollPhase: cgScrollPhaseBegan) { view.scrollWheel(with: zoomIn) }
         let inZoom = board.currentPage.zoom
         // v0.5/S2: a phaseless gesture holds its direction lock, so this
         // stream closes the in-gesture the way the hardware does — with an
@@ -1688,12 +1695,12 @@ enum SelfTest {
         if let ended = scrollEvent(deltaY: 0, command: true, scrollPhase: cgScrollPhaseEnded) {
             view.scrollWheel(with: ended)
         }
-        if let zoomOut = scrollEvent(deltaY: -1, command: true) { view.scrollWheel(with: zoomOut) }
+        if let zoomOut = scrollEvent(deltaY: -1, command: true, scrollPhase: cgScrollPhaseChanged) { view.scrollWheel(with: zoomOut) }
         let outZoom = board.currentPage.zoom
         let directionOk = inZoom > baseZoom && inZoom < BoardTransform.maxZoom
             && outZoom < inZoom && outZoom > BoardTransform.minZoom
         for _ in 0..<20 {
-            if let far = scrollEvent(deltaY: 500, command: true) { view.scrollWheel(with: far) }
+            if let far = scrollEvent(deltaY: 500, command: true, scrollPhase: cgScrollPhaseChanged) { view.scrollWheel(with: far) }
         }
         let clampedZoom = board.currentPage.zoom
         // v0.5/S2: inside one live gesture a delta against the locked
@@ -1702,21 +1709,25 @@ enum SelfTest {
         // `.ended` phase the momentum stream must not keep zooming — a flick
         // must not overshoot the zoom the user asked for.
         for _ in 0..<3 {
-            if let step = scrollEvent(deltaY: 2, command: true) { view.scrollWheel(with: step) }
+            if let step = scrollEvent(deltaY: 2, command: true, scrollPhase: cgScrollPhaseChanged) { view.scrollWheel(with: step) }
         }
         let lockedInZoom = board.currentPage.zoom
-        if let jitter = scrollEvent(deltaY: -2, command: true) { view.scrollWheel(with: jitter) }
+        if let jitter = scrollEvent(deltaY: -2, command: true, scrollPhase: cgScrollPhaseChanged) { view.scrollWheel(with: jitter) }
         let jitterHeld = board.currentPage.zoom == lockedInZoom
-        if let reversal = scrollEvent(deltaY: -10, command: true) { view.scrollWheel(with: reversal) }
+        if let reversal = scrollEvent(deltaY: -10, command: true, scrollPhase: cgScrollPhaseChanged) { view.scrollWheel(with: reversal) }
         let reversalOk = jitterHeld && board.currentPage.zoom < lockedInZoom
         if let ended = scrollEvent(deltaY: 0, command: true, scrollPhase: cgScrollPhaseEnded) {
             view.scrollWheel(with: ended)
         }
         let beforeMomentum = board.currentPage.zoom
-        if let momentum = scrollEvent(deltaY: 400, command: true, momentumPhase: cgMomentumPhaseBegin) {
-            view.scrollWheel(with: momentum)
+        var momentumHeldBoth = true
+        for momentumField in [cgMomentumPhaseBegin, cgMomentumPhaseEnd] {
+            if let momentum = scrollEvent(deltaY: 400, command: true, momentumPhase: momentumField) {
+                view.scrollWheel(with: momentum)
+            }
+            momentumHeldBoth = momentumHeldBoth && board.currentPage.zoom == beforeMomentum
         }
-        let momentumOk = board.currentPage.zoom == beforeMomentum
+        let momentumOk = momentumHeldBoth
         let scrollOk = plainOk && directionOk
             && clampedZoom == BoardTransform.maxZoom
             && reversalOk && momentumOk
