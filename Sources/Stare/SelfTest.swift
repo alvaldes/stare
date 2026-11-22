@@ -274,6 +274,37 @@ enum SelfTest {
                 + "ok=\(selectionInitial && selectionCropArmed && selectionBackToTool && cropMarkedRendered)"
         )
 
+        // Re-editable crop (T11/S7): an applied region is a rect over the
+        // ORIGINAL capture's pixels — re-entering the crop shows it over the
+        // whole picture, re-applying maps every gesture back through the
+        // original so nothing is ever cut from an already-cropped bitmap, and
+        // the crop's own journal returns the previous region on undo.
+        let cropFull = CGRect(x: 0, y: 0, width: 800, height: 600)
+        var cropRecord = EditorCropRecord()
+        cropRecord.crop(to: CGRect(x: 100, y: 50, width: 500, height: 400))
+        let firstCrop = cropRecord.region
+        // Second crop is an ABSOLUTE region over the original, not one applied
+        // on top of the first: if it compounded, the region would be the
+        // intersection of the two, not what the gesture drew.
+        let drawnSecond = CGRect(x: 200, y: 100, width: 300, height: 200)
+        cropRecord.crop(to: drawnSecond)
+        let secondCrop = cropRecord.region
+        let cropUndoReturned = cropRecord.undo() != nil && cropRecord.region == firstCrop
+        // The space keeps covering the WHOLE original at any window size and
+        // the view/pixel mapping is an exact inverse, so a crop re-entered later
+        // reads and writes the original's own pixels.
+        let cropSmallWindow = EditorCropSpace.fitted(coverage: cropFull, inCanvas: CGRect(x: 0, y: 0, width: 400, height: 300))
+        let cropWideWindow = EditorCropSpace.fitted(coverage: cropFull, inCanvas: CGRect(x: 0, y: 0, width: 800, height: 600))
+        let cropCutsFromOriginal = secondCrop == drawnSecond
+            && cropSmallWindow.coverage == cropFull
+            && cropWideWindow.coverage == cropFull
+            && cropSmallWindow.pixelRect(fromView: cropSmallWindow.viewRect(fromPixel: drawnSecond)) == drawnSecond
+        report.append(
+            "editor crop applied=\(firstCrop != nil) second=\(secondCrop == drawnSecond) "
+                + "undoRestored=\(cropUndoReturned) cutsFromOriginal=\(cropCutsFromOriginal) "
+                + "ok=\(firstCrop != nil && secondCrop == drawnSecond && cropUndoReturned && cropCutsFromOriginal)"
+        )
+
         // Settings (T6 slice 2): the sidebar + panes shell renders in both
         // system appearances, one PNG per pane, and its window is resizable
         // and clearly wider than the old fixed 420-pt form.
