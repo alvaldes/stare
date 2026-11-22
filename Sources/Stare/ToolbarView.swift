@@ -26,8 +26,47 @@ private struct ToolbarGripper: NSViewRepresentable {
     func updateNSView(_ nsView: ToolbarGripperView, context: Context) {}
 }
 
-/// The handle itself: a 2×3 dot pattern on a hit area big enough to grab,
-/// drawn by the view — no new asset.
+/// The dots the gripper shows (T5/S5), drawn by SwiftUI with the same
+/// `Color.secondary` the bar's other items use. The dots used to be drawn by
+/// the AppKit view itself with `NSColor.secondaryLabelColor`: measured over
+/// the bar's material the AppKit fill stayed near-constant across system
+/// appearances (≈128/255 in light, ≈124/255 in dark) while the SwiftUI glyphs
+/// tracked the appearance (≈120 light, ≈151 dark) — the hosted NSView's draw
+/// does not receive the vibrancy treatment the material gives the SwiftUI
+/// content, so in light the dots washed out on the white bar and in dark they
+/// went dim. Drawing them in SwiftUI puts them in the same colour resolution
+/// path as every glyph, which the render test pins in both appearances.
+private struct ToolbarGripperDots: View {
+    var body: some View {
+        GeometryReader { geo in
+            // Centred 2×3 grid: the same origin math the view's old `draw`
+            // used, expressed as offsets from the centre of the hit area.
+            let pitchX: CGFloat = 6
+            let pitchY: CGFloat = 5
+            let dot: CGFloat = 3
+            let gridWidth = CGFloat(ToolbarGripperSpec.dotColumns - 1) * pitchX + dot
+            let gridHeight = CGFloat(ToolbarGripperSpec.dotRows - 1) * pitchY + dot
+            ZStack(alignment: .center) {
+                ForEach(0..<ToolbarGripperSpec.dotColumns, id: \.self) { column in
+                    ForEach(0..<ToolbarGripperSpec.dotRows, id: \.self) { row in
+                        Circle()
+                            .fill(.secondary)
+                            .frame(width: dot, height: dot)
+                            .offset(
+                                x: CGFloat(column) * pitchX - (gridWidth - dot) / 2,
+                                y: CGFloat(row) * pitchY - (gridHeight - dot) / 2
+                            )
+                    }
+                }
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+        }
+    }
+}
+
+/// The handle itself: a hit area big enough to grab, over the SwiftUI-drawn
+/// `ToolbarGripperDots` (T5/S5) — the view itself draws nothing, so the dots
+/// render through the same appearance path as the bar's other glyphs.
 final class ToolbarGripperView: NSView {
     /// Whether the gripper's own drag is running (T2/S3). While it does, the
     /// cursor is the closed hand — the same pair the board's pan shows.
@@ -99,10 +138,41 @@ final class ToolbarGripperView: NSView {
         addCursorRect(bounds, cursor: hoverCursor)
     }
 
-    /// The gripper's frame in window coordinates (T2/S3): what the hosting
-    /// view's cursor arbitration reads to stand down its arrow over this rect.
+    /// The gripper's frame in window coordinates (T2/S3): what the bar's
+    /// cursor arbitration reads to stand its hand down from over this rect.
     var frameInWindow: NSRect {
         convert(bounds, to: nil)
+    }
+
+    // MARK: Bar cursor arbitration (T6/S6)
+
+    /// The cursor the bar shows for a pointer at `point` in window
+    /// coordinates (T6/S6): the gripper's hand pair inside the gripper's
+    /// frame, the arrow everywhere else on the bar. This is the one decision
+    /// the overlay's cursor monitor applies (S6), split out here so the tests
+    /// pin the arbitration without a live pointer over the panel.
+    static func barCursor(at point: CGPoint, in window: NSWindow) -> NSCursor {
+        locate(in: window)?.cursor(atWindowPoint: point) ?? .arrow
+    }
+
+    /// The answer for one pointer position over this bar: the hover pair over
+    /// the gripper's own rect, the arrow off it. An instance method so the
+    /// drag state is read live — closed hand while the drag runs.
+    func cursor(atWindowPoint point: CGPoint) -> NSCursor {
+        frameInWindow.contains(point) ? hoverCursor : .arrow
+    }
+
+    /// The gripper subview in `window`'s content tree, if present (T6/S6):
+    /// the representable nests it below SwiftUI's intermediate views, so the
+    /// lookup walks the tree — shallow, and only ever run when the pointer
+    /// moves over the bar. Mirrors the hosting view's own private lookup.
+    static func locate(in window: NSWindow) -> ToolbarGripperView? {
+        guard var stack = window.contentView.map({ [$0] }) else { return nil }
+        while let view = stack.popLast() {
+            if let gripper = view as? ToolbarGripperView { return gripper }
+            stack.append(contentsOf: view.subviews)
+        }
+        return nil
     }
 
     override func updateTrackingAreas() {
@@ -123,32 +193,6 @@ final class ToolbarGripperView: NSView {
     /// the active one, which cursor rectangles alone do not allow.
     override func cursorUpdate(with event: NSEvent) {
         hoverCursor.set()
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        // Two columns of three stacked dots, centred in the hit area.
-        let dot: CGFloat = 3
-        let pitchX: CGFloat = 6
-        let pitchY: CGFloat = 5
-        let columns = ToolbarGripperSpec.dotColumns
-        let rows = ToolbarGripperSpec.dotRows
-        let gridWidth = CGFloat(columns - 1) * pitchX + dot
-        let gridHeight = CGFloat(rows - 1) * pitchY + dot
-        let originX = (bounds.width - gridWidth) / 2
-        let originY = (bounds.height - gridHeight) / 2
-
-        NSColor.secondaryLabelColor.setFill()
-        for column in 0..<columns {
-            for row in 0..<rows {
-                let rect = CGRect(
-                    x: originX + CGFloat(column) * pitchX,
-                    y: originY + CGFloat(row) * pitchY,
-                    width: dot,
-                    height: dot
-                )
-                NSBezierPath(ovalIn: rect).fill()
-            }
-        }
     }
 }
 
@@ -418,7 +462,9 @@ struct ToolbarView: View {
                 case .close:
                     iconButton("xmark", help: "Done (esc)", action: onDone)
                 case .gripper:
-                    ToolbarGripper().frame(width: 16, height: 26)
+                    ToolbarGripper()
+                        .background(ToolbarGripperDots())
+                        .frame(width: 16, height: 26)
                 }
             }
         }

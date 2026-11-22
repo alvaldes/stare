@@ -188,6 +188,18 @@ final class OverlayController {
         redoOrder.removeAll { self.namesMark($0, ofDisplay: displayID, in: retired) }
     }
     private var toolbar: ToolbarPanel?
+    /// The event monitor that gives the bar its cursor over its whole area
+    /// (T6/S6). The bar's own per-view cursor paths cannot do it: the panel
+    /// can never become key, so its cursor rectangles are never honoured, and
+    /// the pointer events SwiftUI's hosting machinery tracks shadow the
+    /// hosting view's own cursor-update handler everywhere but the gripper —
+    /// which is why only the gripper's hand ever showed. The monitor runs in
+    /// front of that dispatch: every pointer event the panel receives answers
+    /// through `ToolbarGripperView.barCursor` — the hand pair over the
+    /// gripper, the arrow over the rest of the bar — so the active tool's
+    /// cursor never survives a hover over the bar. Installed while the bar is
+    /// on screen, removed when it goes away, so nothing stale is left behind.
+    private var toolbarCursorMonitor: Any?
     private var previousApplication: NSRunningApplication?
     private let captureService: ScreenCapturing
     /// The one preferences owner (T6 slice 1), kept so the capture tail can
@@ -1353,11 +1365,44 @@ final class OverlayController {
         self.toolbar = toolbar
         toolbar.positionNearPointerDisplay(placement: state.palettePlacementValue)
         toolbar.orderFrontRegardless()
+        // The bar's cursor monitor needs the move events the panel receives;
+        // panels do not accept them by default (the overlay window opts in
+        // itself for the same reason).
+        toolbar.acceptsMouseMovedEvents = true
+        installToolbarCursorMonitor()
+    }
+
+    /// Watches the pointer while the bar is on screen (T6/S6): every move,
+    /// entry or cursor-update the panel receives re-answers the bar's cursor
+    /// through `ToolbarGripperView.barCursor` — the hand pair over the
+    /// gripper, the arrow over the rest of the bar, the tool cursor untouched
+    /// everywhere off the bar. Re-answering on every event (not only on rect
+    /// crossings) is what keeps a hover over the bar from ever showing the
+    /// active tool's drawing cursor.
+    private func installToolbarCursorMonitor() {
+        guard toolbarCursorMonitor == nil else { return }
+        toolbarCursorMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.mouseMoved, .mouseEntered, .cursorUpdate]
+        ) { [weak self] event in
+            guard let self, let toolbar = self.toolbar, event.window === toolbar else { return event }
+            ToolbarGripperView.barCursor(at: event.locationInWindow, in: toolbar).set()
+            return event
+        }
+    }
+
+    /// Stops watching when the bar goes away (T6/S6): the monitor must not
+    /// outlive the panel, and whatever sits under the bar re-asserts its own
+    /// cursor on its first pointer event — the same hand-off the gripper's
+    /// abandoned drag uses.
+    private func removeToolbarCursorMonitor() {
+        if let monitor = toolbarCursorMonitor { NSEvent.removeMonitor(monitor) }
+        toolbarCursorMonitor = nil
     }
 
     private var toolbarMode: String?
 
     private func hideToolbar() {
+        removeToolbarCursorMonitor()
         toolbar?.orderOut(nil)
     }
 }
