@@ -331,4 +331,129 @@ final class SelectionAndTransformTests: XCTestCase {
         XCTAssertFalse(badge.hitTest(CGPoint(x: 100, y: 100 + badge.badgeDiameter / 2 + 1), radius: 0),
                        "just past the scaled radius misses")
     }
+
+    // MARK: - T6/S8: marquee selection and shift
+
+    // ⇧+click on an unselected mark joins it to the current selection instead
+    // of replacing it.
+    func testShiftClickAddsAnUnselectedMarkToTheSelection() {
+        var selection = MarkMultiSelection(ids: [UUID()])
+        let joining = UUID()
+
+        selection.toggle(joining)
+
+        XCTAssertEqual(selection.ids.count, 2)
+        XCTAssertTrue(selection.contains(joining), "the shift-clicked mark joins the selection")
+    }
+
+    // ⇧+click on a selected mark takes it out of the selection.
+    func testShiftClickOnASelectedMarkRemovesItFromTheSelection() {
+        let selected = UUID()
+        var selection = MarkMultiSelection(ids: [selected, UUID()])
+
+        selection.toggle(selected)
+
+        XCTAssertFalse(selection.contains(selected), "the shift-clicked selected mark leaves the selection")
+        XCTAssertEqual(selection.ids.count, 1)
+    }
+
+    // A plain click is not a toggle: the selection becomes exactly that mark,
+    // whatever was selected before — today's behaviour (T11/S6) unchanged.
+    func testPlainClickReplacesTheSelectionWithTheClickedMark() {
+        var selection = MarkMultiSelection(ids: [UUID(), UUID()])
+        let clicked = UUID()
+
+        selection.replace(with: clicked)
+
+        XCTAssertEqual(selection.ids, [clicked])
+    }
+
+    // The marquee selects every mark it intersects — fully contained or only
+    // clipped by its edge both count — and the rest of the canvas stays out.
+    func testMarqueeSelectsMarksItIntersectsAndIgnoresTheRest() {
+        let inside = Stroke(tool: .rectangle, ink: .red,
+                            points: [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 80)])
+        let clipped = Stroke(tool: .ellipse, ink: .red,
+                             points: [CGPoint(x: 200, y: 10), CGPoint(x: 300, y: 90)])
+        let outside = Stroke(tool: .pen, ink: .red,
+                             points: [CGPoint(x: 500, y: 500), CGPoint(x: 600, y: 550)])
+
+        let selected = MarkMultiSelection.ids(intersectingMarquee: CGRect(x: 50, y: 40, width: 200, height: 110),
+                                              in: [inside, clipped, outside])
+
+        XCTAssertEqual(selected, [inside.id, clipped.id],
+                       "the marquee covers the rectangle fully and clips the ellipse's bounds; the freehand mark stays out")
+    }
+
+    // Containment and a mere boundary clip are the same selection: the rule is
+    // intersection of the mark's drawn (rotated) bounds with the marquee.
+    func testMarqueeSelectsAMarkItFullyContainsAndOneItOnlyClips() {
+        let contained = Stroke(tool: .rectangle, ink: .red,
+                               points: [CGPoint(x: 120, y: 60), CGPoint(x: 180, y: 100)])
+        let rotated = MarkTransform.rotated(
+            Stroke(tool: .blur, ink: .red,
+                   points: [CGPoint(x: 300, y: 40), CGPoint(x: 420, y: 90)]),
+            by: .pi / 4
+        )
+
+        // The rotated patch juts past the marquee's right edge, but its drawn
+        // bounds are still intersected, so it answers too.
+        let reach = rotated.displayBounds
+        let marquee = CGRect(x: 100, y: 30, width: reach.maxX - 110, height: 140)
+        XCTAssertFalse(marquee.contains(reach), "the case under test: the marquee only clips the mark's box")
+
+        let selected = MarkMultiSelection.ids(intersectingMarquee: marquee, in: [contained, rotated])
+
+        XCTAssertEqual(selected, [contained.id, rotated.id],
+                       "the fully contained mark and the merely clipped one are both selected")
+    }
+
+    // A marquee that never grew (a plain click, or a drag that stayed put)
+    // selects nothing and must leave the session alone.
+    func testADegenerateMarqueeSelectsNothing() {
+        let mark = Stroke(tool: .rectangle, ink: .red,
+                          points: [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 80)])
+
+        let selected = MarkMultiSelection.ids(intersectingMarquee: CGRect(x: 20, y: 20, width: 0, height: 0),
+                                              in: [mark])
+
+        XCTAssertTrue(selected.isEmpty)
+    }
+
+    // ⇧ held during a marquee adds the intersected marks to whatever is
+    // selected instead of replacing it.
+    func testShiftMarqueeAddsToTheCurrentSelection() {
+        let kept = UUID()
+        var selection = MarkMultiSelection(ids: [kept])
+
+        selection.add([UUID(), UUID()])
+
+        XCTAssertEqual(selection.ids.count, 3)
+        XCTAssertTrue(selection.contains(kept), "the marquee with ⇧ never drops what was selected")
+    }
+
+    // The marquee's rectangle lives on the screen, the marks in page space: on
+    // a zoomed board the same view-space drag must select exactly what the
+    // user sees under it, through the layer's own `BoardTransform`.
+    func testMarqueeOverAZoomedBoard_selectsWhatTheUserSees() {
+        let transform = BoardTransform(offset: CGSize(width: 40, height: 60), zoom: 2)
+        let left = Stroke(tool: .rectangle, ink: .red,
+                          points: [CGPoint(x: 100, y: 100), CGPoint(x: 150, y: 140)])
+        let right = Stroke(tool: .rectangle, ink: .red,
+                           points: [CGPoint(x: 300, y: 100), CGPoint(x: 350, y: 140)])
+
+        // What the user sees: the marquee is drawn around the mark's on-screen
+        // box, never around its stored page coordinates.
+        let leftView = transform.rect(fromPage: left.bounds)
+        XCTAssertTrue(leftView.intersects(transform.rect(fromPage: right.bounds)) == false,
+                      "the two marks sit apart on screen, so the marquee can tell them apart")
+        let marqueeView = leftView.insetBy(dx: -3, dy: -3)
+        let selected = MarkMultiSelection.ids(
+            intersectingMarquee: transform.rect(toPage: marqueeView),
+            in: [left, right]
+        )
+
+        XCTAssertEqual(selected, [left.id],
+                       "the marquee over the mark the user sees selects that mark and not a neighbour in page space")
+    }
 }

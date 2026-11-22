@@ -1568,11 +1568,11 @@ enum SelfTest {
         RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         defer { window.orderOut(nil) }
 
-        func send(_ type: NSEvent.EventType, _ point: CGPoint) {
+        func send(_ type: NSEvent.EventType, _ point: CGPoint, _ flags: NSEvent.ModifierFlags = []) {
             guard let event = NSEvent.mouseEvent(
                 with: type,
                 location: CGPoint(x: point.x, y: size.height - point.y),
-                modifierFlags: [],
+                modifierFlags: flags,
                 timestamp: ProcessInfo.processInfo.systemUptime,
                 windowNumber: window.windowNumber,
                 context: nil,
@@ -1589,10 +1589,10 @@ enum SelfTest {
             default: view.mouseUp(with: event)
             }
         }
-        func drag(from start: CGPoint, to end: CGPoint) {
-            send(.leftMouseDown, start)
-            send(.leftMouseDragged, CGPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2))
-            send(.leftMouseUp, end)
+        func drag(from start: CGPoint, to end: CGPoint, _ flags: NSEvent.ModifierFlags = []) {
+            send(.leftMouseDown, start, flags)
+            send(.leftMouseDragged, CGPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2), flags)
+            send(.leftMouseUp, end, flags)
         }
         @discardableResult
         func key(_ keyCode: UInt16, _ characters: String) -> Bool {
@@ -1723,7 +1723,67 @@ enum SelfTest {
             "select delete reselected=\(reselected) marks=\(view.session.strokes.count) expect 0 ok=\(deleteOk)"
         )
 
-        let passed = moveOk && undoRestoresMove && scaleOk && quarterTurn && hitOk && escapeOk && deleteOk
+        // T6/S8: the marquee and ⇧, through the same real drag path. Two
+        // marks far apart; a drag over both selects both, ⇧+click toggles one
+        // in and out, and a marquee over nothing keeps the selection as it is.
+        state.tool = .rectangle
+        drag(from: CGPoint(x: 100, y: 420), to: CGPoint(x: 180, y: 480))
+        drag(from: CGPoint(x: 480, y: 420), to: CGPoint(x: 560, y: 480))
+        state.tool = .select
+        guard view.session.strokes.count == 2,
+              let firstMark = view.session.strokes.first,
+              let secondMark = view.session.strokes.last else {
+            report.append("FAIL: marquee marks were not committed")
+            return report
+        }
+
+        // A plain marquee over both marks selects both; nothing is drawn,
+        // nothing is moved and the session gains no stroke.
+        drag(
+            from: CGPoint(x: 60, y: 380),
+            to: CGPoint(x: 600, y: 520)
+        )
+        var marqueeOk = view.selectedMarkIDs.count == 2
+            && view.selectedMarkIDs.contains(firstMark.id)
+            && view.selectedMarkIDs.contains(secondMark.id)
+            && view.session.strokes.count == 2
+            && view.session.strokes[0].points == firstMark.points
+            && view.session.strokes[1].points == secondMark.points
+        report.append(
+            "select marquee selected=\(view.selectedMarkIDs.count) expect 2 "
+                + "marks=\(view.session.strokes.count) expect 2 ok=\(marqueeOk)"
+        )
+
+        // ⇧+click toggles a selected mark out, then back in.
+        let centreOfSecond = view.viewPoint(fromPage: secondMark.anchor)
+        drag(from: centreOfSecond, to: centreOfSecond, .shift)
+        let toggledOut = view.selectedMarkIDs == [firstMark.id]
+        drag(from: centreOfSecond, to: centreOfSecond, .shift)
+        let toggledIn = view.selectedMarkIDs.count == 2
+            && view.selectedMarkIDs.contains(secondMark.id)
+        report.append(
+            "select shift-click out=\(toggledOut) in=\(toggledIn) ok=\(toggledOut && toggledIn)"
+        )
+        marqueeOk = marqueeOk && toggledOut && toggledIn
+
+        // A grown marquee over nothing leaves the selection unchanged.
+        drag(from: CGPoint(x: 660, y: 40), to: CGPoint(x: 860, y: 160))
+        let emptied = view.selectedMarkIDs.count == 2 && view.session.strokes.count == 2
+        report.append(
+            "select marquee-empty kept=\(view.selectedMarkIDs.count) expect 2 ok=\(emptied)"
+        )
+        marqueeOk = marqueeOk && emptied
+
+        // A plain marquee over one mark replaces the selection with it.
+        let centreOfFirst = view.viewPoint(fromPage: firstMark.anchor)
+        drag(from: CGPoint(x: 60, y: 380), to: CGPoint(x: 240, y: 520))
+        let replaced = view.selectedMarkIDs == [firstMark.id]
+        report.append(
+            "select marquee-replace selected=\(view.selectedMarkIDs.count) expect 1 primary-first=\(replaced) ok=\(replaced)"
+        )
+        marqueeOk = marqueeOk && replaced
+
+        let passed = moveOk && undoRestoresMove && scaleOk && quarterTurn && hitOk && escapeOk && deleteOk && marqueeOk
         report.append("select result=\(passed ? "PASS" : "FAIL")")
         return report
     }

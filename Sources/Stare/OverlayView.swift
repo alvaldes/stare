@@ -118,14 +118,29 @@ class OverlayView: NSView {
 
     // MARK: - Mark selection (T11/S6)
 
-    /// The mark this view has selected, if any. At most one mark is selected
-    /// per app: selecting reports through `onSelectionChanged` so the
+    /// The marks this view has selected, primary first. One mark from a plain
+    /// click; the array grows when a marquee (T6/S8) selects several or ⇧
+    /// adds one. `selectedMarkID` stays the primary the single-mark chrome and
+    /// the drag act on; when the array holds several, the chrome draws only
+    /// each mark's box and drags still address the primary alone.
+    private(set) var selectedMarkIDs: [UUID] = []
+
+    /// The primary selected mark, if any. At most one display holds a selection
+    /// in the whole app: selecting reports through `onSelectionChanged` so the
     /// controller clears the selection on every other display.
-    private(set) var selectedMarkID: UUID?
+    var selectedMarkID: UUID? { selectedMarkIDs.first }
     /// The drag in progress on the selected mark. Every frame transforms the
     /// untouched snapshot into a preview; the session is journalled exactly
     /// once, on mouse up, so one drag is one undo step.
     private var selectionDrag: SelectionDrag?
+
+    /// The marquee drag (T6/S8): a select-tool drag that began on empty canvas
+    /// selects every mark it intersects when it ends. The origin and the live
+    /// rect are view space; `marqueeAdditive` remembers ⇧ at drag start. Nil
+    /// origin means no marquee runs and the rect never draws.
+    private var marqueeOrigin: CGPoint?
+    private var marqueeRect: CGRect?
+    private var marqueeAdditive = false
     /// Untouched drag-start snapshot the preview is transformed from.
     private var selectionOriginal: Stroke?
     /// The transformed mark drawn live on top during a drag.
@@ -147,12 +162,15 @@ class OverlayView: NSView {
     /// Gives the selection up: no handles remain and no stale id survives a
     /// page change or a clear.
     func clearSelection() {
-        guard selectedMarkID != nil || selectionDrag != nil || selectionOriginal != nil
-            || selectionPreview != nil else { return }
-        selectedMarkID = nil
+        guard !selectedMarkIDs.isEmpty || selectionDrag != nil || selectionOriginal != nil
+            || selectionPreview != nil || marqueeOrigin != nil else { return }
+        selectedMarkIDs = []
         selectionDrag = nil
         selectionOriginal = nil
         selectionPreview = nil
+        marqueeOrigin = nil
+        marqueeRect = nil
+        marqueeAdditive = false
         needsDisplay = true
     }
 
@@ -318,6 +336,17 @@ class OverlayView: NSView {
         return removedAny
     }
 
+    /// Drops selected ids that are no longer in the session, keeping the
+    /// primary consistent — a history jump or an erase must not leave handles
+    /// pointing at marks that are gone. A still-live selection just shrinks.
+    private func pruneSelection() {
+        let live = Set(session.strokes.map(\.id))
+        let kept = selectedMarkIDs.filter { live.contains($0) }
+        guard kept != selectedMarkIDs else { return }
+        selectedMarkIDs = kept
+        needsDisplay = true
+    }
+
     /// Global undo of the Escape clear (T4/S5): the batch the clear removed
     /// comes back exactly as it was. The guard keeps the global order and the
     /// session's journal from drifting — a popped clear entry can never undo
@@ -325,9 +354,7 @@ class OverlayView: NSView {
     @discardableResult
     func undoClearedMarks() -> Bool {
         guard session.canUndoClear, session.undo() else { return false }
-        if let selected = selectedMarkID, !session.strokes.contains(where: { $0.id == selected }) {
-            clearSelection()
-        }
+        pruneSelection()
         noteBlurInterestChanged()
         noteSessionChanged()
         needsDisplay = true
@@ -376,9 +403,7 @@ class OverlayView: NSView {
     @discardableResult
     func undoMark(id: UUID) -> Bool {
         guard session.canUndo(markWithID: id), session.undo() else { return false }
-        if let selected = selectedMarkID, !session.strokes.contains(where: { $0.id == selected }) {
-            clearSelection()
-        }
+        pruneSelection()
         committedBounds.removeValue(forKey: id)
         noteBlurInterestChanged()
         noteSessionChanged()
@@ -386,20 +411,24 @@ class OverlayView: NSView {
         return true
     }
 
-    /// ⌫ with a selection: the mark goes away through `remove(id:)`, so the
-    /// session's redo journal holds it and the global history can restore it.
+    /// ⌫ with a selection: every selected mark goes away through
+    /// `remove(id:)`, so the session's redo journal holds them and the global
+    /// history can restore each one.
     @discardableResult
     func deleteSelectedMark() -> Bool {
-        guard let id = selectedMarkID,
-              session.strokes.contains(where: { $0.id == id }),
-              session.remove(id: id) else { return false }
-        clearSelection()
-        committedBounds.removeValue(forKey: id)
-        onDelete?(id)
+        var removed: [UUID] = []
+        for id in selectedMarkIDs {
+            guard session.strokes.contains(where: { $0.id == id }), session.remove(id: id) else { continue }
+            committedBounds.removeValue(forKey: id)
+            onDelete?(id)
+            removed.append(id)
+        }
+        guard !removed.isEmpty else { return false }
+        pruneSelection()
         noteBlurInterestChanged()
         noteSessionChanged()
         needsDisplay = true
-        Diag.log("delete mark id=\(id)")
+        Diag.log("delete mark count=\(removed.count) ids=\(removed.prefix(3).map { $0.uuidString.prefix(8) }.joined(separator: ","))")
         return true
     }
 
@@ -473,7 +502,11 @@ class OverlayView: NSView {
             return
         case .select:
             finishPendingTextEditing()
-            beginSelection(at: point)
+            beginSelection(
+                at: point,
+                viewPoint: viewPoint,
+                shift: event.modifierFlags.contains(.shift)
+            )
             return
         default:
             // A mark of another tool must not leave a text editor behind: it
@@ -513,8 +546,16 @@ class OverlayView: NSView {
         }
 
         // Editing an existing mark: the handle decides, the preview follows.
-        if state.tool == .select, selectionDrag != nil {
-            updateSelectionPreview(at: pagePoint(convert(event.locationInWindow, from: nil)))
+        // A marquee drag (T6/S8) only grows its own rectangle, never a preview.
+        if state.tool == .select {
+            if marqueeOrigin != nil {
+                updateMarquee(at: convert(event.locationInWindow, from: nil))
+                return
+            }
+            if selectionDrag != nil {
+                updateSelectionPreview(at: pagePoint(convert(event.locationInWindow, from: nil)))
+                return
+            }
             return
         }
 
@@ -580,10 +621,15 @@ class OverlayView: NSView {
 
         // Editing a mark: the pointer's final position is applied before the
         // preview is journalled exactly once, so one drag is one undo step,
-        // never one per mouse event.
+        // never one per mouse event. A marquee drag ends by selecting what its
+        // rectangle intersects (T6/S8).
         if state.tool == .select {
-            updateSelectionPreview(at: pagePoint(convert(event.locationInWindow, from: nil)))
-            commitSelectionDrag()
+            if marqueeOrigin != nil {
+                finishMarqueeSelection(at: convert(event.locationInWindow, from: nil))
+            } else {
+                updateSelectionPreview(at: pagePoint(convert(event.locationInWindow, from: nil)))
+                commitSelectionDrag()
+            }
             return
         }
 
@@ -654,11 +700,32 @@ class OverlayView: NSView {
         viewTransform.pageLength(MarkSelection.defaultRotationHandleOffset)
     }
 
-    /// A click with the edit cursor: a handle of the already selected mark
-    /// wins, then the topmost mark under the pointer (newest first), then the
-    /// selection is given up. A click that lands on a mark arms its drag right
-    /// away, so select-and-move is one gesture.
-    private func beginSelection(at point: CGPoint) {
+    /// A click with the edit cursor. With ⇧ held: the topmost mark under the
+    /// pointer toggles in or out of the selection (T6/S8), and an empty canvas
+    /// starts an additive marquee. Without ⇧: a handle of the already selected
+    /// mark wins, then the topmost mark under the pointer (newest first) arms
+    /// its move drag right away — select-and-move is one gesture — and empty
+    /// canvas starts the marquee selection instead, so a drag over an area
+    /// selects every mark it intersects when it ends. A marquee that never
+    /// decides at the start: the selection only changes at release.
+    private func beginSelection(at point: CGPoint, viewPoint: CGPoint, shift: Bool) {
+        if shift {
+            // ⇧ on a mark toggles it; ⇧ on empty canvas arms an additive
+            // marquee. The selection only grows or shrinks one step here.
+            if let hit = session.strokes.last(where: {
+                $0.isSelectedByCursor(at: point, radius: selectionReach)
+            }) {
+                var selection = MarkMultiSelection(ids: selectedMarkIDs)
+                selection.toggle(hit.id)
+                selectedMarkIDs = selection.ids
+                if let primary = selection.first { onSelectionChanged?(primary) }
+                needsDisplay = true
+            } else {
+                beginMarquee(at: viewPoint, additive: true)
+            }
+            return
+        }
+
         if let id = selectedMarkID, let selected = session.strokes.first(where: { $0.id == id }) {
             if let handle = MarkSelection(stroke: selected).handle(
                 at: point,
@@ -673,11 +740,16 @@ class OverlayView: NSView {
         guard let hit = session.strokes.last(where: {
             $0.isSelectedByCursor(at: point, radius: selectionReach)
         }) else {
-            clearSelection()
+            // Empty canvas: the drag decides — a grown marquee selects what it
+            // intersects (T6/S8), a release without growth is today's plain
+            // click that gives the selection up.
+            beginMarquee(at: viewPoint, additive: false)
             return
         }
-        if selectedMarkID != hit.id {
-            selectedMarkID = hit.id
+        var selection = MarkMultiSelection(ids: selectedMarkIDs)
+        if selection.single != hit.id {
+            selection.replace(with: hit.id)
+            selectedMarkIDs = selection.ids
             onSelectionChanged?(hit.id)
         }
         let handle = MarkSelection(stroke: hit).handle(
@@ -686,6 +758,69 @@ class OverlayView: NSView {
             rotationHandleOffset: selectionRotationHandleOffset
         ) ?? .body
         startSelectionDrag(handle, on: hit, at: point)
+    }
+
+    // MARK: - Marquee selection (T6/S8)
+
+    /// Arms the selection marquee: the selection itself only changes when the
+    /// drag ends, so a marquee that intersects nothing leaves it as it was.
+    private func beginMarquee(at viewPoint: CGPoint, additive: Bool) {
+        marqueeOrigin = viewPoint
+        marqueeAdditive = additive
+        marqueeRect = CGRect(origin: viewPoint, size: .zero)
+        needsDisplay = true
+        Diag.log("marquee \(additive ? "additive" : "replace") started")
+    }
+
+    /// Grows the live marquee rectangle and repaints the band it moved across.
+    private func updateMarquee(at viewPoint: CGPoint) {
+        guard let origin = marqueeOrigin else { return }
+        let previous = marqueeRect
+        marqueeRect = PathBuilder.normalizedRect(from: origin, to: viewPoint)
+        var dirty = (previous ?? marqueeRect!).union(marqueeRect!)
+        dirty = dirty.insetBy(dx: -4, dy: -4)
+        setNeedsDisplay(dirty)
+    }
+
+    /// Ends the marquee: the drag's view-space rectangle maps into page space
+    /// through the layer's own transform, so on a panned or zoomed board it
+    /// selects exactly the marks under what the user drew over (T6/S8). A drag
+    /// that never grew is a plain click on empty canvas — today's behaviour:
+    /// the selection is given up. A grown marquee that intersects nothing
+    /// changes nothing at all, and the move drags never run here, so nothing
+    /// is moved and no history step is added.
+    private func finishMarqueeSelection(at endView: CGPoint) {
+        guard let origin = marqueeOrigin else { return }
+        let additive = marqueeAdditive
+        let rect = PathBuilder.normalizedRect(from: origin, to: endView)
+        marqueeOrigin = nil
+        marqueeRect = nil
+        marqueeAdditive = false
+        needsDisplay = true
+
+        guard rect.width >= 4, rect.height >= 4 else {
+            // A click, not a marquee: give the selection up, the way an empty
+            // click always did.
+            clearSelection()
+            return
+        }
+        let pageRect = viewTransform.rect(toPage: rect)
+        let intersected = MarkMultiSelection.ids(intersectingMarquee: pageRect, in: session.strokes)
+        guard !intersected.isEmpty else {
+            // A marquee over nothing moves nothing and leaves the selection
+            // exactly as it was — no history step, no drag.
+            Diag.log("marquee empty, selection kept")
+            return
+        }
+        var selection = MarkMultiSelection(ids: selectedMarkIDs)
+        let before = selection
+        if additive { selection.add(intersected) } else { selection.replace(with: intersected) }
+        selectedMarkIDs = selection.ids
+        if before != selection, let primary = selection.first {
+            onSelectionChanged?(primary)
+        }
+        Diag.log("marquee selected=\(selection.ids.count) additive=\(additive)")
+        needsDisplay = true
     }
 
     /// Arms the drag the grabbed handle asks for. The mark's untouched
@@ -778,6 +913,18 @@ class OverlayView: NSView {
 
         context.setStrokeColor(state.ink.cgColor(alpha: 0.95))
         context.setLineWidth(2)
+        context.addRect(rect)
+        context.strokePath()
+    }
+
+    /// The selection marquee (T6/S8): a thin accent rectangle over the drag it
+    /// belongs to, with no fill — the marks under it stay visible. It draws only
+    /// while a select-tool drag is actually running, never otherwise.
+    private func drawMarquee(in context: CGContext) {
+        guard state.tool == .select, marqueeOrigin != nil, let rect = marqueeRect,
+              rect.width > 0, rect.height > 0 else { return }
+        context.setStrokeColor(CGColor(srgbRed: 0.25, green: 0.55, blue: 1, alpha: 0.9))
+        context.setLineWidth(1)
         context.addRect(rect)
         context.strokePath()
     }
@@ -973,9 +1120,9 @@ class OverlayView: NSView {
                 cancelAreaSelection()
                 return
             }
-            // With a mark selected, Escape first gives the selection up instead
+            // With marks selected, Escape first gives the selection up instead
             // of clearing, so one stray click never costs the session.
-            if selectedMarkID != nil {
+            if !selectedMarkIDs.isEmpty {
                 clearSelection()
                 return
             }
@@ -1193,6 +1340,7 @@ class OverlayView: NSView {
 
         drawDrawingFrame(in: context)
         drawSelection(in: context)
+        drawMarquee(in: context)
         drawSelectedMarkChrome(in: context)
         drawHint()
     }
@@ -1242,9 +1390,13 @@ class OverlayView: NSView {
     /// squares and the rotation knob, following the mark as it now looks
     /// (preview included). View chrome only — it never enters the session, so
     /// a capture never contains it and `committedBounds` never grows for it.
+    /// With several marks selected (T6/S8) each one gets its dashed box, while
+    /// the handles and the rotation knob only draw for a single selection —
+    /// resize and rotation are one-mark edits.
     private func drawSelectedMarkChrome(in context: CGContext) {
-        guard state.tool == .select, let id = selectedMarkID else { return }
-        guard let stroke = selectionPreview ?? session.strokes.first(where: { $0.id == id }) else { return }
+        guard state.tool == .select, let primary = selectedMarkID, !selectedMarkIDs.isEmpty else { return }
+        let multi = selectedMarkIDs.count > 1
+        guard let stroke = selectionPreview ?? session.strokes.first(where: { $0.id == primary }) else { return }
 
         let selection = MarkSelection(stroke: stroke)
         let accent = CGColor(srgbRed: 0.25, green: 0.55, blue: 1, alpha: 1)
@@ -1269,6 +1421,24 @@ class OverlayView: NSView {
         context.addRect(selection.unrotatedBounds)
         context.strokePath()
         context.restoreGState()
+
+        // Several selected: dashed boxes around every other mark too, no
+        // handles — a drag can still only move the primary.
+        if multi {
+            for id in selectedMarkIDs.dropFirst() {
+                guard let other = session.strokes.first(where: { $0.id == id }) else { continue }
+                let box = MarkSelection(stroke: other)
+                context.saveGState()
+                context.setStrokeColor(accent)
+                context.setLineWidth(1.5 * unit)
+                context.setLineDash(phase: 0, lengths: [5 * unit, 4 * unit])
+                context.addRect(box.unrotatedBounds)
+                context.strokePath()
+                context.restoreGState()
+            }
+            context.restoreGState()
+            return
+        }
 
         for (handle, point) in selection.handlePoints(
             rotationHandleOffset: selectionRotationHandleOffset
