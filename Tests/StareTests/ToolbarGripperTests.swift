@@ -126,6 +126,47 @@ final class ToolbarGripperTests: XCTestCase {
             "without a gripper the bar still shows the arrow, not the tool cursor"
         )
     }
+
+    /// S6: the hand must never leak past the gripper's own frame — inside
+    /// every corner the open hand still answers, just outside every side the
+    /// arrow already does. The frame here is x 100…116, y 10…36, the same
+    /// 16×26 hit area the bar gives the real gripper.
+    func testTheBarCursorNeverLeaksPastTheGrippersOwnFrame() {
+        let gripper = ToolbarGripperView()
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 50))
+        gripper.frame = NSRect(x: 100, y: 10, width: 16, height: 26)
+        container.addSubview(gripper)
+        let window = NSWindow(
+            contentRect: container.bounds,
+            styleMask: [.borderless], backing: .buffered, defer: false
+        )
+        window.contentView = container
+
+        for (name, point) in [
+            ("top-left", CGPoint(x: 100.5, y: 35.5)),
+            ("bottom-left", CGPoint(x: 100.5, y: 10.5)),
+            ("top-right", CGPoint(x: 115.5, y: 35.5)),
+            ("bottom-right", CGPoint(x: 115.5, y: 10.5)),
+        ] {
+            XCTAssertEqual(
+                ToolbarGripperView.barCursor(at: point, in: window),
+                .openHand,
+                "just inside the \(name) corner the gripper's open hand holds"
+            )
+        }
+        for (name, point) in [
+            ("left", CGPoint(x: 99.5, y: 23)),
+            ("right", CGPoint(x: 116.5, y: 23)),
+            ("above", CGPoint(x: 108, y: 36.5)),
+            ("below", CGPoint(x: 108, y: 9.5)),
+        ] {
+            XCTAssertEqual(
+                ToolbarGripperView.barCursor(at: point, in: window),
+                .arrow,
+                "just \(name) the gripper's frame the bar already shows the arrow — the hand never leaks past its own frame"
+            )
+        }
+    }
 }
 
 // MARK: - Bar render + pixel sampling (T5/S5)
