@@ -177,4 +177,75 @@ final class ProbeInFlightTests: XCTestCase {
         XCTAssertTrue(probe.isBusy)
         _ = third
     }
+
+    /// R4-1: a stalled capture that never completes must not keep the guard
+    /// busy until the app restarts. Inside the hold window the refresh keeps
+    /// repeating the last answer and launching nothing; once the window
+    /// elapses the guard re-arms and a fresh probe runs.
+    func testAStalledPassReArmsAfterTheHoldWindow() {
+        var probe = ProbeInFlight()
+        let stalledAt = Date()
+        guard case .proceed(let stalled) = probe.begin(now: stalledAt) else {
+            return XCTFail("setup: the first begin proceeds")
+        }
+        probe.timeOut(stalled, answer: false, now: stalledAt)
+
+        guard case .answer(let known) = probe.begin(
+            now: stalledAt.addingTimeInterval(ProbeInFlight.rearmAfter - 1)
+        ) else {
+            return XCTFail("inside the hold window the guard must answer instead of proceeding")
+        }
+        XCTAssertEqual(known, false, "the refresh repeats the last known answer")
+
+        guard case .proceed(let fresh) = probe.begin(
+            now: stalledAt.addingTimeInterval(ProbeInFlight.rearmAfter)
+        ) else {
+            return XCTFail("after the hold window the guard re-arms and a fresh probe runs")
+        }
+        XCTAssertNotEqual(fresh, stalled, "the fresh pass is a new generation")
+        XCTAssertTrue(probe.isBusy, "the fresh pass is in flight")
+    }
+
+    /// The pass the re-arm retired can never free the fresh probe or rewrite
+    /// its answer: its abandoned capture is gone from the guard's accounting.
+    func testTheRetiredPassCannotFreeTheReArmedProbe() {
+        var probe = ProbeInFlight()
+        let stalledAt = Date()
+        guard case .proceed(let stalled) = probe.begin(now: stalledAt) else {
+            return XCTFail("setup: the first begin proceeds")
+        }
+        probe.timeOut(stalled, answer: false, now: stalledAt)
+        guard case .proceed = probe.begin(now: stalledAt.addingTimeInterval(ProbeInFlight.rearmAfter)) else {
+            return XCTFail("setup: the guard re-arms after the hold window")
+        }
+
+        probe.finish(stalled, answer: true)
+
+        XCTAssertTrue(probe.isBusy, "the retired pass's late completion frees nothing")
+        XCTAssertEqual(probe.lastAnswer, false, "the retired pass's late answer is ignored")
+        guard case .answer(let known) = probe.begin(
+            now: stalledAt.addingTimeInterval(ProbeInFlight.rearmAfter + 1)
+        ) else {
+            return XCTFail("the fresh pass is in flight; the guard must answer")
+        }
+        XCTAssertEqual(known, false)
+    }
+
+    /// A capture that completes inside the hold window frees the next probe at
+    /// once, so the re-arm never delays recovery that already happened.
+    func testACompletionInsideTheHoldWindowFreesTheNextProbeImmediately() {
+        var probe = ProbeInFlight()
+        let stalledAt = Date()
+        guard case .proceed(let pass) = probe.begin(now: stalledAt) else {
+            return XCTFail("setup: the first begin proceeds")
+        }
+        probe.timeOut(pass, answer: false, now: stalledAt)
+        probe.finish(pass, answer: true)
+
+        guard case .proceed = probe.begin(
+            now: stalledAt.addingTimeInterval(ProbeInFlight.rearmAfter - 1)
+        ) else {
+            return XCTFail("a finished pass frees the next probe without waiting for the hold window")
+        }
+    }
 }

@@ -79,7 +79,9 @@ final class SystemScreenRecordingClient: ScreenRecordingClient, @unchecked Senda
     func canCapture() -> Bool {
         // A second call while a probe pass is still in flight returns the last
         // known answer without starting another capture the timeout will never
-        // reap.
+        // reap. Once that pass has stalled for longer than `rearmAfter`, the
+        // guard retires it and this call starts a fresh probe, so a hung
+        // ScreenCaptureKit call cannot answer "cannot capture" until restart.
         switch inFlight.begin() {
         case .answer(let known):
             return known
@@ -146,7 +148,10 @@ final class SystemScreenRecordingClient: ScreenRecordingClient, @unchecked Senda
         // still be running, so the pass stays in flight — the next refresh
         // repeats this answer instead of launching another capture — and the
         // capture's completion frees the guard with the real answer. A pass
-        // whose last capture answered within the wait is finished here.
+        // that stays abandoned longer than `ProbeInFlight.rearmAfter` is
+        // retired by the next probe, so this hold can never last until a
+        // restart. A pass whose last capture answered within the wait is
+        // finished here.
         if lastAttemptTimedOut {
             inFlight.timeOut(pass, answer: false)
         } else {
