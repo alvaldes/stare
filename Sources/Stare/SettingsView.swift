@@ -598,6 +598,10 @@ private struct BarPane: View {
                 placementCard
                 poolCard
             }
+            // The bar is the stage above; the cards beside it are ordinary
+            // rows, so they take the same single-column cap as every other
+            // non-columnar pane.
+            .settingsSingleColumn()
         }
     }
 
@@ -1239,8 +1243,10 @@ private struct MarkerPane: View {
                 title: "Colour",
                 detail: "Either the ink active while drawing, or the highlight's own fixed one.",
                 content: Picker("", selection: colourMode) {
-                    Text("Follow the current ink").tag(ColourMode.followInk)
-                    Text("Fixed colour").tag(ColourMode.fixed)
+                    // Short enough to fit a two-column card: the row's detail
+                    // already spells out what each side means.
+                    Text("Follow ink").tag(ColourMode.followInk)
+                    Text("Fixed").tag(ColourMode.fixed)
                 }
                 .pickerStyle(.segmented)
             )
