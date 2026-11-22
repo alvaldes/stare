@@ -3,10 +3,14 @@ import SwiftUI
 import StareCore
 
 /// An action that lives in the palette itself, so the editor needs no second bar.
+/// `isSelected` marks it as the palette's one armed item (S6), in the same
+/// accent style the tool buttons mark theirs — the crop uses this, copy and
+/// save stay plain.
 struct ToolbarAction: Identifiable {
     let id = UUID()
     let symbolName: String
     let help: String
+    var isSelected: Bool = false
     let handler: () -> Void
 }
 
@@ -49,7 +53,12 @@ struct ToolbarView: View {
             if !extraActions.isEmpty {
                 divider
                 ForEach(extraActions) { action in
-                    iconButton(action.symbolName, help: action.help, action: action.handler)
+                    iconButton(
+                        action.symbolName,
+                        help: action.help,
+                        isMarked: action.isSelected,
+                        action: action.handler
+                    )
                 }
             }
 
@@ -102,14 +111,19 @@ struct ToolbarView: View {
     }
 
     private func toolButton(_ tool: Tool) -> some View {
-        Button { state.tool = tool } label: {
+        // The marking answers the editor's single armed item (S6): with the
+        // crop armed no tool is marked, exactly as picking a tool unmarks the
+        // crop. Outside the capture editor the armed item is always the
+        // current tool, so this reduces to today's `tool == tool` marking.
+        let marked = state.isToolMarked(tool)
+        return Button { state.select(tool) } label: {
             Image(systemName: tool.symbolName)
                 .font(.system(size: 13, weight: .medium))
                 .frame(width: 28, height: 26)
-                .foregroundStyle(state.tool == tool ? Color.white : Color.secondary)
+                .foregroundStyle(marked ? Color.white : Color.secondary)
                 .background(
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(state.tool == tool ? Color.accentColor.opacity(0.55) : Color.clear)
+                        .fill(marked ? Color.accentColor.opacity(0.55) : Color.clear)
                 )
         }
         .buttonStyle(.plain)
@@ -135,12 +149,21 @@ struct ToolbarView: View {
         .help(Text(verbatim: "\(ink.displayName) (\(ink.number))"))
     }
 
-    private func iconButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
+    private func iconButton(
+        _ symbol: String,
+        help: String,
+        isMarked: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 12, weight: .medium))
                 .frame(width: 26, height: 26)
-                .foregroundStyle(Color.secondary)
+                .foregroundStyle(isMarked ? Color.white : Color.secondary)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(isMarked ? Color.accentColor.opacity(0.55) : Color.clear)
+                )
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

@@ -143,7 +143,11 @@ struct EditorChrome: View {
             onClear: onClear,
             onDone: onClose,
             extraActions: [
-                ToolbarAction(symbolName: "crop", help: "Crop", handler: onCrop),
+                // Crop behaves as a tool of the editor's palette (S6): it is
+                // marked from the same single armed-selection state the tools
+                // mark from — picking it unmarks the active tool and picking
+                // any tool unmarks it. Copy and save are plain actions.
+                ToolbarAction(symbolName: "crop", help: "Crop", isSelected: state.isCropMarked, handler: onCrop),
                 ToolbarAction(symbolName: "doc.on.doc", help: "Copy", handler: onCopy),
                 ToolbarAction(symbolName: "square.and.arrow.down", help: "Save", handler: onSave),
             ],
@@ -160,7 +164,12 @@ final class CaptureEditorCanvas: NSView {
     private(set) var image: CGImage
     var state: EditorState?
     private var session = DrawingSession()
-    private var isCropping = false
+    /// The crop gesture is armed exactly when crop is the editor's selected
+    /// item (S6): one state drives the palette's marking and the mouse, never
+    /// two flags.
+    private var isCropping: Bool {
+        state?.isCropMarked ?? false
+    }
     private var cropOrigin: CGPoint?
     private var cropRect: CGRect?
 
@@ -281,7 +290,10 @@ final class CaptureEditorCanvas: NSView {
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { // Escape
             if isCropping {
-                isCropping = false
+                // Cancel the crop gesture and hand the mark back to the
+                // remembered tool (S6): the palette never keeps the crop
+                // marked on its own.
+                state?.endCropSelection()
                 cropOrigin = nil
                 cropRect = nil
                 needsDisplay = true
@@ -340,7 +352,9 @@ final class CaptureEditorCanvas: NSView {
     }
 
     func beginCrop() {
-        isCropping = true
+        // Arming the gesture is arming the selection (S6): the same state that
+        // unmarks the tool marks the crop here.
+        state?.selectCrop()
         cropOrigin = nil
         cropRect = nil
         needsDisplay = true
@@ -348,7 +362,9 @@ final class CaptureEditorCanvas: NSView {
     }
 
     private func applyCrop() {
-        isCropping = false
+        // The gesture is over: the selection goes back to the remembered tool,
+        // so the palette keeps exactly one item marked (S6).
+        state?.endCropSelection()
         defer { needsDisplay = true }
 
         guard let rect = cropRect, rect.width >= 8, rect.height >= 8 else {

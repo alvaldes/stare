@@ -179,6 +179,28 @@ enum SelfTest {
             report.append("editor chrome \(name) rendered=\(rendered)")
         }
 
+        // Editor single selection (T5/S6): the crop is armed through the same
+        // state the palette marks from — picking it unmarks the tool, picking
+        // any tool unmarks the crop, and the chrome renders with the crop as
+        // the one marked item.
+        let selectionState = EditorState()
+        selectionState.tool = .pen
+        let selectionInitial = selectionState.isToolMarked(.pen) && !selectionState.isCropMarked
+        selectionState.selectCrop()
+        let selectionCropArmed = selectionState.isCropMarked && !selectionState.isToolMarked(.pen)
+        let cropMarkedRendered = renderEditorChrome(
+            appearanceName: NSAppearance.Name.aqua,
+            cropArmed: true,
+            to: "/tmp/stare-editor-crop-marked.png"
+        )
+        selectionState.select(.pen)
+        let selectionBackToTool = selectionState.isToolMarked(.pen) && !selectionState.isCropMarked
+        report.append(
+            "editor selection initial=\(selectionInitial) cropArmed=\(selectionCropArmed) "
+                + "backToTool=\(selectionBackToTool) cropMarkedPng=\(cropMarkedRendered) "
+                + "ok=\(selectionInitial && selectionCropArmed && selectionBackToTool && cropMarkedRendered)"
+        )
+
         // Settings (T6 slice 2): the sidebar + panes shell renders in both
         // system appearances, one PNG per pane, and its window is resizable
         // and clearly wider than the old fixed 420-pt form.
@@ -2756,11 +2778,18 @@ enum SelfTest {
         return (try? png.write(to: URL(fileURLWithPath: path))) != nil
     }
 
-    /// Renders the editor toolbar with a fixed appearance.
-    private static func renderEditorChrome(appearanceName: NSAppearance.Name, to path: String) -> Bool {
+    /// Renders the editor toolbar with a fixed appearance. With `cropArmed`,
+    /// the crop is the armed item instead of the tool (T5/S6), so the render
+    /// shows the crop marked and every tool unmarked.
+    private static func renderEditorChrome(
+        appearanceName: NSAppearance.Name,
+        cropArmed: Bool = false,
+        to path: String
+    ) -> Bool {
         let state = EditorState()
         state.tool = .rectangle
         state.ink = .blue
+        if cropArmed { state.selectCrop() }
         let chrome = EditorChrome(
             state: state,
             onUndo: {}, onRedo: {}, onClear: {}, onCrop: {}, onCopy: {}, onSave: {}, onClose: {}

@@ -2,6 +2,16 @@ import Combine
 import Foundation
 import StareCore
 
+/// The capture editor's one armed item (S6): a drawing tool or the crop
+/// action. The rule is the value itself — picking one replaces the other, so
+/// exactly one palette item is marked at any moment. Surfaces without a crop
+/// action (the drawing overlay, the whiteboard) hold `.tool(tool)` in step
+/// with `tool`, so their marking is today's behaviour.
+enum CaptureSelection: Equatable {
+    case tool(Tool)
+    case crop
+}
+
 /// Editor state shared by the overlay views and the floating toolbar: the
 /// current tool, the current ink and whether the armed frame is drawn.
 ///
@@ -31,8 +41,17 @@ final class EditorState: ObservableObject {
         didSet {
             Diag.log("tool=\(tool.rawValue)")
             writeIfNotSyncing { $0.tool = tool }
+            // S6: a tool picked through any route (palette, keyboard, history)
+            // becomes the armed item again, so the crop's marking falls off at
+            // the same moment the tool's comes on — one state, one marked item.
+            if captureSelection != .tool(tool) { captureSelection = .tool(tool) }
         }
     }
+    /// The one armed item the palette marks (S6): `selectCrop` arms the crop
+    /// action and any tool selection (including `tool`'s own `didSet`) arms the
+    /// tool again. Never stored stale: it always answers `tool` unless the crop
+    /// is armed right now.
+    @Published private(set) var captureSelection: CaptureSelection = .tool(.pen)
     @Published var ink: Ink = .red {
         didSet { writeIfNotSyncing { $0.ink = ink } }
     }
@@ -251,6 +270,10 @@ final class EditorState: ObservableObject {
         if let preferences {
             MainActor.assumeIsolated { subscribeToModel(preferences) }
         }
+        // S6: the armed item starts as the seeded tool, so a fresh state marks
+        // exactly one thing — set explicitly instead of leaning on whether the
+        // `tool` observers fire during initialization.
+        captureSelection = .tool(tool)
     }
 
     /// Keeps the mirrors in step with the one blob, so a change made
@@ -325,5 +348,44 @@ final class EditorState: ObservableObject {
     /// default.
     var boardBackgroundChoice: BoardBackground {
         BoardBackground(rawValue: boardPageBackground) ?? .system
+    }
+
+    // MARK: - Selected-tool state (S6)
+
+    /// What the palette marks for `candidate` (S6): the armed item decides, so
+    /// in the capture editor a tool is marked only while it is the one armed —
+    /// picking the crop unmarks it. Surfaces without crop hold `.tool(tool)`
+    /// always, which reduces this to today's `tool == candidate` marking.
+    func isToolMarked(_ candidate: Tool) -> Bool {
+        switch captureSelection {
+        case .tool(let armed): return armed == candidate
+        case .crop: return false
+        }
+    }
+
+    /// Whether the palette marks the extra crop action (S6).
+    var isCropMarked: Bool {
+        if case .crop = captureSelection { return true }
+        return false
+    }
+
+    /// Picking any tool is the editor's way of giving the crop up. Routing the
+    /// pick through `tool` keeps the persisted tool and the armed item one
+    /// state — the `didSet` above does the realignment.
+    func select(_ candidate: Tool) {
+        tool = candidate
+    }
+
+    /// Picking the crop arms it as the palette's single selection (S6): the
+    /// active tool is unmarked but remembered (`tool` keeps its value), so the
+    /// editor can hand the mark back when the crop is given up.
+    func selectCrop() {
+        captureSelection = .crop
+    }
+
+    /// Ends the crop's turn as the armed item, giving the mark back to the
+    /// remembered tool — used when the crop gesture is cancelled or applied.
+    func endCropSelection() {
+        captureSelection = .tool(tool)
     }
 }
