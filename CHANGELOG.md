@@ -7,7 +7,7 @@ user gets.
 ## Unreleased
 
 - Drawing: `⌘Z` brings back everything `Escape` cleared, and `⇧⌘Z` clears it again
-- Board and drawing: `⌘` + scroll zooms the board with the pointer as the anchor, the pointer becomes a grabbing hand while you pan, and every tool shows its own cursor
+- Drawing: every tool shows its own cursor
 - Pointer tool: drag a box to select everything under it, `⇧`-click to add or remove a mark, and move the whole selection as one undoable step
 - Toolbar: a `⠇⠇` grip moves the bar and right-click puts it back
 - Pointer Highlight: a fresh install starts on the rhombus with a dashed border, a fixed purple and 100 pt
