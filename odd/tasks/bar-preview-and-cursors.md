@@ -1,8 +1,8 @@
 # Bar preview, sidebar focus, pool, gripper and bar cursor
 
 Six defects reported against the merged Settings rework and the bar. Branch
-`fix/bar-preview-and-cursors`, off `main` at `1bbff32` plus the uncommitted
-picker-alignment fix.
+`fix/bar-preview-and-cursors`, off `main` at `f38bd93` — the picker-alignment fix is already on `main`,
+and this branch is its six commits.
 
 ## Specs
 
@@ -50,9 +50,9 @@ picker-alignment fix.
 | T5 | S5 | Give the gripper the same colour source as the other tool glyphs | worker | 4479402 |
 | T6 | S6 | Make the bar own its cursor over its whole area, not just the gripper | worker | 4479402 |
 
-**Slice note.** 3035 authored changed lines over nine commits once T4 lands — past the ~400-line
-slice, and the units are independent by nature. Delivery shape when publishing: a chained PR, one
-slice per concern (preview fit; focus ring; bar colour and cursor; organiser tests), never one diff.
+**Slice note.** 789 insertions and 61 deletions over six commits — past the ~400-line slice, and the
+units are independent by nature. Delivery shape when publishing: a chained PR, one slice per concern
+(preview fit; focus ring; bar colour and cursor; organiser tests), never one diff.
 
 ## Log
 
@@ -69,8 +69,8 @@ slice per concern (preview fit; focus ring; bar colour and cursor; organiser tes
   that chrome. Fixture `stare-settings-bar-light.png`: the eight ink swatches, undo/redo/clear/close and
   the gripper are all inside the stage box instead of scrolled out of sight. 86e6b14.
 - **L5** (evidence, T3): the sidebar suppresses its focus effect until a local key monitor sees a Tab
-  (keyCode 48); the monitor is removed with the window. The ring is a live-window behaviour, so the commit
-  pins the mechanism, not a pixel: b7fc4c7.
+  (keyCode 48); the monitor is removed with the window. No test pins this one: the ring is a live-window
+  behaviour, so the commit adds the mechanism and the reviewer exercises it: b7fc4c7.
 - **L6** (evidence, T5): the gripper drew its dots in AppKit, where the bar's `ultraThinMaterial` never
   reaches the fill, so they held one grey while the SF Symbol glyphs tracked the appearance — measured
   128 vs 121 in light and 124 vs 155 in dark. The dots are SwiftUI shapes on `.secondary` now and measure
@@ -88,9 +88,15 @@ slice per concern (preview fit; focus ring; bar colour and cursor; organiser tes
   likely cause of the doubt; (b) a bar→bar drag across a placed separator drops the separator even though
   `[eraser, sep, pen]` was reachable, which needs separator relocation inside `GeneralPreferences` and is
   outside this batch. cc82031.
-- **L9** (verification, whole batch): `swift build` exit 0; `swift test` exit 0 with `StareCoreTests`
-  535 executed / 0 failures and `StareTests` 98 executed / 0 failures (633 total, 9 of them new);
-  `./.build/debug/Stare --selftest` exit 0 with zero `result=FAIL` lines, `settings panes result=PASS
-  areas=10` and `settings window result=PASS`. Two behaviours stay manual by nature and are handed to the
-  reviewer: the sidebar focus ring (a live window's first responder) and the pointer over the bar (an
-  AppKit panel hover).
+- **L9** (verification, whole batch): independently re-run by `gentle-ai-verify`, which reproduced every
+  claim and corrected four: the branch is six commits (not nine or ten), 12 tests are new (9 organiser +
+  3 gripper/cursor) against 633 executed, the diffs are 789 insertions and 61 deletions, and 4479402's own
+  message rounds the measured colours to 120/151 where the fixtures read 121/155. `swift build` exit 0;
+  `swift test` exit 0 with `StareCoreTests` 535 / `StareTests` 98 executed and 0 failures;
+  `./.build/debug/Stare --selftest` exit 0 with zero `result=FAIL` lines. Nothing pins S1, S2 or S3 yet:
+  see L10.
+- **L10** (evidence): two behaviours stay manual by nature and are handed to the reviewer: the sidebar
+  focus ring (a live window's first responder) and the pointer over the bar (an AppKit panel hover). The
+  verifier's own render probe proved the vertical case by rendering the real pane with a vertical model
+  and comparing ink runs against the horizontal control: byte-identical, and the whole bar survives the
+  minimum window width. Drag targets on the scaled preview still need a hand on the trackpad.
