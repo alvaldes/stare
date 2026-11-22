@@ -57,7 +57,7 @@ S23. Auditoría de blur, previa a S13: un área cubierta por blur no debe dejar 
 | ID | Tarea | Specs | Ruta | Commit |
 | --- | --- | --- | --- | --- |
 | T0 | Convención de panes de Settings nuevos y registro mínimo compartido | S4, S22 | parent | — |
-| T1 | Captura de ventana del frente con marcas compuestas | S10, S21 | parent | 1ee6393, ff41287 |
+| T1 | Captura de ventana del frente con marcas compuestas | S10, S21 | parent | 1ee6393, ff41287, 989b795 |
 | T2a | Area drag: geometría pura, ⇧ cuadrado, clamp al display | S11, S21 | worker | 3437beb |
 | T2b | Area drag determinística: freeze, lupa, rect recordado | S11, S21 | parent | — |
 | T3 | Historial de capturas en memoria, reabrir en el editor | S12, S21 | parent | — |
@@ -80,8 +80,8 @@ T1 necesita ojo humano: ningún test unitario puede probar píxeles reales de un
 3. `⌥S`: la imagen tiene que ser sólo esa ventana, con la flecha cortada justo en el borde y el recuadro en su lugar.
 4. Repetir con la ventana del frente en un segundo display: la captura tiene que usar el display correcto.
 5. Arrastrar la ventana medio fuera de pantalla y `⌥S`: la captura se recorta, no falla.
-6. Con el whiteboard abierto, `⌥S` avisa que el board no tiene ventanas.
-7. `S` y `⇧S` siguen comportándose exactamente como antes.
+6. Con el whiteboard abierto, `⌥S` sigue capturando el board como antes (no hay ventanas que capturar ahí).
+7. `S`, `⇧S` y `⌥⇧S` siguen comportándose exactamente como antes.
 
 ## Log
 
@@ -108,3 +108,5 @@ L5. T0 plegado en T3: ninguna tarea de T1 necesitaba un pane de Settings nuevo, 
 L6. Corte de T1: núcleo puro (`1ee6393`) + integración en el overlay (`ff41287`), 538 líneas en 11 archivos. Es el mismo corte a/b que ya usa `core-overlay-capture.md` (T4a/T4b). El conteo de líneas que reporta el harness contra `origin/main` incluye commits del usuario sin pushear: el diff real de esta tanda es `git diff f38bd93..HEAD`.
 
 L7. Corte de T2: T2a (`3437beb`, delegada al worker por backstop de contexto) + T2b pendiente. Regla aceptada: primero ⇧ cuadrado y después clamp, así que un cuadrado arrastrado fuera del display queda no-cuadrado contra el borde — el gesto dice "hasta acá", y el clamp no inventa área que no existe. Si no gusta, la alternativa es clampear el punto final antes de cuadrar; decidirlo en T2b junto con el freeze.
+
+L8. Verificación independiente de T1 (`gentle-ai-verify`, item 3 por el refactor del camino compartido) encontró dos regresiones reales, ya corregidas en `989b795`: en el whiteboard `⌥S` caía en un handler no cableado y quedaba tragado (antes capturaba el board), y `⌥⇧S` cambiaba de área a ventana. El fix hace que `⌥S` intercepte sólo cuando el display puede atenderlo y excluye `⇧`. La misma verificación dejó 16 probes durables en `WindowCaptureBoundaryTests.swift` (bordes de geometría, origen negativo de un display arriba, marca real que sobrevive al crop en su offset). Suite: 569 tests, 0 fallas.
