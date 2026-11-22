@@ -1,0 +1,31 @@
+# Stare: cierre de 0.3.0 (follow-ups de review, versión y runner del adapter)
+
+Objetivo: cerrar los tres pendientes que quedaron abiertos al final de la sesión del rediseño del Setup Guide — el hallazgo de review R3-002/R4-3 sobre capturas huérfanas de la sonda, la higiene de versión/CHANGELOG para publicar, y el hueco de tests del target `Stare` donde se escapó un cableado roto.
+Rama: `feat/setup-guide-redesign` (continúa la anterior). Runner: `swift test` + `Scripts/bundle.sh release install`. Entrega: `ask-on-risk`.
+
+## Specs
+
+S1. "Arreglar R3-002/R4-3 (guard en vuelo)" — la review nativa dejó, como hallazgo informativo, que la captura detached de la sonda no se cancela al vencer `ProbeCaptureSize.timeout`: un cuelgue persistente de ScreenCaptureKit acumula una captura huérfana por segundo mientras el caller ya volvió. Se corrige con un guard de sonda en vuelo: mientras una sonda siga viva, el refresh no lanza otra y devuelve la última respuesta conocida. No se usa `Task.cancel()` como mecanismo principal porque la cancelación es cooperativa y no aborta el screenshot.
+
+S2. "Bump a 0.3.0 + CHANGELOG" — `Resources/Info.plist` pasa de `0.2.0` a `0.3.0` y `CHANGELOG.md` recibe, bajo `## Unreleased`, los bullets que faltan de este trabajo: el rediseño del Setup Guide (una sola tarjeta, una acción primaria por estado, logo real) y los arreglos del permiso de Screen Recording (sonda y copia). Los bullets existentes no se tocan.
+
+S3. "Test target para Stare" — un test target que pueda ejercitar el cableado del adapter (hoy sin runner), con un `CaptureService` falso, de forma que un cambio como el cableado faltante de `ProbeCapturePlan` falle en CI y no solo en la app instalada. Si SwiftPM no permite testear el target ejecutable sin mover código, se documenta el obstáculo y se propone la alternativa concreta en vez de simular cobertura.
+
+S4. Nada existente se rompe: la suite sigue verde (408 tests antes de este trabajo), `swift build -c release` compila, el contrato público de `StareCore` no gana dependencias de AppKit, y la app instalada sigue arrancando con su permiso de Screen Recording.
+
+## Tasks
+
+| ID | Tarea | Specs | Ruta | Commit |
+| --- | --- | --- | --- | --- |
+| T1 | Guard de sonda en vuelo en `StareCore` con test, cableado en `SystemScreenRecordingClient` | S1, S4 | worker | |
+| T2 | Versión 0.3.0 y bullets nuevos del CHANGELOG | S2 | worker | |
+| T3 | Test target para el adapter con `CaptureService` falso, o el obstáculo documentado | S3, S4 | worker | |
+
+## Log
+
+L1. Pedido de cierre, textual: "podemos cerrar y antes revisamos lo que queda abierto?".
+L2. Decisiones del owner en el cuestionario de cierre: entrega = "Empujar main y luego PR de esta rama"; y antes de cerrar = "Arreglar R3-002/R4-3 (guard en vuelo)", "Bump a 0.3.0 + CHANGELOG", "Test target para Stare". No se empujó nada todavía: el push es un paso aparte que se hace después de este trabajo.
+L3. Estado medido al abrir este documento: rama 52 commits / 14.556 inserciones por delante de `origin/main` (10 propios, 42 previos de `main` local); `Info.plist` en `0.2.0` con 12 bullets bajo `## Unreleased`; `git tag --list` vacío, así que `Scripts/release.sh --upload` no puede correr todavía.
+L4. T1 (S1, S4) — guard de sonda en vuelo. `StareCore` gana `ProbeInFlight` (`Sources/StareCore/ProbeInFlight.swift`): el guard modela el ciclo de vida real del hallazgo R3-002/R4-3 — el wait acotado expira pero la captura detached sigue viva, así que `begin()` arranca un pase y devuelve su `Pass`; `timeOut(_:answer:)` graba la respuesta del wait expirado manteniendo el pase en vuelo; `finish(_:answer:)` graba la respuesta real de la captura y libera el siguiente probe; un `finish`/`timeOut` de un pase desplazado por un probe nuevo se ignora. `Task.cancel()` no interviene. Cableado en `SystemScreenRecordingClient.canCapture()`: mientras un pase siga vivo el refresh devuelve la última respuesta conocida sin lanzar captura; la completación de la captura abandonada libera el guard desde la main queue, y solo la intento más nuevo de un pase puede hacerlo. Test-first: RED observado dos veces (`swift test --filter ProbeInFlightTests` exit 1 — primera: `cannot find 'ProbeInFlight' in scope`; segunda: la API de primera versión `begin() -> Bool?` no tenía `Pass`/`Outcome`/`timeOut`, con 3 de 6 tests fallando porque exponía que «busy con respuesta conocida» era un estado inalcanzable); GREEN observado con la API final: `swift test --filter ProbeInFlightTests` exit 0, `Executed 9 tests, with 0 failures`. Suite completa verde: 417 tests en `StareCoreTests.xctest` (408 previos + 9 nuevos), 0 fallos.
+L5. T2 (S2) — `Resources/Info.plist`: `CFBundleShortVersionString` 0.2.0 → 0.3.0, nada más cambia en el archivo. `CHANGELOG.md`: dos bullets nuevos bajo `## Unreleased` (rediseño del Setup Guide; arreglos de Screen Recording — sonda al display de la ventana frontal, sin tamaño degenerado, wait acotado, copia de reinicio pendiente que nombra re-autorizar en System Settings). Los 12 bullets existentes intactos.
+L6. T3 (S3, S4) — el obstáculo documentado en el brief no existe en esta toolchain: un repro mínimo en un paquete scratch de `/tmp` (ejecutable con top-level code en `main.swift`, test target dependiendo de él, `swift-tools-version: 6.0`, `.swiftLanguageMode(.v5)`) compila y corre — sin error de `main` duplicado. Así que T3 aterrizó de verdad: test target nuevo `StareTests` dependiendo del ejecutable `Stare` (`Package.swift`), con `Tests/StareTests/ScreenRecordingClientAdapterTests.swift` — 3 tests sobre el `canCapture()`/`preflight()`/`request()` reales con un `CaptureService` falso. Para el fake hizo falta una costura mínima en `ScreenRecordingClientAdapter.swift`: protocolo `ProbeCaptureService` (las tres llamadas que la sonda usa) con `extension CaptureService: ProbeCaptureService {}` implícita, así que los callers no cambian. Los tests pían exactamente lo que se escapó en review: la sonda intenta [reducido, 1] y recuerda el tamaño que funcionó; un segundo refresh mientras la captura abandonada sigue viva repite la respuesta sin lanzar captura; y la sonda se recupera cuando la captura abandonada termina. `swift test` exit 0: `StareTests.xctest` `Executed 3 tests, with 0 failures`, `StareCoreTests.xctest` `Executed 417 tests, with 0 failures`. `swift build -c release` exit 0.
