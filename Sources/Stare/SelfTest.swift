@@ -253,6 +253,58 @@ enum SelfTest {
                 + "rendered=\(layoutRendered) ok=\(layoutSectionFollows && layoutHidesExactlyNumber && layoutRendered)"
         )
 
+        // Palette live resize (T8/S10 + T9/S12): a visible palette's window
+        // follows the content. The real `ToolbarPanel` is built, placed on
+        // screen and its orientation flipped live — the window must take the
+        // vertical fitting size and the resized bar must stay inside the
+        // screen's visible frame. The probe moves a real window, so the
+        // persisted anchor keys it may rewrite are saved and restored.
+        if NSScreen.screens.isEmpty {
+            report.append("palette live resize skipped (no display) ok=true")
+        } else {
+            let anchorSnapshot = UserDefaults.standard.object(forKey: ToolbarPanel.anchorKey)
+            let screenSnapshot = UserDefaults.standard.object(forKey: ToolbarPanel.screenKey)
+            defer {
+                if let anchorSnapshot {
+                    UserDefaults.standard.set(anchorSnapshot, forKey: ToolbarPanel.anchorKey)
+                } else {
+                    UserDefaults.standard.removeObject(forKey: ToolbarPanel.anchorKey)
+                }
+                if let screenSnapshot {
+                    UserDefaults.standard.set(screenSnapshot, forKey: ToolbarPanel.screenKey)
+                } else {
+                    UserDefaults.standard.removeObject(forKey: ToolbarPanel.screenKey)
+                }
+            }
+            let liveState = EditorState()
+            let livePanel = ToolbarPanel(
+                state: liveState,
+                onUndo: {}, onRedo: {}, onClear: {}, onDone: {}
+            )
+            livePanel.positionNearPointerDisplay(placement: .cursor)
+            livePanel.orderFront(nil)
+            for _ in 0..<10 { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+            let hosting = livePanel.contentView
+            let horizontalFit = hosting?.fittingSize ?? .zero
+            var matchesFit = abs(livePanel.frame.width - horizontalFit.width) <= 2
+                && abs(livePanel.frame.height - horizontalFit.height) <= 2
+            liveState.toolbarOrientation = .vertical
+            for _ in 0..<10 { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+            let verticalFit = hosting?.fittingSize ?? .zero
+            let liveFrame = livePanel.frame
+            matchesFit = matchesFit
+                && abs(liveFrame.width - verticalFit.width) <= 2
+                && abs(liveFrame.height - verticalFit.height) <= 2
+            let liveVisible = livePanel.screen?.visibleFrame ?? NSScreen.screens[0].visibleFrame
+            let liveResizeFollows = matchesFit && liveVisible.contains(liveFrame)
+            livePanel.orderOut(nil)
+            report.append(
+                "palette live resize frame=\(Int(liveFrame.width))x\(Int(liveFrame.height)) "
+                    + "fit=\(Int(verticalFit.width))x\(Int(verticalFit.height)) "
+                    + "follows=\(liveResizeFollows) ok=\(liveResizeFollows)"
+            )
+        }
+
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
             let rendered = renderEditorChrome(appearanceName: appearance, to: "/tmp/stare-editor-\(name).png")
             report.append("editor chrome \(name) rendered=\(rendered)")

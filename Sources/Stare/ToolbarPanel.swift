@@ -10,8 +10,53 @@ final class ToolbarHostingView: NSHostingView<ToolbarView> {
         window?.performDrag(with: event)
     }
 
+    /// Set by `ToolbarPanel`. Called whenever the hosted SwiftUI content has
+    /// reached a fitting size the window is not showing yet, while attached
+    /// to a window, so the panel can take the content's new size.
+    var onFittingSizeChange: (() -> Void)?
+
+    private var lastReportedFittingSize: NSSize = .zero
+    private var intrinsicSizeObservation: NSKeyValueObservation?
+
+    /// Why these hooks and not re-fitting at each state change: every path
+    /// that redraws the bar — an orientation flip, a tool-set change, page
+    /// controls joining, extra actions appearing — ends here, so no change
+    /// site can be missed; re-fitting in each site would have to track every
+    /// `@Published` field and still miss the next one.
+    /// The signal the `.intrinsicContentSize` sizing option rests on is the
+    /// hosting view's own `intrinsicContentSize`: when the SwiftUI content's
+    /// fitting size changes, `NSHostingView` publishes a new value, and
+    /// `NSView.intrinsicContentSize` is KVO-observable, so observing it reads
+    /// the change directly. `layout()` covers a size change that reaches a
+    /// layout pass through any other route; both dedupe against the last
+    /// reported size.
+    private func observeIntrinsicSize() {
+        intrinsicSizeObservation = observe(
+            \.intrinsicContentSize,
+            options: [.initial]
+        ) { [weak self] _, _ in
+            guard let self else { return }
+            // NSView property observations deliver on the main thread.
+            MainActor.assumeIsolated { self.reportFittingSizeIfChanged() }
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        reportFittingSizeIfChanged()
+    }
+
+    private func reportFittingSizeIfChanged() {
+        guard let onFittingSizeChange, window != nil else { return }
+        let fit = fittingSize
+        guard fit != lastReportedFittingSize else { return }
+        lastReportedFittingSize = fit
+        onFittingSizeChange()
+    }
+
     required init(rootView: ToolbarView) {
         super.init(rootView: rootView)
+        observeIntrinsicSize()
     }
 
     @available(*, unavailable)
@@ -23,7 +68,11 @@ final class ToolbarHostingView: NSHostingView<ToolbarView> {
 /// Floating, draggable tool palette. Non-activating so that picking a tool
 /// never steals focus from the app underneath.
 final class ToolbarPanel: NSPanel {
-    private static let anchorKey = "toolbarAnchor"
+    /// The keys the panel persists its anchor and screen under. Shared with
+    /// `SelfTest`, which builds a live palette to pin the resize behaviour
+    /// and therefore saves and restores anything this writes.
+    static let anchorKey = "toolbarAnchor"
+    static let screenKey = "toolbarScreen"
 
     /// Posted by `requestPositionReset` (T8/S6): the palette forgets where the
     /// user dragged it and opens where a fresh install opens it.
@@ -96,6 +145,13 @@ final class ToolbarPanel: NSPanel {
         contentView = hosting
         setContentSize(size)
 
+        // From here on the window follows the content: the hooks on the
+        // hosting view fire whenever the bar's fitting size changes while it
+        // is on screen.
+        hosting.onFittingSizeChange = { [weak self] in
+            self?.requestContentFit()
+        }
+
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(persistAnchor),
@@ -128,6 +184,41 @@ final class ToolbarPanel: NSPanel {
     }
 
     private var settingCancellables: Set<AnyCancellable> = []
+
+    /// Schedules a resize to the content's fitting size off the current
+    /// update: the hooks fire while SwiftUI is still settling, and changing
+    /// the window frame mid-pass would re-enter the layout it answers.
+    private func requestContentFit() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isVisible else { return }
+            self.refitToContentFittingSize()
+        }
+    }
+
+    /// Resizes the window to the hosted content's fitting size while the bar
+    /// is on screen (T8/S10, T9/S12 live): a Settings change to the
+    /// orientation or the tool set changes the CONTENT, and the window must
+    /// follow. One anchor path drives both placing and resizing — the same
+    /// relative centre anchor that placed the bar (the persisted one if the
+    /// user dragged it, the border's default otherwise) feeds
+    /// `ToolbarGripperSpec.barRect`, so a dragged bar keeps its anchor
+    /// through a resize and the rect's clamp alone re-docks a bar the resize
+    /// would push off-screen. No second positioning model.
+    private func refitToContentFittingSize() {
+        guard let hosting = contentView as? ToolbarHostingView else { return }
+        let newSize = hosting.fittingSize
+        guard newSize != frame.size else { return }
+        guard let screen = screen ?? NSScreen.main ?? NSScreen.screens.first else { return }
+        let anchor = savedAnchor()
+            ?? ToolbarGripperSpec.defaultAnchor(border: state.toolbarBorder)
+        let rect = ToolbarGripperSpec.barRect(
+            barSize: newSize,
+            anchor: anchor,
+            screenFrame: screen.frame,
+            visibleFrame: screen.visibleFrame
+        )
+        setFrame(rect, display: true)
+    }
 
     /// Re-anchors a visible palette at the fresh-install spot immediately, so
     /// the Settings action is seen and not just stored for next time.
@@ -183,8 +274,6 @@ final class ToolbarPanel: NSPanel {
                 ownerPID: NSWorkspace.shared.frontmostApplication?.processIdentifier ?? -1
             )
     }
-
-    private static let screenKey = "toolbarScreen"
 
     /// The display the palette was last parked on, if it still exists.
     private func savedScreen() -> NSScreen? {
