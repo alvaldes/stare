@@ -55,7 +55,7 @@ public enum ScreenRecordingAccess: Equatable, Sendable {
         case .granted:
             "Stare can draw over the screen."
         case .grantedPendingRestart:
-            "The permission is granted, but Stare has to be restarted before it can capture."
+            "Screen Recording is granted, but this Stare cannot capture yet. Quit and reopen Stare to finish; if it still says this after a restart, switch Stare off and on in System Settings → Screen Recording."
         }
     }
 
@@ -103,10 +103,12 @@ public final class ScreenRecordingPermission {
     ///   Documented rule, applied regardless of the grant's age: preflight
     ///   true means TCC already granted the permission, so `.denied` would
     ///   contradict the system, and the only other truthful state is "granted
-    ///   but this process cannot capture yet". Whether the grant appeared
-    ///   mid-session or predates this launch (e.g. after an app update that
-    ///   re-registered TCC), the UI copy — "restart Stare" — is accurate, so
-    ///   the state does not depend on the grant's age; the fresh-instance
+    ///   but this process cannot capture yet". The state does not say *why*
+    ///   the capture fails, and after an app update a restart can be the wrong
+    ///   remedy: replacing the binary can leave TCC's stored authorization no
+    ///   longer matching it, and only re-authorizing in System Settings
+    ///   repairs that. The copy therefore names both ways out, and nothing
+    ///   here may claim that a restart alone is enough. The fresh-instance
     ///   test pins this.
     ///
     /// `onChange` fires only when the value actually changes.

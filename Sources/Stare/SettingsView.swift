@@ -1111,7 +1111,7 @@ private struct PermissionsPane: View {
                         )
                         if permission.access == .grantedPendingRestart {
                             Label(
-                                "Quit and reopen Stare to finish granting the permission.",
+                                "Quit and reopen Stare. If it still shows this afterwards, switch Stare off and on in System Settings → Screen Recording.",
                                 systemImage: "arrow.triangle.2.circlepath"
                             )
                             .font(.caption)

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "chosen": "03-permission-checklist.html",
+  "handoffs": {
+    "03-permission-checklist.html": {
+      "status": "implemented",
+      "queued": true,
+      "sentAt": "2026-11-21T22:38:33.309Z",
+      "startedAt": "2026-11-21T22:49:26.520Z",
+      "implementedAt": "2026-11-21T23:00:03.246Z",
+      "feature": "odd/tasks/setup-guide-redesign.md",
+      "note": "460x430 minimal guide implemented in SwiftUI (OnboardingView.swift): real app icon at 58pt, one card, one primary action per state from the tested OnboardingActionPlan, keyboard hint at secondaryLabelColor. 396 tests green; installed and running (pid 33568). Native app, so no loopback preview URL exists."
+    }
+  }
+}

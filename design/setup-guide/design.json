@@ -1,0 +1,28 @@
+{
+  "title": "Stare Setup Guide redesign",
+  "brief": "Redesign of the first-run Setup Guide (Sources/Stare/OnboardingView.swift; the real window is 460×430 points): a single Screen Recording permission with three states (denied, grantedPendingRestart, granted), one primary action per state, and 'Not now' always relegated. Modern 21st-inspired look at native-macOS restraint, drawn honestly as a real window with traffic lights and the title 'Stare'. The chosen artboard 03 is drawn at that real window size; 01 and 02 stay at 880×760 as alternative directions.",
+  "feature": "odd/tasks/setup-guide-redesign.md",
+  "artboards": [
+    {
+      "file": "01-status-hero.html",
+      "title": "Status-led hero",
+      "tradeoff": "One always-centered primary action that substitutes by state, with an inline 'what happens next' line — maximum focus, but the action's meaning shifts under the user between states",
+      "width": 880,
+      "height": 760
+    },
+    {
+      "file": "02-two-step-guide.html",
+      "title": "Two-step guide with footer action bar",
+      "tradeoff": "Explains the flow first (what Stare does → permission) and pins actions in a macOS-style footer bar — most narrative, but taller hierarchy and a footer bar curling the window even for one remaining step",
+      "width": 880,
+      "height": 760
+    },
+    {
+      "file": "03-permission-checklist.html",
+      "title": "Permission checklist card",
+      "tradeoff": "The permission is one task row with its action living inside the card and 'Not now' demoted to the window bottom — most task-like and compact, but the primary action changes position between states",
+      "width": 460,
+      "height": 430
+    }
+  ]
+}

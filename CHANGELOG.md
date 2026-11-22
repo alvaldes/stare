@@ -6,6 +6,11 @@ user gets.
 
 ## Unreleased
 
+## 0.3.0
+
+- First run: the Setup Guide is redesigned — one card per state with a single primary action, the app's real logo, Return to continue and Escape to leave
+- Screen Recording: the permission probe targets the display of the frontmost window, never asks for a degenerate capture size, bounds its wait, and the pending-restart message names re-authorizing in System Settings
+- Screen Recording: a probe that stalls recovers on its own within seconds instead of reporting "cannot capture" until Stare restarts
 - First run: a setup guide opens System Settings at the Screen Recording pane, notices the grant when you come back, and continues into Settings
 - Rebuilt Settings window: a resizable sidebar of sections — General, Tools, Shortcuts, Pointer Highlight, Capture, Whiteboard, Permissions, About — with every change applied live
 - Pointer highlight styles: five shapes (Ring, Squircle, Rhombus, Dot, Spotlight) with size, colour, band, glow, plus a live preview drawn by the overlay's own renderer

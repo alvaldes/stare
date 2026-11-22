@@ -208,8 +208,11 @@ final class ScreenRecordingPermissionTests: XCTestCase {
 
     // MARK: UI copy
 
-    /// Each state carries English title/detail copy for the onboarding UI,
-    /// and the pending-restart detail says the app has to be restarted.
+    /// Each state carries English title/detail copy for the onboarding UI.
+    /// The pending-restart detail must name the restart *and* the other way
+    /// out: after a rebuild TCC's stored authorization stops matching the
+    /// binary, and no restart repairs that, so the copy may not promise that a
+    /// restart alone is enough.
     func testStatesCarryUITitlesAndDetails() {
         for state in [ScreenRecordingAccess.denied, .granted, .grantedPendingRestart] {
             XCTAssertFalse(state.title.isEmpty, "\(state) needs a title")
@@ -218,6 +221,10 @@ final class ScreenRecordingPermissionTests: XCTestCase {
         XCTAssertTrue(
             ScreenRecordingAccess.grantedPendingRestart.detail.localizedCaseInsensitiveContains("restart"),
             "the pending-restart detail must tell the user to restart the app"
+        )
+        XCTAssertTrue(
+            ScreenRecordingAccess.grantedPendingRestart.detail.localizedCaseInsensitiveContains("System Settings"),
+            "the pending-restart detail must also say to re-authorize in System Settings, the only remedy that survives an app update"
         )
     }
 }

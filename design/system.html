@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stare design system — tokens synced from landing/src/style.css</title>
+<style>
+  :root{
+    --desk:#e9edf3; --paper:#ffffff; --graphite:#1c2030; --muted:#5b6275; --rule:#d3d9e3;
+    --ink-red:#ff3b30; --ink-orange:#ff9500; --ink-yellow:#ffcc00; --ink-green:#34c759;
+    --ink-blue:#007aff; --ink-purple:#b052de; --ink-white:#ffffff; --ink-black:#000000;
+    --ink-sky:#6cb4ff; --aurora-blue:#7fa3db; --aurora-lilac:#b3aee8; --aurora-peach:#f1c2b0;
+    --chrome:#23262f; --board:#3a3d45; --key:#1d1f25; --key-lit:#262a33; --key-hover:#2f3440;
+    --shadow-card:0 16px 40px -10px rgb(28 32 48 / .55);
+    --shadow-glass:0 10px 30px -12px rgb(28 32 48 / .25), inset 0 1px 0 rgb(255 255 255 / .7);
+    --shadow-window:0 30px 80px -24px rgb(28 32 48 / .45);
+    --shadow-toolbar:0 12px 32px -8px rgb(28 32 48 / .45);
+    --font-sans:'Schibsted Grotesk Variable',ui-sans-serif,system-ui,sans-serif;
+    --font-mac:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',sans-serif;
+  }
+  *{box-sizing:border-box;margin:0}
+  body{background:var(--desk);color:var(--graphite);font-family:var(--font-mac);padding:64px 56px 96px}
+  :focus-visible{outline:2px solid var(--ink-blue);outline-offset:2px}
+  .note{max-width:920px;background:var(--paper);border:1px solid var(--rule);border-radius:12px;
+    padding:20px 24px;font-size:14px;line-height:1.55;margin-bottom:40px}
+  .note strong{display:block;margin-bottom:6px;font-size:15px}
+  h1{font-family:var(--font-sans);font-size:34px;letter-spacing:-.01em;margin-bottom:6px}
+  .src{font-size:13px;color:rgba(28,32,48,.78);margin-bottom:44px}
+  h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;
+    color:rgba(28,32,48,.78);margin:44px 0 16px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:12px}
+  .swatch{background:var(--paper);border:1px solid var(--rule);border-radius:12px;overflow:hidden}
+  .swatch .chip{height:64px;border-bottom:1px solid var(--rule)}
+  .swatch dl{padding:10px 12px;font-size:12px;line-height:1.5}
+  .swatch dt{color:rgba(28,32,48,.78)}
+  .swatch dd{font-family:ui-monospace,Menlo,monospace;font-size:11px}
+  .landing-only{position:relative}
+  .landing-only::after{content:"landing only";position:absolute;top:8px;right:8px;
+    background:rgba(28,32,48,.78);color:#fff;font-size:10px;padding:2px 6px;border-radius:99px}
+  .row{display:flex;align-items:baseline;gap:24px;padding:10px 0;border-bottom:1px solid var(--rule);max-width:760px}
+  .row code{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:rgba(28,32,48,.78);min-width:210px}
+  .spacebar{position:absolute;left:220px;height:12px;background:var(--ink-blue);border-radius:3px;opacity:.85}
+  .spacerow{position:relative;height:32px;display:flex;align-items:center}
+  .spacerow span{font-size:12px}
+  .dims{display:flex;gap:16px;max-width:760px}
+  .dims figcaption{font-size:11px;color:rgba(28,32,48,.78);margin-top:6px}
+  .demo{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap}
+  .card{background:var(--paper);border:1px solid var(--rule);border-radius:12px;box-shadow:var(--shadow-glass);
+    padding:20px;width:340px;font-size:14px;line-height:1.5}
+  .card h3{font-size:15px;margin-bottom:6px}
+  .card p{color:rgba(28,32,48,.78);margin-bottom:16px}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;font:600 14px/1 var(--font-mac);
+    border-radius:8px;padding:10px 18px;min-height:32px;border:0;cursor:pointer}
+  .btn-primary{background:#0062cc;color:#fff}
+  .btn-secondary{background:var(--paper);color:var(--graphite);border:1px solid var(--rule)}
+  .btn-plain{background:transparent;color:rgba(28,32,48,.78);font-weight:500}
+  .status{display:flex;gap:12px;align-items:flex-start;background:var(--paper);border:1px solid var(--rule);
+    border-radius:10px;padding:14px;width:340px}
+  .status svg{flex:none;margin-top:2px}
+  .status b{display:block;font-size:14px}
+  .status span{font-size:13px;color:rgba(28,32,48,.78)}
+  .win{width:340px;background:var(--desk);border:1px solid var(--rule);border-radius:10px;
+    box-shadow:var(--shadow-window);overflow:hidden}
+  .winbar{display:flex;align-items:center;height:36px;padding:0 12px;border-bottom:1px solid var(--rule)}
+  .lights{display:flex;gap:6px}
+  .lights i{width:12px;height:12px;border-radius:50%;display:inline-block}
+  .winbar b{flex:1;text-align:center;font-size:13px;font-weight:600;margin-right:44px}
+  code.tok{font-family:ui-monospace,Menlo,monospace;font-size:12px;background:var(--paper);
+    border:1px solid var(--rule);border-radius:6px;padding:2px 6px}
+</style>
+</head>
+<body>
+<h1>Stare design system</h1>
+<p class="src">Synced verbatim from <code>landing/src/style.css</code> (the web marketing site). Companion doc: <code>design/system.md</code>.</p>
+
+<section class="note" aria-labelledby="scope-h">
+  <strong id="scope-h">Scope: these tokens describe the web landing page, not the native window.</strong>
+  Stare is a native macOS menu-bar app. Its real windows must use macOS semantic colors
+  (<code>NSColor.windowBackgroundColor</code>, <code>.controlBackgroundColor</code>, <code>.separatorColor</code>),
+  the system font, and SF Symbols — not these web tokens. Only where a token coincides with an Apple
+  system color (<code>--color-ink-blue</code> = systemBlue, <code>--color-ink-green</code> = systemGreen,
+  <code>--color-ink-orange</code> = systemOrange, <code>--color-graphite</code> ≈ label,
+  <code>--color-desk</code> ≈ window background, <code>--color-rule</code> ≈ separator) may the value stand
+  in for its macOS equivalent. Nothing marked “landing only” leaks into the native window.
+</section>
+
+<main>
+<h2>Colors</h2>
+<div class="grid" role="list">
+  <figure class="swatch" role="listitem"><div class="chip" style="background:var(--desk)"></div><dl><dt>--color-desk</dt><dd>#e9edf3 · surface</dd></dl></figure>
+  <figure class="swatch" role="listitem"><div class="chip" style="background:var(--paper)"></div><dl><dt>--color-paper</dt><dd>#ffffff · card bg</dd></dl></figure>
+  <figure class="swatch" role="listitem"><div class="chip" style="background:var(--graphite)"></div><dl><dt>--color-graphite</dt><dd>#1c2030 · text</dd></dl></figure>
+  <figure class="swatch" role="listitem"><div class="chip" style="background:var(--muted)"></div><dl><dt>--color-muted</dt><dd>#5b6275 · secondary*</dd></dl></figure>
+  <figure class="swatch" role="listitem"><div class="chip" style="background:var(--rule)"></div><dl><dt>--color-rule</dt><dd>#d3d9e3 · separator</dd></dl></figure>
+  <figure class="swatch" role="listitem"><div class="chip" style="background:var(--ink-red)"></div><dl><dt>--color-ink-red</dt><dd>#ff3b30 · ink</dd></dl></figure>
+  <figure class="swatch" role="listitem"><div class="chip" style="background:var(--ink-orange)"></div><dl><dt>--color-ink-orange</dt><dd>#ff9500 · ink</dd></dl></figure>
+  <figure class="swatch" role="listitem"><div class="chip" style="background:var(--ink-yellow)"></div><dl><dt>--color-ink-yellow</dt><dd>#ffcc00 · ink</dd></dl></figure>
+  <figure class="swatch" role="listitem"><div class="chip" style="background:var(--ink-green)"></div><dl><dt>--color-ink-green</dt><dd>#34c759 · ink</dd></dl></figure>
+  <figure class="swatch" role="listitem"><div class="chip" style="background:var(--ink-blue)"></div><dl><dt>--color-ink-blue</dt><dd>#007aff · ink/focus</dd></dl></figure>
+  <figure class="swatch" role="listitem"><div class="chip" style="background:var(--ink-purple)"></div><dl><dt>--color-ink-purple</dt><dd>#b052de · ink</dd></dl></figure>
+  <figure class="swatch" role="listitem"><div class="chip" style="background:var(--ink-sky)"></div><dl><dt>--color-ink-sky</dt><dd>#6cb4ff · dark accent</dd></dl></figure>
+  <figure class="swatch landing-only" role="listitem"><div class="chip" style="background:var(--aurora-blue)"></div><dl><dt>--color-aurora-blue</dt><dd>#7fa3db</dd></dl></figure>
+  <figure class="swatch landing-only" role="listitem"><div class="chip" style="background:var(--aurora-lilac)"></div><dl><dt>--color-aurora-lilac</dt><dd>#b3aee8</dd></dl></figure>
+  <figure class="swatch landing-only" role="listitem"><div class="chip" style="background:var(--aurora-peach)"></div><dl><dt>--color-aurora-peach</dt><dd>#f1c2b0</dd></dl></figure>
+  <figure class="swatch landing-only" role="listitem"><div class="chip" style="background:var(--chrome)"></div><dl><dt>--color-chrome</dt><dd>#23262f · toolbar</dd></dl></figure>
+  <figure class="swatch landing-only" role="listitem"><div class="chip" style="background:var(--board)"></div><dl><dt>--color-board/key/lit</dt><dd>#3a3d45 · #1d1f25 · #262a33</dd></dl></figure>
+</div>
+<p style="font-size:12px;color:rgba(28,32,48,.78);margin-top:10px">* <code>--color-muted</code> is ≈4.3:1 on white — landing-only for large text; artboards use graphite at ≥ .78 opacity for small secondary text.</p>
+
+<h2>Type</h2>
+<div class="row"><code>--font-sans (web)</code><span style="font-family:var(--font-sans);font-size:22px">Schibsted Grotesk Variable — landing only</span></div>
+<div class="row"><code>--font-mac (depicted macOS)</code><span style="font-size:22px">System font · SF Pro Text</span></div>
+<div class="row"><code>display</code><span style="font-size:34px;font-family:var(--font-sans);font-weight:700;letter-spacing:-.01em">Display 34 / landing</span></div>
+<div class="row"><code>window title</code><span style="font-size:26px;font-weight:700;font-family:var(--font-mac)">Window title 26 bold</span></div>
+<div class="row"><code>heading</code><span style="font-size:15px;font-weight:600;font-family:var(--font-mac)">Heading 15 semibold</span></div>
+<div class="row"><code>body / callout</code><span style="font-size:14px;font-family:var(--font-mac)">Body 14 · secondary <span style="color:rgba(28,32,48,.78)">graphite .78</span></span></div>
+<div class="row"><code>caption / footnote</code><span style="font-size:12px;font-family:var(--font-mac)">Footnote 12 · graphite .65</span></div>
+
+<h2>Spacing (convention: Tailwind default scale, multiples of 4)</h2>
+<div class="spacerow"><code style="font-size:11px;color:rgba(28,32,48,.78);width:200px">4 / 8 / 12 / 16 / 24 / 32</code><span class="spacebar" style="left:212px;width:120px"></span><span>sample 16px gap</span></div>
+<div class="dims">
+  <figure><svg width="96" height="72" role="img" aria-label="10px corner radius"><rect x="6" y="6" width="84" height="60" rx="10" fill="#fff" stroke="#d3d9e3"/></svg><figcaption>radius 10 — cards, buttons</figcaption></figure>
+  <figure><svg width="96" height="72" role="img" aria-label="22px corner radius"><rect x="6" y="6" width="84" height="60" rx="22" fill="#fff" stroke="#d3d9e3"/></svg><figcaption>radius 22 — icon squircle</figcaption></figure>
+</div>
+
+<h2>Depth</h2>
+<div class="grid">
+  <figure class="swatch"><div class="chip" style="background:var(--paper);box-shadow:var(--shadow-glass)"></div><dl><dt>--shadow-glass</dt><dd>cards on light</dd></dl></figure>
+  <figure class="swatch"><div class="chip" style="background:var(--paper);box-shadow:var(--shadow-card)"></div><dl><dt>--shadow-card</dt><dd>elevated cards</dd></dl></figure>
+  <figure class="swatch"><div class="chip" style="background:var(--desk);box-shadow:var(--shadow-window)"></div><dl><dt>--shadow-window</dt><dd>depicted windows</dd></dl></figure>
+  <figure class="swatch landing-only"><div class="chip" style="background:var(--paper);box-shadow:var(--shadow-toolbar)"></div><dl><dt>--shadow-toolbar</dt><dd>landing toolbar</dd></dl></figure>
+</div>
+
+<h2>Core components</h2>
+<div class="demo">
+  <section class="card" aria-label="Sample card">
+    <h3>Permission card</h3>
+    <p>Paper fill, hairline rule, medium radius, one shadow from the scale — not stacked.</p>
+    <div class="demo">
+      <button class="btn btn-primary" type="button">Primary</button>
+      <button class="btn btn-secondary" type="button">Secondary</button>
+      <button class="btn btn-plain" type="button">Plain text</button>
+    </div>
+  </section>
+  <section class="status" aria-label="Sample status row">
+    <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="10" fill="#34c759"/><path d="M6.5 11.5l3 3 6-6.5" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <div><b>Screen Recording on</b><span>Status led by icon shape + label — never color alone</span></div>
+  </section>
+  <section class="win" aria-label="Sample Mac window chrome">
+    <div class="winbar"><span class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span><b>Stare</b></div>
+    <div style="padding:20px;font-size:13px;color:var(--graphite)">Traffic lights left, centered title, desk background, hairline separator. Honest — no fake browser chrome.</div>
+  </section>
+</div>
+
+<h2>Accessibility rules carried from source</h2>
+<p style="max-width:760px;font-size:14px;line-height:1.55;color:rgba(28,32,48,.78)">
+  Focus is always visible: <code class="tok">:focus-visible{outline:2px solid var(--color-ink-blue);outline-offset:2px}</code>.
+  Reduced motion is honored: the source forces all animation to finish in 1ms under
+  <code class="tok">prefers-reduced-motion</code> (line 719) — artboards follow the same pattern.
+  Button fills use a deepened blue (<code class="tok">#0062cc</code>, ≈ ink-blue darkened) so white labels
+  pass WCAG AA at small sizes; raw <code class="tok">#007aff</code> stays for accents, focus rings, and ≥ 18px text.
+</p>
+</main>
+</body>
+</html>
