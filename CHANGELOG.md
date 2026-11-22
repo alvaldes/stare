@@ -6,6 +6,8 @@ user gets.
 
 ## Unreleased
 
+## 0.3.0
+
 - First run: the Setup Guide is redesigned — one card per state with a single primary action, the app's real logo, Return to continue and Escape to leave
 - Screen Recording: the permission probe targets the display of the frontmost window, never asks for a degenerate capture size, bounds its wait, and the pending-restart message names re-authorizing in System Settings
 - First run: a setup guide opens System Settings at the Screen Recording pane, notices the grant when you come back, and continues into Settings
