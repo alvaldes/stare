@@ -100,11 +100,12 @@ reopen it any time from the menu bar with **Setup Guide…**.
 
 | Where | Keys |
 | --- | --- |
-| Drawing | Hold `⇧` for a straight line with the pen or highlighter, or a square or circle with the rectangle or ellipse |
-| Whiteboard | `⌘←` `⌘→` change page (going past the last one adds a page) · `⌘B` flips the page between white and black · hold space and drag to pan · pinch or `⌘+`/`⌘−` zooms, `⌘0` resets pan and zoom |
+| Drawing | Hold `⇧` for a straight line with the pen or highlighter, or a square or circle with the rectangle or ellipse · with the pointer tool, drag a box to select everything under it and hold `⇧` to add to the selection |
+| Drawing | `Esc` clears the marks, and `⌘Z` brings back everything it cleared |
+| Whiteboard | `⌘←` `⌘→` change page (going past the last one adds a page) · `⌘B` flips the page between white and black · hold space and drag to pan (the pointer becomes a grabbing hand) · pinch, `⌘` + scroll or `⌘+`/`⌘−` zooms, `⌘0` resets pan and zoom |
 | Whiteboard | `S` captures the marks over the page colour, no Screen Recording needed · `Esc` closes the board and keeps the pages for the session |
 | Capture card | Hover keeps it on screen · click opens the editor · drag it into another app |
-| Editor | Same tools and inks · `⌘Z` undo · `⇧⌘Z` redo · `Esc` cancels a crop, then closes |
+| Editor | Same tools and inks · `⌘Z` undo · `⇧⌘Z` redo · `Esc` cancels a crop, then closes · an applied crop stays editable: drag its edges to adjust it, and `⌘Z` returns the previous crop |
 
 All of these — the four global shortcuts and each tool's key — can be
 rebound in Settings.
@@ -117,7 +118,7 @@ Every preference Stare has lives in its Settings window (**Settings…** in the
 menu bar): a resizable window with a sidebar of sections, where every change
 applies immediately. The sections:
 
-- **General** — the drawing frame, which displays to draw on, where the palette opens, how long the laser lasts, launch at login, and update checks.
+- **General** — the drawing frame, which displays to draw on, where the palette opens, the toolbar's orientation and which screen edge it docks to, which tools it shows and in which order, how long the laser lasts, whether marks and board pages survive quitting Stare (until the machine restarts, on by default), launch at login, and update checks.
 - **Tools** — the ink drawing starts with, a shortcut for each tool, and the palette's position reset.
 - **Shortcuts** — the four global shortcuts (`⌥⇧A`, `⌥⇧M`, `⌥⇧P`, `⌥⇧W`) with a key recorder and conflict checks.
 - **Pointer Highlight** — the style of the `⌥⇧M` highlight: five shapes (Ring, Squircle, Rhombus, Dot, Spotlight), size up to 240 pt, band width, border style (Solid or Dashed), opacity, glow, the click animation (Scale or Rotate), colour and idle fade, with a live preview drawn by the same renderer the overlay uses.

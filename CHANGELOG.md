@@ -6,6 +6,14 @@ user gets.
 
 ## Unreleased
 
+- Drawing: `⌘Z` brings back everything `Escape` cleared, and `⇧⌘Z` clears it again
+- Board and drawing: `⌘` + scroll zooms the board with the pointer as the anchor, the pointer becomes a grabbing hand while you pan, and every tool shows its own cursor
+- Pointer tool: drag a box to select everything under it, `⇧`-click to add or remove a mark, and move the whole selection as one undoable step
+- Toolbar: a `⠇⠇` grip moves the bar and right-click puts it back, and Settings now chooses horizontal or vertical, which screen edge it docks to, and which tools it shows in which order
+- Pointer Highlight: a fresh install starts on the rhombus with a dashed border, a fixed purple and 100 pt
+- Marks and board pages now survive quitting Stare and leaving the modes, until the machine restarts, with a Settings switch for the old ephemeral behaviour
+- Capture editor: the crop stays editable once applied — drag its edges to adjust it, and `⌘Z` returns the previous crop
+
 ## 0.3.0
 
 - First run: the Setup Guide is redesigned — one card per state with a single primary action, the app's real logo, Return to continue and Escape to leave
