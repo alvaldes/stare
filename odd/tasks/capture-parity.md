@@ -58,7 +58,8 @@ S23. Auditoría de blur, previa a S13: un área cubierta por blur no debe dejar 
 | --- | --- | --- | --- | --- |
 | T0 | Convención de panes de Settings nuevos y registro mínimo compartido | S4, S22 | parent | — |
 | T1 | Captura de ventana del frente con marcas compuestas | S10, S21 | parent | 1ee6393, ff41287 |
-| T2 | Area drag determinística: freeze, lupa, rect recordado, shift cuadrado | S11, S21 | parent | — |
+| T2a | Area drag: geometría pura, ⇧ cuadrado, clamp al display | S11, S21 | worker | 3437beb |
+| T2b | Area drag determinística: freeze, lupa, rect recordado | S11, S21 | parent | — |
 | T3 | Historial de capturas en memoria, reabrir en el editor | S12, S21 | parent | — |
 | T4 | Pin de la imagen capturada desde la card, con atajo propio y lock | S6, S4, S21 | parent | — |
 | T5 | OCR y QR on-device con atajo global ⌥⇧O | S7, S9, S22 | parent | — |
@@ -105,3 +106,5 @@ L4. Base de la rama: `feat/capture-parity` desde `main` en `f38bd93`. El trabajo
 L5. T0 plegado en T3: ninguna tarea de T1 necesitaba un pane de Settings nuevo, y la primera que sí lo necesita es el historial. La convención de S4 se aplica cuando aparezca ese pane, no como tarea ceremonial.
 
 L6. Corte de T1: núcleo puro (`1ee6393`) + integración en el overlay (`ff41287`), 538 líneas en 11 archivos. Es el mismo corte a/b que ya usa `core-overlay-capture.md` (T4a/T4b). El conteo de líneas que reporta el harness contra `origin/main` incluye commits del usuario sin pushear: el diff real de esta tanda es `git diff f38bd93..HEAD`.
+
+L7. Corte de T2: T2a (`3437beb`, delegada al worker por backstop de contexto) + T2b pendiente. Regla aceptada: primero ⇧ cuadrado y después clamp, así que un cuadrado arrastrado fuera del display queda no-cuadrado contra el borde — el gesto dice "hasta acá", y el clamp no inventa área que no existe. Si no gusta, la alternativa es clampear el punto final antes de cuadrar; decidirlo en T2b junto con el freeze.
