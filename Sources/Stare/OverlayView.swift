@@ -49,6 +49,10 @@ class OverlayView: NSView {
     var onSelectionChanged: ((UUID) -> Void)?
     /// Asks for a capture: nil means the whole display, a rect means that area.
     var onCaptureRequest: ((CGRect?) -> Void)?
+    /// Asks to capture the front window only, the mark space of this display
+    /// included. Separate from `onCaptureRequest` because the target is not a
+    /// rectangle the user dragged: it is whatever window the server puts first.
+    var onCaptureWindowRequest: (() -> Void)?
     /// Latest live frames per display, owned by the controller. Blur marks
     /// paint the real screen content from here; nil in headless renders.
     weak var liveFrameSource: LiveFrameSource?
@@ -1278,6 +1282,13 @@ class OverlayView: NSView {
         // session, so the global history sees the deletion like any other edit.
         if state.tool == .select, event.keyCode == 51 || event.keyCode == 117 {
             deleteSelectedMark()
+            return
+        }
+
+        // ⌥S captures the front window. Checked before the tool router so a
+        // rebound tool key can never shadow the capture keys.
+        if characters.lowercased() == "s", event.modifierFlags.contains(.option) {
+            onCaptureWindowRequest?()
             return
         }
 

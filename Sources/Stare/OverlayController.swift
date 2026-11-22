@@ -740,13 +740,61 @@ final class OverlayController {
         }
 
         guard let canvas = canvases[displayID] else { return }
+        guard let composed = composedOverlayMarks(canvas, displayID: displayID) else { return }
+        deliver(composed, area: area, canvas: canvas, displayID: displayID)
+    }
 
+    /// ⌥S: the front window only, with the marks over it. The pixels come from
+    /// the same display capture every other path uses, so the marks land exactly
+    /// where they were drawn; the window only decides what gets cropped out.
+    func captureFrontWindow() {
+        if isBoardActive {
+            canvasUnderPointer()?.view.showHint("The board has no windows to capture", seconds: 3)
+            return
+        }
+        guard let target = WindowCaptureTarget.frontWindow() else {
+            canvasUnderPointer()?.view.showHint("No window to capture · press S for the display", seconds: 3.5)
+            Diag.log("window capture skipped: no eligible window")
+            return
+        }
+        guard let canvas = canvases[target.displayID] else {
+            Diag.log("window capture skipped: no canvas for display \(target.displayID)")
+            return
+        }
+        guard let composed = composedOverlayMarks(canvas, displayID: target.displayID) else { return }
+
+        // Same scale `deliver` uses for an area: the image's pixels against the
+        // panel's points. A window that hangs off the display clips instead of
+        // failing, and no overlap at all is a miss we say out loud.
+        let scale = CGFloat(composed.width) / max(canvas.panel.frame.width, 1)
+        let crop = WindowCaptureGeometry.cropRect(
+            windowBounds: target.bounds,
+            displayBounds: CGDisplayBounds(target.displayID),
+            scale: scale,
+            imageSize: CGSize(width: composed.width, height: composed.height)
+        )
+        guard !crop.isEmpty, let result = composed.cropping(to: crop) else {
+            canvas.view.showHint("That window isn't on this display", seconds: 3.5)
+            Diag.log("window capture skipped: empty crop")
+            return
+        }
+        Diag.log("window capture window=\(target.windowID) crop=\(crop)")
+        deliver(result, area: nil, canvas: canvas, displayID: target.displayID)
+    }
+
+    /// The permission gate, the display's pixels and the marks composited on top:
+    /// shared by the whole-display, area and window captures, so all three can
+    /// only differ in what they crop afterwards. Nil after saying why.
+    private func composedOverlayMarks(
+        _ canvas: DisplayCanvas,
+        displayID: CGDirectDisplayID
+    ) -> CGImage? {
         // Never interrupt a session with a system prompt: the permission is asked
         // for when the app starts, and here we only say what is missing.
         guard captureService.hasPermission else {
             canvas.view.showHint("Screen Recording permission needed · System Settings → Privacy", seconds: 3.5)
             Diag.log("capture skipped: no permission")
-            return
+            return nil
         }
 
         do {
@@ -759,15 +807,16 @@ final class OverlayController {
                 scale: scale
             ) else {
                 Diag.log("capture failed: composition returned nil")
-                return
+                return nil
             }
-
-            deliver(composed, area: area, canvas: canvas, displayID: displayID)
+            return composed
         } catch CaptureError.permissionDenied {
             canvas.view.showHint("Screen Recording permission needed · System Settings → Privacy", seconds: 3.5)
             Diag.log("capture denied by the system")
+            return nil
         } catch {
             Diag.log("capture failed: \(error)")
+            return nil
         }
     }
 
@@ -1006,6 +1055,9 @@ final class OverlayController {
             wireHistoryAndSelection(canvas.view, displayID: displayID)
             canvas.view.onCaptureRequest = { [weak self] area in
                 self?.capture(displayID: displayID, area: area)
+            }
+            canvas.view.onCaptureWindowRequest = { [weak self] in
+                self?.captureFrontWindow()
             }
             // The live blur path: the view reads its display's latest frame and
             // reports blur interest changes so the frame source starts and

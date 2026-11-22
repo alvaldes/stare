@@ -91,7 +91,7 @@ reopen it any time from the menu bar with **Setup Guide…**.
 | `P` `H` `A` `L` `R` `O` | Pen, highlighter, arrow, line, rectangle, ellipse |
 | `T` `C` `F` `B` `E` | Text, numbered step, laser, blur, eraser |
 | `1`–`8` | Red, orange, yellow, green, blue, purple, white, black |
-| `S` · `⇧S` | Capture the display · drag to capture an area |
+| `S` · `⇧S` · `⌥S` | Capture the display · drag to capture an area · capture the front window |
 | `⌘Z` · `⇧⌘Z` | Undo · redo |
 | `Esc` | Clear and leave |
 
