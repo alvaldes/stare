@@ -193,6 +193,12 @@ struct SettingsCard<Content: View>: View {
 
 /// One setting: title and optional detail on the left, the control on the
 /// right, on a single line.
+///
+/// The control owns the row's trailing edge, and a fixed-width control inside
+/// `content` anchors there with `alignment: .trailing`: a menu picker draws its
+/// own box inside the width it is given, so a centred frame leaves that box
+/// short of the column the toggles, the segmented controls and the slider
+/// values already share.
 struct SettingRow<Control: View>: View {
     let title: String
     var detail: String?

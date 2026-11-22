@@ -324,7 +324,7 @@ private struct OverlayPane: View {
                     }
                 }
                 .labelsHidden()
-                .frame(width: 220)
+                .frame(width: 220, alignment: .trailing)
             )
             SettingRow(
                 title: "Open the palette",
@@ -334,7 +334,7 @@ private struct OverlayPane: View {
                     }
                 }
                 .labelsHidden()
-                .frame(width: 220)
+                .frame(width: 220, alignment: .trailing)
             )
             Text("Marking every display is the default; the palette follows the pointer unless told otherwise.")
                 .font(.caption)
@@ -352,7 +352,7 @@ private struct OverlayPane: View {
                     }
                 }
                 .labelsHidden()
-                .frame(width: 220)
+                .frame(width: 220, alignment: .trailing)
             )
             Text("Laser marks fade out and never appear in a capture.")
                 .font(.caption)
@@ -656,7 +656,7 @@ private struct BarPane: View {
                     }
                 }
                 .labelsHidden()
-                .frame(width: 220)
+                .frame(width: 220, alignment: .trailing)
             )
             SettingRow(
                 title: "Docked edge",
@@ -669,7 +669,7 @@ private struct BarPane: View {
                     }
                 }
                 .labelsHidden()
-                .frame(width: 220)
+                .frame(width: 220, alignment: .trailing)
             )
             SettingRow(
                 title: "Reset position",
@@ -782,7 +782,7 @@ private struct GeneralPane: View {
                     }
                 }
                 .labelsHidden()
-                .frame(width: 160)
+                .frame(width: 160, alignment: .trailing)
             )
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -1141,7 +1141,7 @@ private struct MarkerPane: View {
                     }
                 }
                 .labelsHidden()
-                .frame(width: 130)
+                .frame(width: 130, alignment: .trailing)
             )
             SettingRow(
                 title: "Size",
@@ -1184,7 +1184,7 @@ private struct MarkerPane: View {
                     }
                 }
                 .labelsHidden()
-                .frame(width: 130)
+                .frame(width: 130, alignment: .trailing)
                 .disabled(!borderApplies)
             )
             SettingRow(
@@ -1214,7 +1214,7 @@ private struct MarkerPane: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
-                .frame(width: 130)
+                .frame(width: 130, alignment: .trailing)
             )
             SettingRow(
                 title: "Glow",
@@ -1383,7 +1383,7 @@ private struct CapturePane: View {
                     Text("Folder").tag(1)
                 }
                 .labelsHidden()
-                .frame(width: 180)
+                .frame(width: 180, alignment: .trailing)
             )
             if case .folder(let path) = model.capture.destination {
                 SettingRow(
@@ -1419,7 +1419,7 @@ private struct CapturePane: View {
                     }
                 }
                 .labelsHidden()
-                .frame(width: 140)
+                .frame(width: 140, alignment: .trailing)
                 .disabled(isClipboard)
             )
             if isClipboard {
@@ -1547,7 +1547,7 @@ private struct WhiteboardPane: View {
                     }
                 }
                 .labelsHidden()
-                .frame(width: 160)
+                .frame(width: 160, alignment: .trailing)
             )
         }
     }
@@ -1580,7 +1580,7 @@ private struct WhiteboardPane: View {
                     }
                 }
                 .labelsHidden()
-                .frame(width: 220)
+                .frame(width: 220, alignment: .trailing)
             )
             Text("Every display is the default; the scope applies while the board is open, and a display that leaves it keeps its pages.")
                 .font(.caption)
