@@ -57,7 +57,7 @@ S23. Auditoría de blur, previa a S13: un área cubierta por blur no debe dejar 
 | ID | Tarea | Specs | Ruta | Commit |
 | --- | --- | --- | --- | --- |
 | T0 | Convención de panes de Settings nuevos y registro mínimo compartido | S4, S22 | parent | — |
-| T1 | Captura de ventana del frente con marcas compuestas | S10, S21 | parent | — |
+| T1 | Captura de ventana del frente con marcas compuestas | S10, S21 | parent | 1ee6393, ff41287 |
 | T2 | Area drag determinística: freeze, lupa, rect recordado, shift cuadrado | S11, S21 | parent | — |
 | T3 | Historial de capturas en memoria, reabrir en el editor | S12, S21 | parent | — |
 | T4 | Pin de la imagen capturada desde la card, con atajo propio y lock | S6, S4, S21 | parent | — |
@@ -69,6 +69,18 @@ S23. Auditoría de blur, previa a S13: un área cubierta por blur no debe dejar 
 | T10 | Plantillas de nombre por tokens | S17, S21 | parent | — |
 | T11 | Backdrop barato: padding, esquinas, sombra | S18, S22 | parent | — |
 | T12 | Canvas componible: sumar captura o imagen pegada | S19, S21 | parent | — |
+
+## Checks manuales pendientes
+
+T1 necesita ojo humano: ningún test unitario puede probar píxeles reales de una ventana.
+
+1. Abrir Stare con Screen Recording concedido, abrir una app (Safari, Terminal) y un par de ventanas de otras apps.
+2. `⌥⇧A`, dibujar una flecha que cruce el borde de la ventana del frente y un recuadro adentro.
+3. `⌥S`: la imagen tiene que ser sólo esa ventana, con la flecha cortada justo en el borde y el recuadro en su lugar.
+4. Repetir con la ventana del frente en un segundo display: la captura tiene que usar el display correcto.
+5. Arrastrar la ventana medio fuera de pantalla y `⌥S`: la captura se recorta, no falla.
+6. Con el whiteboard abierto, `⌥S` avisa que el board no tiene ventanas.
+7. `S` y `⇧S` siguen comportándose exactamente como antes.
 
 ## Log
 
@@ -89,3 +101,7 @@ Si queda algo mas por mi de decidir o algo mas que debebamos discutir ahora es e
 L3. Respuestas del usuario a las cuatro decisiones de §6: pin = "C · Dos entradas: ⌥⇧P marcas, pin en la card"; alcance = "Tier 1 + 2 + 3 en este mismo worktree"; settings = "Panes nuevos en archivos nuevos, edits mínimos"; OCR = "Atajo global propio (p. ej. ⌥⇧O)".
 
 L4. Base de la rama: `feat/capture-parity` desde `main` en `f38bd93`. El trabajo en vuelo del usuario vive en `fix/bar-preview-and-cursors` (`2fcc81a`), no en `main`; el merge de esa rama contra esta se resuelve cuando aterrice, con la superficie de Settings ya separada por S4.
+
+L5. T0 plegado en T3: ninguna tarea de T1 necesitaba un pane de Settings nuevo, y la primera que sí lo necesita es el historial. La convención de S4 se aplica cuando aparezca ese pane, no como tarea ceremonial.
+
+L6. Corte de T1: núcleo puro (`1ee6393`) + integración en el overlay (`ff41287`), 538 líneas en 11 archivos. Es el mismo corte a/b que ya usa `core-overlay-capture.md` (T4a/T4b). El conteo de líneas que reporta el harness contra `origin/main` incluye commits del usuario sin pushear: el diff real de esta tanda es `git diff f38bd93..HEAD`.
