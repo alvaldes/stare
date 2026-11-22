@@ -54,6 +54,26 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// The cursor role this tool shows on the canvas at rest (T2/S2). Exhau-
+    /// stive on purpose: a new tool fails to compile here until it declares
+    /// its cursor — the mapping must never fall back to a silent default.
+    public var cursor: ToolCursor {
+        switch self {
+        case .select: .editArrow
+        case .pen: .penNib
+        case .highlighter: .markerChisel
+        case .arrow: .arrowHead
+        case .line: .lineCrosshair
+        case .rectangle: .rectangleFrame
+        case .ellipse: .ellipseRing
+        case .text: .textIBeam
+        case .number: .numberHand
+        case .laser: .laserSpark
+        case .eraser: .eraserBlock
+        case .blur: .blurDots
+        }
+    }
+
     public var symbolName: String {
         switch self {
         case .select: "cursorarrow"
@@ -134,6 +154,46 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
     public static var captureEditorTools: [Tool] {
         captureEditorGroups.flatMap { $0 }
     }
+}
+
+/// The cursor a tool shows while it rests on the canvas (T2/S2: "cada tool
+/// debe tener un cursor personalizado dentro de lo posible"). The choice is
+/// pure and pinneable here; the AppKit mapping — plus the small glyphs for the
+/// roles no system cursor can claim — lives in the view (`OverlayView`).
+/// System cursors only where one genuinely does the tool's job; the rest get
+/// a minimal app-drawn glyph. The gap the "dentro de lo posible" spec admits,
+/// on the record: every tool CAN be told apart, but the drawn glyphs are
+/// schematic icons (a pencil-like nib, a chisel tip), not exact replicas of
+/// the toolbar's SF Symbols — building richer art would need new assets, and
+/// the spec prefers cursor-per-tool over shipped art the app does not have.
+public enum ToolCursor: Equatable, CaseIterable, Sendable {
+    /// The edit cursor: the system arrow, which users already read as
+    /// "select and transform what is there".
+    case editArrow
+    /// The system I-beam: text places a field to type into.
+    case textIBeam
+    /// The system pointing hand: the numbered badge is placed with one click,
+    /// the click-me gesture the system hand already means.
+    case numberHand
+    /// The system crosshair, the drafting cursor, kept for the straight line
+    /// alone (it used to be the shared default of every tool).
+    case lineCrosshair
+    /// A drawn pencil nib, for freehand ink.
+    case penNib
+    /// A drawn wide chisel tip, for the flat highlighter swab.
+    case markerChisel
+    /// A drawn shaft-and-head arrow, for the straight arrow mark.
+    case arrowHead
+    /// A drawn rectangle frame.
+    case rectangleFrame
+    /// A drawn ellipse ring.
+    case ellipseRing
+    /// A drawn dot with rays, for the fading laser trail.
+    case laserSpark
+    /// A drawn slanted eraser block.
+    case eraserBlock
+    /// A drawn grid of dots, for the frosted blur patch.
+    case blurDots
 }
 
 public enum ToolShortcut {

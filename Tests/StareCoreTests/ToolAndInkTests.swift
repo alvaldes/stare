@@ -190,6 +190,46 @@ final class ToolAndInkTests: XCTestCase {
         XCTAssertEqual(Tool.toolbarGroups.flatMap { $0 }.first, .select)
     }
 
+    // T2/S2: every tool shows its own cursor. The role vocabulary is exactly
+    // the tool set — one role per tool, nothing shared and no silent default —
+    // so the pointer always tells the active tool apart.
+    func testEveryToolHasItsOwnCursorRole() {
+        let roles = Tool.allCases.map(\.cursor)
+        XCTAssertEqual(
+            Set(roles).count,
+            Tool.allCases.count,
+            "two tools sharing a cursor must be an explicit, documented exception"
+        )
+        XCTAssertEqual(
+            Set(roles),
+            Set(ToolCursor.allCases),
+            "the role set must cover every tool exactly: no silent default"
+        )
+    }
+
+    // T2/S2: the tool → role choice itself, pinned per tool. System cursors
+    // where one genuinely matches the tool's job; drawn glyphs elsewhere.
+    func testCursorRolesNameTheirToolExactly() {
+        let expected: [Tool: ToolCursor] = [
+            .select: .editArrow,
+            .text: .textIBeam,
+            .number: .numberHand,
+            .line: .lineCrosshair,
+            .pen: .penNib,
+            .highlighter: .markerChisel,
+            .arrow: .arrowHead,
+            .rectangle: .rectangleFrame,
+            .ellipse: .ellipseRing,
+            .laser: .laserSpark,
+            .eraser: .eraserBlock,
+            .blur: .blurDots,
+        ]
+        XCTAssertEqual(expected.count, Tool.allCases.count, "the pin must name every tool")
+        for (tool, role) in expected {
+            XCTAssertEqual(tool.cursor, role, "\(tool) shows the wrong cursor role")
+        }
+    }
+
     // Advisory B: in the capture editor the shortcut router must not resolve a
     // key to a tool the editor does not show — V lands on nothing instead of
     // silently arming a cursor that can do nothing.

@@ -249,6 +249,14 @@ enum SelfTest {
         // path over a synthetic screen and measure the pixels.
         report.append(contentsOf: blurRenderReport())
 
+        // Tool cursors (T2/S2): the drawing-mode mapping through the real
+        // view path — every tool owns a cursor role, the roles are all
+        // distinct so the pointer tells tools apart, system roles serve the
+        // exact AppKit cursor, and the drawn glyphs build as 16-pt images
+        // centred on the hotspot. One PNG per glyph, for eyeballing in light
+        // and dark.
+        report.append(contentsOf: toolCursorsReport())
+
         // Edit cursor (T11/S6): select, move, scale, rotate and delete a mark
         // through the real view path, with the geometry asserts on the session.
         report.append(contentsOf: selectReport())
@@ -276,6 +284,59 @@ enum SelfTest {
         report.append(contentsOf: pointerPulseReport())
 
         return finish(report, code: 0)
+    }
+
+    // MARK: - Tool cursors (T2/S2)
+
+    /// The tool → cursor contract as the canvas serves it: the pure mapping's
+    /// distinctness is pinned in unit tests; this exercises the real AppKit
+    /// half — the served `NSCursor` per tool — and renders every drawn glyph
+    /// so the shapes can be eyeballed afterwards.
+    private static func toolCursorsReport() -> [String] {
+        var report: [String] = []
+        let roles = Tool.allCases.map(\.cursor)
+        let distinct = Set(roles).count == Tool.allCases.count
+        let coversVocabulary = Set(roles) == Set(ToolCursor.allCases)
+
+        // The four roles AppKit answers by identity; every other role must be
+        // one of the drawn 16-pt glyphs with the hotspot at the centre.
+        let systemIdentities: [ToolCursor: NSCursor] = [
+            .editArrow: .arrow,
+            .textIBeam: .iBeam,
+            .numberHand: .pointingHand,
+            .lineCrosshair: .crosshair,
+        ]
+        var systemOK = true
+        var glyphsOK = true
+        var pngs = 0
+        for tool in Tool.allCases {
+            let role = tool.cursor
+            let cursor = OverlayView.cursor(for: role)
+            if let expected = systemIdentities[role] {
+                systemOK = systemOK && cursor === expected
+            } else {
+                // A drawn glyph must never silently fall back to a system
+                // cursor (the defensive `?? .crosshair` in the view), and it
+                // must be the 16-pt image centred on the hotspot.
+                let isFallback = systemIdentities.values.contains { cursor === $0 }
+                let size = cursor.image.size
+                let hotspot = cursor.hotSpot
+                glyphsOK = glyphsOK && !isFallback && size.width == 16 && size.height == 16
+                    && hotspot.x == 8 && hotspot.y == 8
+                if let cg = cursor.image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+                   writePNG(cg, to: "/tmp/stare-tool-cursor-\(tool.rawValue).png") {
+                    pngs += 1
+                }
+            }
+        }
+        let glyphCount = roles.count - systemIdentities.count
+        let ok = distinct && coversVocabulary && systemOK && glyphsOK && pngs == glyphCount
+        report.append(
+            "tool cursors distinct=\(distinct) vocabulary=\(coversVocabulary) "
+                + "system=\(systemOK) glyphs=\(glyphsOK) pngs=\(pngs)/\(glyphCount) "
+                + "result=\(ok ? "PASS" : "FAIL")"
+        )
+        return report
     }
 
     private static func displayID(of screen: NSScreen) -> CGDirectDisplayID? {
