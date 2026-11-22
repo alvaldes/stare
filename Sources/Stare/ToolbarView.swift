@@ -170,8 +170,31 @@ struct ToolbarOrganiserHooks {
     /// format both the drag source and every drop target read without
     /// registering a custom UTType.
     var dragProvider: (ToolbarLayoutItem) -> NSItemProvider
-    /// Handles a drop of `payload` on the given side of `target`.
-    var drop: (ToolbarLayoutItem, Edge, ToolbarLayoutItem) -> Void
+    /// Handles a drop of `payload` on the given side of `target`. Main-actor
+    /// typed on purpose (S5, verifier finding): the drop path hops to the
+    /// main actor before it delivers anything, so the handlers here can
+    /// mutate the `@MainActor` `PreferencesModel` without a second hop.
+    var drop: @MainActor (ToolbarLayoutItem, Edge, ToolbarLayoutItem) -> Void
+
+    /// The single payload hop (S5, verifier finding): the completion of
+    /// `NSItemProvider.loadObject` is NOT the main thread — pinned by
+    /// `SettingsOrganiserDropTests.testALoadObjectCompletionCallsBackOffTheMainThread`
+    /// — and everything downstream of it touches the `@MainActor`
+    /// `PreferencesModel`. Applying a drop straight from the completion ran
+    /// the read-modify-write off main, where two quick drops could read the
+    /// same draft and lose one, and `persist()` hit UserDefaults off main.
+    /// The completion therefore only decodes the payload; the item is
+    /// delivered on the main actor, always, so the applications serialize
+    /// and both land.
+    static func deliverPayload(
+        of provider: NSItemProvider,
+        onMain deliver: @escaping @MainActor (ToolbarLayoutItem) -> Void
+    ) {
+        provider.loadObject(ofClass: NSString.self) { object, _ in
+            guard let raw = object as? String, let payload = ToolbarLayoutItem(identifier: raw) else { return }
+            Task { @MainActor in deliver(payload) }
+        }
+    }
 }
 
 /// The measured sizes of the bar's items for the organiser: a drop's side
@@ -194,7 +217,7 @@ struct ToolbarSlotDropDelegate: DropDelegate {
     let target: ToolbarLayoutItem
     let size: CGSize
     let axisVertical: Bool
-    let onDrop: (ToolbarLayoutItem, ToolbarOrganiserHooks.Edge, ToolbarLayoutItem) -> Void
+    let onDrop: @MainActor (ToolbarLayoutItem, ToolbarOrganiserHooks.Edge, ToolbarLayoutItem) -> Void
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
         DropProposal(operation: .move)
@@ -205,11 +228,19 @@ struct ToolbarSlotDropDelegate: DropDelegate {
         let centre = axisVertical ? size.height / 2 : size.width / 2
         let along = axisVertical ? info.location.y : info.location.x
         let edge: ToolbarOrganiserHooks.Edge = along < centre ? .before : .after
-        provider.loadObject(ofClass: NSString.self) { object, _ in
-            guard let raw = object as? String, let payload = ToolbarLayoutItem(identifier: raw) else { return }
-            onDrop(target, edge, payload)
-        }
+        dropPayload(from: provider, edge: edge)
         return true
+    }
+
+    /// Decodes `provider`'s payload and delivers it through the organiser's
+    /// main-actor hop (see `ToolbarOrganiserHooks.deliverPayload`). Split
+    /// from `performDrop` — `DropInfo` cannot be constructed by anything but
+    /// SwiftUI, so this seam is how the tests fire a real drop's payload path
+    /// from a background queue.
+    func dropPayload(from provider: NSItemProvider, edge: ToolbarOrganiserHooks.Edge) {
+        ToolbarOrganiserHooks.deliverPayload(of: provider) { payload in
+            self.onDrop(self.target, edge, payload)
+        }
     }
 }
 

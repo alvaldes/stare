@@ -9,10 +9,14 @@ user gets.
 - Drawing: `⌘Z` brings back everything `Escape` cleared, and `⇧⌘Z` clears it again
 - Board and drawing: `⌘` + scroll zooms the board with the pointer as the anchor, the pointer becomes a grabbing hand while you pan, and every tool shows its own cursor
 - Pointer tool: drag a box to select everything under it, `⇧`-click to add or remove a mark, and move the whole selection as one undoable step
-- Toolbar: a `⠇⠇` grip moves the bar and right-click puts it back, and Settings now chooses horizontal or vertical, which screen edge it docks to, and which tools it shows in which order
+- Toolbar: a `⠇⠇` grip moves the bar and right-click puts it back
 - Pointer Highlight: a fresh install starts on the rhombus with a dashed border, a fixed purple and 100 pt
 - Marks and board pages now survive quitting Stare and leaving the modes, until the machine restarts, with a Settings switch for the old ephemeral behaviour
-- Capture editor: the crop stays editable once applied — drag its edges to adjust it, and `⌘Z` returns the previous crop
+- Capture editor: choosing the crop only stages a rectangle — move or resize it as long as you like, then `↵` cuts it; `Esc` drops it and `⌘Z` returns the previous crop
+- Bar: Settings now organises the toolbar the way Bartender does — a live preview of the bar next to a pool of tools and separators, arranged by dragging, with the bar following every drop
+- Settings now chooses the bar's orientation and the edge it docks to (top or bottom when horizontal, left or right when vertical), which tools it shows, and in which order
+- Board: `⌘` + scroll zooms in one smooth gesture — no contrary kicks, no momentum overshoot — and the pointer turns into a hand while you pan and a magnifier while you zoom
+- Editor: the copy you save puts your marks exactly where you drew them, letterboxed windows included
 
 ## 0.3.0
 

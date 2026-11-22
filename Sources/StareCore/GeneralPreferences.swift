@@ -281,14 +281,16 @@ public struct ToolbarToolLayout: Codable, Equatable, Sendable {
 
     /// Drops `item` into the bar at `index` — the organiser's pool drop. A
     /// tool comes out of the pool and lands where it is dropped; a separator
-    /// joins the bar, clamped to a slot strictly between two tools (the bar
-    /// can never render an empty end, so a one-tool bar refuses a separator
-    /// outright). Normalisation applies, so a separator dropped beside
-    /// another one collapses into it.
+    /// joins the bar at the nearest legal slot — a slot strictly between two
+    /// tools (the bar can never render an empty end, so a one-tool bar
+    /// refuses a separator outright; a bar with no tool-tool gap left
+    /// refuses too). A slot request that lands beside another separator
+    /// slides to the nearest legal gap instead of collapsing into it — the
+    /// dropped separator stays a real item, never silently vanishes.
     public func inserting(_ item: ToolbarLayoutItem, at index: Int) -> ToolbarToolLayout {
         var copy = items
         if item.tool == nil {
-            guard let target = Self.clampedSeparatorSlot(index, forBarCount: copy.count) else { return self }
+            guard let target = Self.nearestSeparatorSlot(near: index, in: copy) else { return self }
             copy.insert(item, at: target)
         } else {
             let target = min(max(index, 0), copy.count)
@@ -299,17 +301,17 @@ public struct ToolbarToolLayout: Codable, Equatable, Sendable {
     }
 
     /// Moves `item` to `index` — the insert position in the list as it would
-    /// be without the item. A tool clamps at both ends; a separator clamps to
-    /// the slots strictly between two tools, so a stray drop can never strand
-    /// it where normalisation would erase it. An item the bar does not hold
-    /// changes nothing, and the pool is untouched.
+    /// be without the item. A tool clamps at both ends; a separator lands in
+    /// the nearest legal slot — strictly between two tools — so a stray
+    /// request beside another separator never erases one of them. An item
+    /// the bar does not hold changes nothing, and the pool is untouched.
     public func moving(_ item: ToolbarLayoutItem, to index: Int) -> ToolbarToolLayout {
         guard let current = items.firstIndex(of: item) else { return self }
         var copy = items
         copy.remove(at: current)
         let target: Int
         if item.tool == nil {
-            guard let slot = Self.clampedSeparatorSlot(index, forBarCount: copy.count) else { return self }
+            guard let slot = Self.nearestSeparatorSlot(near: index, in: copy) else { return self }
             target = slot
         } else {
             target = min(max(index, 0), copy.count)
@@ -319,16 +321,37 @@ public struct ToolbarToolLayout: Codable, Equatable, Sendable {
     }
 
     /// Where a separator may sit: only strictly between two tools, so the
-    /// slots of a bar-to-be with `count` items are 1...(count-1). A one-tool
-    /// bar offers none.
-    private static func clampedSeparatorSlot(_ index: Int, forBarCount count: Int) -> Int? {
-        count >= 2 ? min(max(index, 1), count - 1) : nil
+    /// slots of a bar-to-be with `count` items are 1...(count-1) — and both
+    /// neighbours must be tools, or the fresh separator would sit beside
+    /// (or be collapsed with) another one. The request is clamped into the
+    /// slot range first, then the nearest legal slot wins; ties go to the
+    /// lower slot. A one-tool bar offers none, and a bar whose every gap
+    /// already holds a separator offers none either.
+    private static func nearestSeparatorSlot(
+        near index: Int, in items: [ToolbarLayoutItem]
+    ) -> Int? {
+        let top = items.count - 1
+        guard top >= 1 else { return nil }
+        let requested = min(max(index, 1), top)
+        var best: Int?
+        var bestDistance = Int.max
+        for slot in 1...top where items[slot - 1].tool != nil && items[slot].tool != nil {
+            let distance = abs(slot - requested)
+            if distance < bestDistance {
+                best = slot
+                bestDistance = distance
+            }
+        }
+        return best
     }
 
     /// Takes `item` off the bar into the pool. The last tool is refused — the
     /// bar can never go empty — and the layout comes back unchanged.
-    /// `poolIndex` places the tool inside the pool (clamped to its length);
-    /// nil appends at the end.
+    /// `poolIndex` places the tool inside the pool, clamped into
+    /// `0...pool.count` so a negative or too-large index can never trap
+    /// (the verifier's crash: a negative index used to reach `Array.insert`
+    /// and die with "Negative Array index is out of range"); nil appends at
+    /// the end.
     public func removing(_ item: ToolbarLayoutItem, intoPoolAt poolIndex: Int? = nil) -> ToolbarToolLayout {
         guard let current = items.firstIndex(of: item) else { return self }
         if item.tool != nil, visibleTools.count <= 1 { return self }
@@ -336,11 +359,10 @@ public struct ToolbarToolLayout: Codable, Equatable, Sendable {
         copy.remove(at: current)
         var poolOrder = pool
         if let tool = item.tool {
-            if let index = poolIndex, index <= poolOrder.count {
-                poolOrder.insert(tool, at: index)
-            } else {
-                poolOrder.append(tool)
-            }
+            // Clamped into 0...pool.count (verifier finding: a negative
+            // index used to trap); nil appends at the end.
+            let at = poolIndex.map { min(max($0, 0), poolOrder.count) } ?? poolOrder.count
+            poolOrder.insert(tool, at: at)
         }
         return ToolbarToolLayout(items: copy, pool: poolOrder)
     }

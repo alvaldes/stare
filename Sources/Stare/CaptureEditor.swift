@@ -944,10 +944,17 @@ final class CaptureEditorCanvas: NSView {
         let characters = event.charactersIgnoringModifiers ?? ""
 
         // T4/S6: Return is the staged rectangle's confirm key — the only way
-        // the pixels are cut — and the drawn hint names it exactly.
-        if event.keyCode == 36 { // Return
-            confirmStagedCrop()
-            return
+        // the pixels are cut — and the drawn hint names it exactly. The
+        // keypad's Enter (keyCode 76, the second ↵ key) confirms exactly the
+        // same way (v0.5 verifier: it used to do nothing). With nothing
+        // staged the key is not the editor's: it falls through to super
+        // below instead of being swallowed.
+        if event.keyCode == 36 || event.keyCode == 76 { // Return or keypad Enter
+            if isCropping && stage.isWaiting {
+                confirmStagedCrop()
+                return
+            }
+            // Nothing staged: fall through — the responder chain keeps the key.
         }
 
         if event.modifierFlags.contains(.command) {

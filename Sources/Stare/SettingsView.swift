@@ -354,7 +354,7 @@ private struct GeneralPane: View {
     /// way out for a placed separator. The pool never stores separators as
     /// pool items.
     private struct ToolbarPoolEndDropDelegate: DropDelegate {
-        let onDrop: (ToolbarLayoutItem) -> Void
+        let onDrop: @MainActor (ToolbarLayoutItem) -> Void
 
         func dropUpdated(info: DropInfo) -> DropProposal? {
             DropProposal(operation: .move)
@@ -362,8 +362,10 @@ private struct GeneralPane: View {
 
         func performDrop(info: DropInfo) -> Bool {
             guard let provider = info.itemProviders(for: [UTType.plainText]).first else { return false }
-            provider.loadObject(ofClass: NSString.self) { object, _ in
-                guard let raw = object as? String, let payload = ToolbarLayoutItem(identifier: raw) else { return }
+            // The shared main-actor hop (S5, verifier finding): the
+            // completion of `loadObject` is off the main thread and this
+            // drop's handler mutates the `@MainActor` `PreferencesModel`.
+            ToolbarOrganiserHooks.deliverPayload(of: provider) { payload in
                 onDrop(payload)
             }
             return true

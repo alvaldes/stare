@@ -103,6 +103,44 @@ final class CaptureStagedCropTests: XCTestCase {
         editor.canvas.keyDown(with: event)
     }
 
+    /// A real key press through the canvas's key handling, shaped like the
+    /// event macOS sends: `characters`, the characters ignoring modifiers and
+    /// the hardware key code are all caller-supplied.
+    private func pressKey(
+        _ editor: Editor, keyCode: Int, characters: String, ignoring: String
+    ) throws {
+        let event = try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [],
+            timestamp: 0, windowNumber: editor.window.windowNumber,
+            context: nil, characters: characters, charactersIgnoringModifiers: ignoring,
+            isARepeat: false, keyCode: UInt16(keyCode)))
+        editor.canvas.keyDown(with: event)
+    }
+
+    /// Records the key events that pass through it — the responder chain
+    /// witness a fall-through is judged by.
+    private final class KeySpyView: NSView {
+        var receivedKeyDown = false
+        override func keyDown(with event: NSEvent) { receivedKeyDown = true }
+    }
+
+    /// The editor canvas nested inside a spy container view, so a key the
+    /// canvas lets through `super.keyDown` (NSView forwards up the responder
+    /// chain — verified standalone before the fix) is observable.
+    private func makeEditorInsideSpyWindow(image: CGImage) -> (Editor, KeySpyView) {
+        let canvas = CaptureEditorCanvas(image: image)
+        let state = EditorState()
+        canvas.state = state
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 300, height: 200),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        let spy = KeySpyView(frame: window.contentView!.bounds)
+        window.contentView = spy
+        canvas.frame = spy.bounds
+        spy.addSubview(canvas)
+        return (Editor(canvas: canvas, state: state, window: window), spy)
+    }
+
     /// The bounding box of everything that is not pure white, in top-left
     /// origin coordinates — enough to tell a moved crop apart from the
     /// un-moved one over the split image.
@@ -298,6 +336,53 @@ final class CaptureStagedCropTests: XCTestCase {
         try pressReturn(editor)
         let unconfirmed = try XCTUnwrap(editor.canvas.composedImage())
         XCTAssertEqual(unconfirmed.width, 100)
+    }
+
+    // MARK: - Verifier finding: keypad Enter confirms, Return is not swallowed
+
+    /// Keypad Enter (keyCode 76: characters "\r", the funky function-key
+    /// char when modifiers are ignored) must confirm exactly like Return —
+    /// the same pixels cut, the same single journal step, the same epilogue.
+    func testKeypadEnterConfirmsTheStagedCropExactlyLikeReturn() throws {
+        let image = try XCTUnwrap(Self.splitImage(width: 100, height: 100))
+        let editor = Self.makeEditor(image: image)
+        try stageStandingRectangle(editor)
+
+        try pressKey(editor, keyCode: 76, characters: "\r", ignoring: "\u{F839}")
+
+        let composed = try XCTUnwrap(editor.canvas.composedImage())
+        XCTAssertEqual(composed.width, 50, "keypad Enter cut the staged rectangle like Return does")
+        XCTAssertEqual(composed.height, 50)
+        let box = try XCTUnwrap(inkBox(of: composed))
+        XCTAssertEqual(box.width, 50, accuracy: 1.5, "the crop is the black left half")
+        XCTAssertFalse(editor.canvas.showsCropHint, "nothing is pending any more")
+
+        // The same one-step journal epilogue Return gives.
+        editor.canvas.undo()
+        let undone = try XCTUnwrap(editor.canvas.composedImage())
+        XCTAssertEqual(undone.width, 100)
+        XCTAssertEqual(undone.height, 100)
+    }
+
+    /// With no rectangle staged, Return is not the editor's key: it falls
+    /// through to `super.keyDown` (and up the responder chain) instead of
+    /// being swallowed. Not a crash assert — the pass-through is the claim.
+    func testReturnWithNothingStagedFallsThroughToTheResponderChain() throws {
+        let image = try XCTUnwrap(Self.solidImage(width: 100, height: 100))
+        let (editor, spy) = makeEditorInsideSpyWindow(image: image)
+        // Crop armed, nothing staged: the (T4/S6) hint and the rectangle are
+        // both gone, but the editor is still the key owner.
+        editor.state.selectCrop()
+        XCTAssertFalse(editor.canvas.showsCropHint)
+
+        try pressKey(editor, keyCode: 36, characters: "\r", ignoring: "\r")
+
+        XCTAssertTrue(
+            spy.receivedKeyDown,
+            "an unstaged Return must fall through to super, not be swallowed")
+        let composed = try XCTUnwrap(editor.canvas.composedImage())
+        XCTAssertEqual(composed.width, 100, "the pass-through cut nothing")
+        XCTAssertEqual(composed.height, 100)
     }
 
     // MARK: - Deliverable 6: a re-entered applied region also waits
