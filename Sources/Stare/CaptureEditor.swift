@@ -828,8 +828,22 @@ final class CaptureEditorCanvas: NSView {
         } else {
             base = image
         }
-        let marks = session.strokes.map { space.convert($0, from: spaces[$0.id] ?? space) }
-        return MarkCompositor.composite(marks: marks, over: base, scale: space.pixelsPerPoint)
+        // The compositor places a mark at `point x scale` measured from the
+        // base image's top-left corner, but the marks' view space is the
+        // fitted display's, whose origin sits inside the letterbox. The one
+        // mapping is `EditorCropSpace`: converting into a space whose display
+        // is re-anchored at the base's origin subtracts that letterbox origin
+        // while keeping the display's fit, so a mark drawn at a view point is
+        // saved at the pixel that point maps to — on every window aspect,
+        // the letterboxed axis included (S7/T11). Applied over that mapping,
+        // the crop only cuts the base: it never shifts the marks a second
+        // time, because the converted coordinates are already region-relative.
+        let target = EditorCropSpace(
+            display: CGRect(origin: .zero, size: space.display.size),
+            coverage: space.coverage
+        )
+        let marks = session.strokes.map { target.convert($0, from: spaces[$0.id] ?? space) }
+        return MarkCompositor.composite(marks: marks, over: base, scale: target.pixelsPerPoint)
     }
 
     // MARK: - Test seam
