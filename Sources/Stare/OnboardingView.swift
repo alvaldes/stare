@@ -18,6 +18,13 @@ import StareCore
 /// colors — never the artboards' web tokens, which describe the landing page.
 struct OnboardingView: View {
     @ObservedObject var model: OnboardingModel
+    /// Which action holds keyboard focus. The system's automatic pass gives the
+    /// default button focus before the guide has laid out at its final size, and
+    /// macOS then draws the ring from that stale geometry — a ring wider than
+    /// the button that bleeds past the card until the focus moves. The primary is
+    /// focused explicitly once the first layout pass is done, so the ring is
+    /// drawn around the button it belongs to.
+    @FocusState private var primaryFocused: Bool
     let onContinue: () -> Void
     let onRestart: () -> Void
     let onNotNow: () -> Void
@@ -64,6 +71,19 @@ struct OnboardingView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
+        // The primary takes keyboard focus *after* the guide has laid out at
+        // its final size. Left to the system's automatic pass, the default
+        // button is focused before that layout, and macOS keeps drawing the
+        // ring from the pre-sizing geometry — a ring wider than the button that
+        // bleeds past the card until the focus happens to move. Re-asserting on
+        // every key also covers the guide being reopened from the menu and
+        // Stare being reactivated, both of which start again from a key window.
+        .onAppear {
+            DispatchQueue.main.async { primaryFocused = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            DispatchQueue.main.async { primaryFocused = true }
+        }
     }
 
     // MARK: Header
@@ -162,6 +182,7 @@ struct OnboardingView: View {
             .tint(primaryTint)
             .keyboardShortcut(.defaultAction)
             .frame(minWidth: plan.primary.kind == .continueOnboarding ? 110 : 0)
+            .focused($primaryFocused)
             .accessibilityLabel(primaryAccessibilityLabel(plan.primary))
 
         if let secondary = plan.secondary {
