@@ -18,6 +18,12 @@ class WhiteboardView: OverlayView {
     let board: WhiteboardPages
     /// Page changes reach the toolbar's indicator through this.
     var onPageChanged: (() -> Void)?
+    /// Structural page changes (⌘⌫ delete, ⌥← ⌥→ reorder) reach the
+    /// controller through this as a mapping from each page's old index to its
+    /// index after the change — nil when the page no longer exists — so the
+    /// page-carrying history entries follow the pages they name instead of
+    /// sliding onto a neighbour's slot (T4/S5, T6b/S8).
+    var onPageStructureChanged: (((Int) -> Int?) -> Void)?
     /// Space is held: drags pan the canvas instead of drawing.
     private var isSpacePanning = false
     /// Middle-button drag pans the canvas too.
@@ -45,6 +51,37 @@ class WhiteboardView: OverlayView {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("WhiteboardView is created in code only")
+    }
+
+    /// The plain overlay has no pages — `historyPage` stays nil there. The
+    /// whiteboard names whichever page is presented when an entry is created,
+    /// which is where its clear or batch move happened.
+    override var historyPage: Int? { board.currentIndex }
+
+    /// The Escape clear (T4/S5) at the view layer: the clear is an edit of
+    /// the page it happened on, so the redo history of the view's page records
+    /// forks here too — the same rule the controller applies to its global
+    /// redo order — and the clear is recorded on this page for the plain
+    /// (bare-view) pop path. The controller's entry-driven routing carries
+    /// the page itself and does not consult these records.
+    override func clearForUndo() -> Bool {
+        let page = board.currentIndex
+        let removedAny = super.clearForUndo()
+        guard removedAny else { return false }
+        clearRedoPages.removeAll()
+        batchRedoPages.removeAll()
+        clearUndoPages.append(page)
+        return true
+    }
+
+    /// A committed group move (T6b/S8) at the view layer: recorded on the
+    /// page it happened on for the plain pop path, with the same redo fork
+    /// the clear keeps.
+    override func noteBatchCommitted(_ strokes: [Stroke]) {
+        batchRedoPages.removeAll()
+        clearRedoPages.removeAll()
+        batchUndoPages.append(board.currentIndex)
+        super.noteBatchCommitted(strokes)
     }
 
     override var panOffset: CGSize { board.currentPage.offset }
@@ -226,26 +263,52 @@ class WhiteboardView: OverlayView {
     }
 
     /// ⌘⌫ — deletes the current page. The board never goes empty: with a single
-    /// page the model refuses and the board stays as it was.
+    /// page the model refuses and the board stays as it was. Deleting reports
+    /// its old→new index mapping to the controller, so page-carrying history
+    /// entries follow their pages and the deleted page's entries leave the
+    /// history instead of falling onto a neighbour's slot.
     @discardableResult
     func deleteCurrentPage() -> Bool {
         board.adopt(session)
+        let deletedIndex = board.currentIndex
         let deleted = board.deleteCurrentPage()
         if deleted {
             loadCurrentPage()
+            let mapping: (Int) -> Int? = { index in
+                guard index != deletedIndex else { return nil }
+                return index > deletedIndex ? index - 1 : index
+            }
+            onPageStructureChanged?(mapping)
+            remapRecords(&clearUndoPages, mapping: mapping)
+            remapRecords(&clearRedoPages, mapping: mapping)
+            remapRecords(&batchUndoPages, mapping: mapping)
+            remapRecords(&batchRedoPages, mapping: mapping)
         }
         Diag.log("board delete page deleted=\(deleted) pages=\(board.count) current=\(board.currentIndex + 1)")
         return deleted
     }
 
     /// ⌥← / ⌥→ — reorders: the current page swaps with its neighbour and stays
-    /// current. Refused at the ends, exactly like ‹ at the first page.
+    /// current. Refused at the ends, exactly like ‹ at the first page. A move
+    /// reports its old→new index mapping to the controller, so page-carrying
+    /// history entries follow their pages through the swap.
     @discardableResult
     func moveCurrentPageLeft() -> Bool {
         board.adopt(session)
+        let movedIndex = board.currentIndex
         let moved = board.moveCurrentPageLeft()
         if moved {
             loadCurrentPage()
+            let mapping: (Int) -> Int? = { index in
+                if index == movedIndex { return movedIndex - 1 }
+                if index == movedIndex - 1 { return movedIndex }
+                return index
+            }
+            onPageStructureChanged?(mapping)
+            remapRecords(&clearUndoPages, mapping: mapping)
+            remapRecords(&clearRedoPages, mapping: mapping)
+            remapRecords(&batchUndoPages, mapping: mapping)
+            remapRecords(&batchRedoPages, mapping: mapping)
         }
         Diag.log("board move left moved=\(moved) current=\(board.currentIndex + 1)/\(board.count)")
         return moved
@@ -254,9 +317,20 @@ class WhiteboardView: OverlayView {
     @discardableResult
     func moveCurrentPageRight() -> Bool {
         board.adopt(session)
+        let movedIndex = board.currentIndex
         let moved = board.moveCurrentPageRight()
         if moved {
             loadCurrentPage()
+            let mapping: (Int) -> Int? = { index in
+                if index == movedIndex { return movedIndex + 1 }
+                if index == movedIndex + 1 { return movedIndex }
+                return index
+            }
+            onPageStructureChanged?(mapping)
+            remapRecords(&clearUndoPages, mapping: mapping)
+            remapRecords(&clearRedoPages, mapping: mapping)
+            remapRecords(&batchUndoPages, mapping: mapping)
+            remapRecords(&batchRedoPages, mapping: mapping)
         }
         Diag.log("board move right moved=\(moved) current=\(board.currentIndex + 1)/\(board.count)")
         return moved
@@ -336,6 +410,170 @@ class WhiteboardView: OverlayView {
         committedBounds.removeAll()
         needsDisplay = true
         onPageChanged?()
+    }
+
+    // MARK: - Page-routed history ops (T4/S5, T6b/S8)
+
+    /// The staleness cases a page-carrying history step can hit when it is
+    /// routed:
+    /// — the step names a page index the board no longer has: the page was
+    ///   deleted (the controller's remap and this view's own remap already
+    ///   took such records out — see `onPageStructureChanged`), or the board
+    ///   was rebuilt with different pages (a canvas rebuild keeps the same
+    ///   board object, so this only happens on a restored or foreign board).
+    ///   Routing refuses and the caller's pop loop skips the step — no trap,
+    ///   no wrong page.
+    /// — the step's page was deleted and remapped away: such steps never
+    ///   reach here, they left the history at the structural change.
+    /// — the page's journal no longer holds the clear/batch the step names as
+    ///   its newest live op: the session's own guard refuses (`canUndoClear`,
+    ///   `canUndoBatchMove`, the redo variants), the pop loop skips it.
+    /// — a hard clear wiped the page's session: the controller purged the
+    ///   entries at clear time (`isWipedByHardClear`), so none remains.
+    ///
+    /// The undo and redo of a clear (T4/S5) and a group move (T6b/S8) land on
+    /// the page the step names, whatever page the display presents now. The
+    /// presented page is the fast path — the view's live session is that
+    /// page's session. Any other page is borrowed through
+    /// `borrowSession(onPage:)`, which restores the presented page and every
+    /// piece of the view's presentational state afterwards.
+
+    /// The pages, newest last, where this view's Escape clears and group
+    /// moves happened and still wait at the view layer. The plain
+    /// `undoClearedMarks()` / `undoBatchMove()` path — a pop with no entry to
+    /// name the page, the way a bare view is driven — pops these to reach the
+    /// page the newest step happened on, never the presented one. The
+    /// controller's entry-driven routing (`onPage:` variants) bypasses them:
+    /// its global order decides there, and the session's own journal guards
+    /// refuse any record these stacks drift past, so a plain-path stack that
+    /// an entry-driven pop already consumed can at worst return a no-op, and
+    /// a draw-between records can only defer to the journal, never misroute.
+    private var clearUndoPages: [Int] = []
+    private var clearRedoPages: [Int] = []
+    private var batchUndoPages: [Int] = []
+    private var batchRedoPages: [Int] = []
+
+    /// The base ops of the global history at the view layer, against whatever
+    /// session the view holds: what the plain OverlayView methods do. Both
+    /// callers — the entry-driven `onPage:` variants and the record-driven
+    /// overrides — go through these wrappers, so the record bookkeeping
+    /// happens exactly once, at the call surface, and `super` is never
+    /// reached from inside the borrowing closure.
+    private func undoClearedMarksOnSession() -> Bool { super.undoClearedMarks() }
+    private func redoClearedMarksOnSession() -> Bool { super.redoClearedMarks() }
+    private func undoBatchMoveOnSession() -> Bool { super.undoBatchMove() }
+    private func redoBatchMoveOnSession() -> Bool { super.redoBatchMove() }
+
+    /// Runs a history op against the page the step names, never the page the
+    /// display happens to present. The board's presented page moves to the
+    /// routed page, the view's session loads it, the op runs and adopts its
+    /// result back through the board sink (which writes `session` into
+    /// `pages[currentIndex]` — the routed index while the borrow lasts), and
+    /// the presented page, selection and bounds cache come back exactly as
+    /// they were: the user never sees the other page and the presented page's
+    /// state never changes. An index outside the board's pages is stale — the
+    /// guard refuses and the caller's pop loop skips the step.
+    private func borrowSession(onPage pageIndex: Int, _ operation: () -> Bool) -> Bool {
+        guard pageIndex >= 0, pageIndex < board.count else { return false }
+        guard pageIndex != board.currentIndex else { return operation() }
+        let presentedIndex = board.currentIndex
+        let presentedSelection = selectedMarkIDs
+        let presentedBounds = committedBounds
+        board.select(index: pageIndex)
+        session = board.currentPage.session
+        let routed = operation()
+        board.select(index: presentedIndex)
+        session = board.currentPage.session
+        restoreSelection(presentedSelection)
+        committedBounds = presentedBounds
+        return routed
+    }
+
+    /// Undo of the clear the popped entry names, on the page it happened on
+    /// (T4/S5): the entry-driven path, no record bookkeeping.
+    @discardableResult
+    func undoClearedMarks(onPage pageIndex: Int) -> Bool {
+        borrowSession(onPage: pageIndex, self.undoClearedMarksOnSession)
+    }
+
+    /// Redo of the clear the popped entry names, on the page it happened on
+    /// (T4/S5): the entry-driven path, no record bookkeeping.
+    @discardableResult
+    func redoClearedMarks(onPage pageIndex: Int) -> Bool {
+        borrowSession(onPage: pageIndex, self.redoClearedMarksOnSession)
+    }
+
+    /// Undo of the group move the popped entry names, on the page it happened
+    /// on (T6b/S8): the entry-driven path, no record bookkeeping.
+    @discardableResult
+    func undoBatchMove(onPage pageIndex: Int) -> Bool {
+        borrowSession(onPage: pageIndex, self.undoBatchMoveOnSession)
+    }
+
+    /// Redo of the group move the popped entry names, on the page it happened
+    /// on (T6b/S8): the entry-driven path, no record bookkeeping.
+    @discardableResult
+    func redoBatchMove(onPage pageIndex: Int) -> Bool {
+        borrowSession(onPage: pageIndex, self.redoBatchMoveOnSession)
+    }
+
+    /// Global undo of the Escape clear (T4/S5) through the view alone: the
+    /// newest clear this view performed, on the page it happened on. Records
+    /// whose page refuses — its journal no longer holds the clear as its
+    /// newest live op — are skipped exactly like the controller's pop loop
+    /// skips a stale entry, so a stale record can never mutate another page.
+    @discardableResult
+    override func undoClearedMarks() -> Bool {
+        while let page = clearUndoPages.popLast() {
+            guard borrowSession(onPage: page, self.undoClearedMarksOnSession) else { continue }
+            clearRedoPages.append(page)
+            return true
+        }
+        return false
+    }
+
+    /// Global redo of the Escape clear (T4/S5) through the view alone: the
+    /// newest undone clear, back onto the page it happened on.
+    @discardableResult
+    override func redoClearedMarks() -> Bool {
+        while let page = clearRedoPages.popLast() {
+            guard borrowSession(onPage: page, self.redoClearedMarksOnSession) else { continue }
+            clearUndoPages.append(page)
+            return true
+        }
+        return false
+    }
+
+    /// Global undo of the group move (T6b/S8) through the view alone: the
+    /// newest move this view performed, on the page it happened on, with the
+    /// same skip-stale rule as the clear side.
+    @discardableResult
+    override func undoBatchMove() -> Bool {
+        while let page = batchUndoPages.popLast() {
+            guard borrowSession(onPage: page, self.undoBatchMoveOnSession) else { continue }
+            batchRedoPages.append(page)
+            return true
+        }
+        return false
+    }
+
+    /// Global redo of the group move (T6b/S8) through the view alone: the
+    /// newest undone move, back onto the page it happened on.
+    @discardableResult
+    override func redoBatchMove() -> Bool {
+        while let page = batchRedoPages.popLast() {
+            guard borrowSession(onPage: page, self.redoBatchMoveOnSession) else { continue }
+            batchUndoPages.append(page)
+            return true
+        }
+        return false
+    }
+
+    /// Remaps the view's own page records through a structural page change,
+    /// the same mapping the controller applies to its entries; records whose
+    /// page no longer exists leave the stack safely.
+    private func remapRecords(_ pages: inout [Int], mapping: (Int) -> Int?) {
+        pages = pages.compactMap(mapping)
     }
 
     // MARK: - Gesture cursors (S3)

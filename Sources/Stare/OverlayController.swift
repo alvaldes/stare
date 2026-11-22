@@ -37,18 +37,44 @@ enum CaptureFile {
 /// in one step (the Escape clear, T4/S5) — one undo step, not one per mark.
 private enum HistoryEntry {
     case mark(displayID: CGDirectDisplayID, strokeID: UUID)
-    case clear(displayID: CGDirectDisplayID)
+    /// `page` is the index of the whiteboard page the clear happened on — how
+    /// the entry remembers its page (T4/S5). nil on the plain overlay, which
+    /// has no pages: there the entry routes to the display's own session.
+    /// The index is kept in step with structural page changes by the
+    /// controller's remap (see `remappingPage`), so it still names the same
+    /// page after pages are deleted or reordered.
+    case clear(displayID: CGDirectDisplayID, page: Int?)
     /// A group move (T6b/S8): every mark of one display's multi-selection
     /// moved together in one drag — ONE undo step, never one per mark, the
-    /// same batch routing the clear entry keeps.
-    case batchMove(displayID: CGDirectDisplayID)
+    /// same batch routing the clear entry keeps. `page` works exactly like
+    /// the clear entry's: the page the move happened on, nil on the overlay.
+    case batchMove(displayID: CGDirectDisplayID, page: Int?)
 
     /// The display the entry routes to.
     var owningDisplayID: CGDirectDisplayID {
         switch self {
         case let .mark(displayID, _): return displayID
-        case let .clear(displayID): return displayID
-        case let .batchMove(displayID): return displayID
+        case let .clear(displayID, _): return displayID
+        case let .batchMove(displayID, _): return displayID
+        }
+    }
+
+    /// Follows a structural page change of one display: this display's
+    /// page-carrying entries take the page's new index, and an entry whose
+    /// page no longer exists — the page was deleted (⌘⌫) — comes back nil and
+    /// leaves the history, so a popped entry can never land on a neighbour's
+    /// slot and mutate another page. Mark entries carry no page and any other
+    /// display's entries are returned unchanged.
+    func remappingPage(displayID: CGDirectDisplayID, mapping: (Int) -> Int?) -> HistoryEntry? {
+        switch self {
+        case .mark:
+            return self
+        case let .clear(id, page):
+            guard id == displayID, let page, let moved = mapping(page) else { return self }
+            return .clear(displayID: id, page: moved)
+        case let .batchMove(id, page):
+            guard id == displayID, let page, let moved = mapping(page) else { return self }
+            return .batchMove(displayID: id, page: moved)
         }
     }
 
@@ -60,8 +86,8 @@ private enum HistoryEntry {
     func isWipedByHardClear(displayID: CGDirectDisplayID, clearedIDs: Set<UUID>) -> Bool {
         switch self {
         case let .mark(id, strokeID): return id == displayID && clearedIDs.contains(strokeID)
-        case let .clear(id): return id == displayID
-        case let .batchMove(id): return id == displayID
+        case let .clear(id, _): return id == displayID
+        case let .batchMove(id, _): return id == displayID
         }
     }
 
@@ -908,12 +934,14 @@ final class OverlayController {
             historyOrder.append(.mark(displayID: displayID, strokeID: stroke.id))
             redoOrder.removeAll()
         }
-        view.onBatchTransform = { [weak self] strokes in
-            guard let self else { return }
+        view.onBatchTransform = { [weak self, weak view] strokes in
+            guard let self, let view else { return }
             // The group move (T6b/S8) is ONE global-history entry: ⌘Z pops it
             // and the owning view's batch journal restores every mark, ⇧⌘Z
             // moves them all again. The session forked its redo journal too.
-            historyOrder.append(.batchMove(displayID: displayID))
+            // The entry carries the page the move happened on (nil on the
+            // overlay), so the undo reaches that page's journal.
+            historyOrder.append(.batchMove(displayID: displayID, page: view.historyPage))
             redoOrder.removeAll()
         }
         view.onDelete = { [weak self] id in
@@ -934,7 +962,10 @@ final class OverlayController {
             // eraser, so the redo history forks; an empty layer is a no-op
             // that adds no history step.
             guard view.clearForUndo() else { return }
-            historyOrder.append(.clear(displayID: displayID))
+            // The entry carries the page the clear happened on (the view's
+            // current page, nil on the plain overlay), so the popped entry
+            // reaches that page's session whatever page is presented then.
+            historyOrder.append(.clear(displayID: displayID, page: view.historyPage))
             redoOrder.removeAll()
         }
         view.onErase = { [weak self] ids in
@@ -1046,8 +1077,24 @@ final class OverlayController {
             canvas.boardView?.onPageChanged = { [weak self] in
                 self?.syncBoardIndicator(for: displayID)
             }
+            // Structural page changes (⌘⌫ delete, ⌥← ⌥→ reorder) also feed
+            // the global history: page-carrying entries follow their pages
+            // instead of sliding onto a neighbour's index.
+            canvas.boardView?.onPageStructureChanged = { [weak self] mapping in
+                self?.remapHistoryPages(displayID: displayID, mapping: mapping)
+            }
             boardCanvases[displayID] = canvas
         }
+    }
+
+    /// Keeps the page-carrying entries of one display on the pages they name:
+    /// a structural page change (⌘⌫ delete, ⌥← ⌥→ reorder) reports its
+    /// old→new index mapping, entries whose page moved follow it, and entries
+    /// whose page no longer exists leave the history safely — undo and redo
+    /// skip them instead of landing on another page's slot (T4/S5, T6b/S8).
+    private func remapHistoryPages(displayID: CGDirectDisplayID, mapping: (Int) -> Int?) {
+        historyOrder = historyOrder.compactMap { $0.remappingPage(displayID: displayID, mapping: mapping) }
+        redoOrder = redoOrder.compactMap { $0.remappingPage(displayID: displayID, mapping: mapping) }
     }
 
     /// The toolbar's ‹ › indicator follows the display the pointer is on, since
@@ -1209,20 +1256,48 @@ final class DisplayCanvas {
 
     /// Routes one global-history entry against this display's session: a
     /// single mark (draw or transform), the batch the Escape clear took
-    /// away (T4/S5), or the batch a group move transformed (T6b/S8).
+    /// away (T4/S5), or the batch a group move transformed (T6b/S8). An
+    /// entry that carries a page routes to that page's session (see
+    /// WhiteboardView's `onPage` variants) — never to the presented page.
+    /// A false return leaves the entry to the controller's pop loop, which
+    /// skips it safely; that is the routing for every staleness case:
+    /// - an entry whose page index the board no longer has (the board was
+    ///   rebuilt with different pages, or a page was deleted without the
+    ///   controller's remap, which cannot happen through the view's own ops),
+    /// - an entry whose page the remap mapped away (page deleted, ⌘⌫),
+    /// - an entry whose page the controller's hard clear already purged
+    ///   (`isWipedByHardClear`) — those never reach here at all,
+    /// - an entry whose named op is no longer the page journal's newest live
+    ///   one — the session's own guard refuses it.
     fileprivate func undo(entry: HistoryEntry) -> Bool {
         switch entry {
         case let .mark(_, id): return undoMark(id: id)
-        case .clear: return view.undoClearedMarks()
-        case .batchMove: return view.undoBatchMove()
+        case let .clear(_, page):
+            guard let page, let boardView = whiteboardView(forPage: page) else { return view.undoClearedMarks() }
+            return boardView.undoClearedMarks(onPage: page)
+        case let .batchMove(_, page):
+            guard let page, let boardView = whiteboardView(forPage: page) else { return view.undoBatchMove() }
+            return boardView.undoBatchMove(onPage: page)
         }
     }
 
     fileprivate func redo(entry: HistoryEntry) -> Bool {
         switch entry {
         case let .mark(_, id): return redoMark(id: id)
-        case .clear: return view.redoClearedMarks()
-        case .batchMove: return view.redoBatchMove()
+        case let .clear(_, page):
+            guard let page, let boardView = whiteboardView(forPage: page) else { return view.redoClearedMarks() }
+            return boardView.redoClearedMarks(onPage: page)
+        case let .batchMove(_, page):
+            guard let page, let boardView = whiteboardView(forPage: page) else { return view.redoBatchMove() }
+            return boardView.redoBatchMove(onPage: page)
         }
+    }
+
+    /// The whiteboard view a page-carrying entry routes through, or nil:
+    /// nil when this canvas is not a whiteboard — the plain overlay's
+    /// entries carry no page, and both cases act on the view's own session
+    /// exactly as they always have.
+    fileprivate func whiteboardView(forPage page: Int?) -> WhiteboardView? {
+        view as? WhiteboardView
     }
 }

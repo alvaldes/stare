@@ -142,6 +142,12 @@ enum SelfTest {
         // board canvas and its view.
         report.append(contentsOf: boardReport())
 
+        // Board history across pages (T4/S5, T6b/S8): a real controller with
+        // the real global history — the clear on each page is ONE undoable
+        // step of that page, reached from either page, and a deleted page's
+        // entry leaves the history instead of falling onto a neighbour.
+        report.append(contentsOf: boardHistoryReport())
+
         // Board pages (T12/S9): delete, reorder, index select and pan reset
         // through the real view path.
         report.append(contentsOf: boardPagesReport())
@@ -727,6 +733,121 @@ enum SelfTest {
         panel.orderOut(nil)
         let passed = page1Ok && page2Ok && captureOk && panOk && inherited && board.count == 2
         report.append("board result=\(passed ? "PASS" : "FAIL")")
+        return report
+    }
+
+    // MARK: - Board history across pages (T4/S5, T6b/S8)
+
+    /// The two-page round trip through a real controller: the Escape clear on
+    /// each page is ONE undoable step carried by the page it happened on, so
+    /// ⌘Z from page 1 restores page 2's clear and the second ⌘Z restores
+    /// page 1's, ⇧⌘Z clears them again in reverse from either page, and a
+    /// page delete sends that page's entries out of the history while the
+    /// next entry still undoes. Driven through the real views — panel events,
+    /// the views' key handling and the controller's own wiring — never by
+    /// calling a journal method directly.
+    private static func boardHistoryReport() -> [String] {
+        var report: [String] = []
+        guard !NSScreen.screens.isEmpty else {
+            report.append("FAIL: board history no screens")
+            return report
+        }
+        let controller = OverlayController(captureService: CaptureService())
+        controller.state.tool = .pen
+        controller.state.ink = .blue
+        controller.toggleBoard()
+        guard controller.isBoardActive,
+              let view = controller.selfTestViews.first as? WhiteboardView,
+              let panel = view.window else {
+            report.append("FAIL: board history canvas could not be created")
+            controller.toggleBoard()
+            return report
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        let board = view.board
+
+        func key(_ view: NSView, keyCode: UInt16, characters: String, modifiers: NSEvent.ModifierFlags = []) {
+            guard let event = NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: modifiers,
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: 0,
+                context: nil,
+                characters: characters,
+                charactersIgnoringModifiers: characters,
+                isARepeat: false,
+                keyCode: keyCode
+            ) else { return }
+            view.keyDown(with: event)
+        }
+        func escape(_ view: OverlayView) { key(view, keyCode: 53, characters: "\u{1B}") }
+        func undo(_ view: OverlayView) { key(view, keyCode: 6, characters: "z", modifiers: .command) }
+        func redo(_ view: OverlayView) { key(view, keyCode: 6, characters: "z", modifiers: [.command, .shift]) }
+
+        // Draw and clear on page 1, then draw and clear on page 2, each
+        // through the real Escape path the controller wires into ONE
+        // page-carrying history entry.
+        sendDrag(to: panel, from: CGPoint(x: 150, y: 150), to: CGPoint(x: 350, y: 190))
+        let drewPage1 = board.pages[0].session.strokes.count == 1
+        escape(view)
+        let clearedPage1 = drewPage1 && board.pages[0].session.strokes.isEmpty && board.pages[0].session.canUndoClear
+        view.selectNextPage()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        sendDrag(to: panel, from: CGPoint(x: 400, y: 300), to: CGPoint(x: 600, y: 340))
+        let drewPage2 = board.pages[1].session.strokes.count == 1
+        escape(view)
+        let clearedPage2 = drewPage2 && board.pages[1].session.strokes.isEmpty && board.pages[1].session.canUndoClear
+
+        // Back on page 1: ⌘Z reaches page 2's clear — the newest step — and
+        // the second ⌘Z reaches page 1's. Neither page ever takes the other's
+        // marks.
+        view.selectPreviousPage()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        undo(view)
+        let undo1 = board.pages[1].session.strokes.count == 1 && board.pages[0].session.strokes.count == 0
+        undo(view)
+        let undo2 = board.pages[0].session.strokes.count == 1 && board.pages[1].session.strokes.count == 1
+
+        // ⇧⌘Z clears page 1 again (from page 2 presented), then page 2 after
+        // the switch back — the redo order mirrors the undo order.
+        redo(view)
+        let redo1 = board.pages[0].session.strokes.count == 0 && board.pages[1].session.strokes.count == 1
+        view.selectNextPage()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        redo(view)
+        let redo2 = board.pages[0].session.strokes.count == 0 && board.pages[1].session.strokes.count == 0
+
+        // The presented page is removed (⌘⌫): the clear that happened there
+        // leaves the history through the controller's remap.
+        view.deleteCurrentPage()
+        let deleted = board.count == 1
+
+        // The surviving entry still undoes: page 1's clear is restored on the
+        // page it happened on.
+        undo(view)
+        let undoAfterDelete = board.pages[0].session.strokes.count == 1
+
+        // Undo keeps walking the real history: the draw itself comes up next
+        // and page 1 empties again. What can never happen is the removed
+        // page's clear coming back anywhere: one more undo has nothing to do
+        // and the single page stays empty.
+        undo(view)
+        let drawUndone = board.pages[0].session.strokes.count == 0
+        undo(view)
+        let nothingLeft = board.pages[0].session.strokes.count == 0 && board.count == 1
+
+        controller.toggleBoard()
+        let passed = clearedPage1 && clearedPage2 && undo1 && undo2 && redo1 && redo2
+            && deleted && undoAfterDelete && drawUndone && nothingLeft
+        report.append(
+            "board history cleared[p1=\(clearedPage1) p2=\(clearedPage2)] "
+                + "undo[p2=\(undo1) p1=\(undo2)] redo[p1=\(redo1) p2=\(redo2)] "
+                + "delete-page deleted=\(deleted) next-undo=\(undoAfterDelete) "
+                + "drawUndone=\(drawUndone) nothingLeft=\(nothingLeft) "
+                + "ok=\(passed)"
+        )
+        report.append("board history result=\(passed ? "PASS" : "FAIL")")
         return report
     }
 

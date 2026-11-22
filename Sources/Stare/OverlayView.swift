@@ -52,6 +52,13 @@ class OverlayView: NSView {
     /// its pages stay authoritative. Nil in the plain overlay.
     var boardSink: ((DrawingSession) -> Void)?
 
+    /// The page this display's edits belong to in the global history: nil on
+    /// the plain overlay, which has no pages. The whiteboard's current page
+    /// index rides on the clear and batch-move entries (T4/S5, T6b/S8), so
+    /// undo and redo reach the page the change happened on instead of
+    /// whichever page the display happens to present when the entry pops.
+    var historyPage: Int? { nil }
+
     /// Page-space hook: view space minus this offset equals page space, so
     /// stroke points stored in page space keep their position on screen. Zero
     /// in the plain overlay, the current page's offset on the whiteboard.
@@ -92,6 +99,14 @@ class OverlayView: NSView {
     /// Notifies the whiteboard bridge that the session changed.
     func noteSessionChanged() {
         boardSink?(session)
+    }
+
+    /// Reports a committed batch transform (T6b/S8). A hook rather than the
+    /// property itself so the whiteboard can record the page the move
+    /// happened on before the report leaves; the base path is exactly the
+    /// controller's wiring call.
+    func noteBatchCommitted(_ strokes: [Stroke]) {
+        onBatchTransform?(strokes)
     }
 
     static let textFont = NSFont.systemFont(ofSize: 20, weight: .regular)
@@ -359,6 +374,14 @@ class OverlayView: NSView {
         guard kept != selectedMarkIDs else { return }
         selectedMarkIDs = kept
         needsDisplay = true
+    }
+
+    /// Restores a selection snapshot taken before a page-routed history op
+    /// borrowed another page's session (T4/S5, T6b/S8): the presented page's
+    /// selection must survive the borrow untouched, and the setter is kept
+    /// controllable here instead of being opened up wholesale.
+    func restoreSelection(_ ids: [UUID]) {
+        selectedMarkIDs = ids
     }
 
     /// Global undo of the Escape clear (T4/S5): the batch the clear removed
@@ -947,7 +970,7 @@ class OverlayView: NSView {
             }
             noteBlurInterestChanged()
             noteSessionChanged()
-            onBatchTransform?(groupPreviews)
+            noteBatchCommitted(groupPreviews)
             Diag.log("transform batch count=\(groupPreviews.count)")
             return
         }
