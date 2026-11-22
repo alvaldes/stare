@@ -284,9 +284,22 @@ struct EditorCropRule {
     }
 
     /// Commits the drag onto the pixel grid without letting the snap grow
-    /// past the image.
+    /// past the image, and keeps the region takeable even when the clamp
+    /// squeezed it below the smallest side: the minimum is re-applied here
+    /// so a caller cannot commit an unusable region by passing one (S7).
     static func snapped(_ region: CGRect, in bounds: CGRect) -> CGRect {
-        clamped(region.integral, in: bounds)
+        var result = clamped(region.integral, in: bounds)
+        if result.width < minimumSide, bounds.width >= minimumSide {
+            let x = min(max(result.minX, bounds.minX), bounds.maxX - minimumSide)
+            result.origin.x = x
+            result.size.width = minimumSide
+        }
+        if result.height < minimumSide, bounds.height >= minimumSide {
+            let y = min(max(result.minY, bounds.minY), bounds.maxY - minimumSide)
+            result.origin.y = y
+            result.size.height = minimumSide
+        }
+        return result
     }
 
     /// Whether the region is big enough to apply.
@@ -427,23 +440,29 @@ struct EditorCropRecord: Equatable {
     }
 
     /// The drawing session was hard-cleared: its history is gone, so the
-    /// mark steps leave the journal. The crops keep their place and the
-    /// redo targets stay aligned with them.
+    /// mark steps leave the journal. The crops keep their place and the redo
+    /// targets stay aligned with them — by crop-entry position, never by
+    /// position in `undone`, which mark entries shift (S7).
     mutating func clearMarkHistory() {
         var survivingTargets: [CGRect?] = []
-        for (index, step) in undone.enumerated() {
-            if case .crop = step {
-                survivingTargets.append(redoTargets[index])
+        var targetIndex = 0
+        for step in undone {
+            guard case .crop = step else { continue }
+            if targetIndex < redoTargets.count {
+                survivingTargets.append(redoTargets[targetIndex])
             }
+            targetIndex += 1
         }
         redoTargets = survivingTargets
-        applied = applied.filter {
-            if case .marks = $0 { return false }
-            return true
+        // `removeAll(where:)` drops what the predicate accepts, so it is the
+        // marks that leave, not the crops.
+        applied.removeAll {
+            if case .marks = $0 { return true }
+            return false
         }
-        undone = undone.filter {
-            if case .marks = $0 { return false }
-            return true
+        undone.removeAll {
+            if case .marks = $0 { return true }
+            return false
         }
     }
 }
@@ -673,8 +692,16 @@ final class CaptureEditorCanvas: NSView {
             finishCropGesture()
             return
         }
+        let before = session
         session.extend(to: convert(event.locationInWindow, from: nil))
         session.commit()
+        // A committed mark is an edit in the shared journal (S7): ⌘Z must pop
+        // it before any crop that came before it. A commit that only threw a
+        // stray active mark away (a degenerate stroke) left the marks alone,
+        // so the journal stays silent about it.
+        if session != before {
+            record.noteMark()
+        }
         needsDisplay = true
     }
 

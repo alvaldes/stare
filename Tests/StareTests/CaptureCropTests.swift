@@ -152,6 +152,25 @@ final class CaptureCropTests: XCTestCase {
         XCTAssertEqual(atEdge.width, 800)
     }
 
+    /// A6: the snap re-applies the smallest side itself, so a region the
+    /// clamp squeezed below the minimum comes back takeable and in bounds
+    /// — the next caller can trust it without pre-clamping.
+    func testSnappingReappliesTheMinimumSideToATinyRegion() {
+        let tiny = EditorCropRule.snapped(CGRect(x: 10, y: 10, width: 5, height: 5), in: imageBounds)
+        XCTAssertTrue(EditorCropRule.isTakeable(tiny), "the snapped region stays takeable")
+        XCTAssertTrue(imageBounds.contains(tiny))
+        XCTAssertEqual(tiny, CGRect(x: 10, y: 10, width: 8, height: 8))
+    }
+
+    /// A6: a region hanging past the borders gets clamped to less than the
+    /// minimum; the snap must grow it back without leaving the image.
+    func testSnappingGrowsAClampSqueezedRegionBackToTheMinimumInsideTheImage() {
+        let squeezed = EditorCropRule.snapped(CGRect(x: 795, y: 595, width: 30, height: 30), in: imageBounds)
+        XCTAssertTrue(EditorCropRule.isTakeable(squeezed))
+        XCTAssertTrue(imageBounds.contains(squeezed), "\(squeezed) must stay inside \(imageBounds)")
+        XCTAssertEqual(squeezed, CGRect(x: 792, y: 592, width: 8, height: 8))
+    }
+
     // MARK: - Handle hit-testing (view space)
 
     func testHandleHitFindsCornersEdgesAndNothingFarAway() {
@@ -389,5 +408,98 @@ final class CaptureCropTests: XCTestCase {
         XCTAssertEqual(record.region, CGRect(x: 0, y: 0, width: 400, height: 300))
         XCTAssertTrue(record.undo() != nil)
         XCTAssertNil(record.region)
+    }
+
+    /// A2: `redoTargets` is aligned with the crop entries of `undone` in
+    /// order, never with the position in `undone` — mark steps shift that.
+    /// Clearing a mixed journal must keep every crop's own redo target and
+    /// never index past the array.
+    func testClearingAMixedJournalKeepsEachCropItsOwnRedoTarget() {
+        var record = EditorCropRecord()
+        let first = CGRect(x: 0, y: 0, width: 400, height: 300)
+        let second = CGRect(x: 50, y: 50, width: 200, height: 150)
+        record.crop(to: first)
+        record.noteMark()
+        record.crop(to: second)
+        record.noteMark()
+        // Undo past both journal entries: the newest mark, the newest crop,
+        // then the older mark — undone = [marks, crop(second), marks].
+        record.undo()
+        record.undo()
+        record.undo()
+        XCTAssertEqual(record.region, first)
+
+        record.clearMarkHistory()
+        XCTAssertEqual(record.region, first, "the crops keep their place through the clear")
+
+        // Redo replays the surviving crop with ITS OWN target.
+        guard case .crop = record.redo() else {
+            return XCTFail("the crop step survives the clear, so redo must replay one")
+        }
+        XCTAssertEqual(record.region, second, "the surviving crop replays at its own region, never a shifted target")
+        XCTAssertFalse(record.canRedo)
+
+        // And the reverse walk re-routes them the same way, never trapping.
+        guard case .crop = record.undo() else {
+            return XCTFail("the replayed crop is undoable again")
+        }
+        XCTAssertEqual(record.region, first, "it restores the region its step names")
+        guard case .crop = record.redo() else {
+            return XCTFail("the crop is redoable again too")
+        }
+        XCTAssertEqual(record.region, second, "the round trip is stable after the clear")
+        guard case .crop = record.undo() else {
+            return XCTFail("the replayed crop is undoable again")
+        }
+        XCTAssertEqual(record.region, first)
+        guard case .crop = record.undo() else {
+            return XCTFail("the first crop is the oldest applied step")
+        }
+        XCTAssertNil(record.region, "undoing the first crop returns to the uncropped capture")
+        XCTAssertFalse(record.canUndo)
+    }
+
+    /// A2, the other order: undoing into a cleared mixed journal must never
+    /// trap either, and redo from there still lands every crop where its own
+    /// step names.
+    func testClearingAMixedJournalSurvivesUndoBeforeRedoInEveryOrder() {
+        var record = EditorCropRecord()
+        let first = CGRect(x: 0, y: 0, width: 400, height: 300)
+        let second = CGRect(x: 50, y: 50, width: 200, height: 150)
+        record.crop(to: first)
+        record.noteMark()
+        record.crop(to: second)
+        record.noteMark()
+        record.undo()
+        record.undo()
+        XCTAssertEqual(record.region, first)
+        record.clearMarkHistory()
+
+        // Undo the surviving step (the clear took the marks out of the way):
+        // the second crop step sits on the redo side, so the newest applied
+        // crop is the FIRST one — ⌘Z returns to the uncropped capture.
+        guard case .crop = record.undo() else {
+            return XCTFail("the surviving first crop is the newest applied step")
+        }
+        XCTAssertNil(record.region, "the first crop restores the uncropped capture")
+        XCTAssertTrue(record.canRedo)
+
+        // Redo from here replays the first crop at its own region, then the
+        // round trip is stable.
+        guard case .crop = record.redo() else {
+            return XCTFail("the cleared journal still holds the crop on the redo side")
+        }
+        XCTAssertEqual(record.region, first, "the first crop replays at its own region")
+        record.undo()
+        record.redo()
+        XCTAssertEqual(record.region, first, "the round trip is stable after the clear")
+
+        // And the crop the clear left on the redo side replays at its OWN
+        // region too, never a shifted target.
+        guard case .crop = record.redo() else {
+            return XCTFail("the cleared journal keeps the other crop redoable")
+        }
+        XCTAssertEqual(record.region, second, "the redo-side crop replays at its own region")
+        XCTAssertFalse(record.canRedo)
     }
 }
