@@ -103,6 +103,16 @@ final class EditorState: ObservableObject {
     @Published var toolbarBorder: ToolbarBorder {
         didSet { writeIfNotSyncing { $0.toolbarBorder = toolbarBorder } }
     }
+    /// Mirror of the drawing toolbar's tool layout (T8/S10): the persisted
+    /// order and visibility the bar renders. The Settings pane writes the
+    /// model, this state mirrors it, and the toolbar's tool section follows;
+    /// detached state (capture editor, selftest) keeps the shipped
+    /// `.standard` layout — the capture editor passes its own fixed palette
+    /// anyway, and a keyboard shortcut is not the bar, so a hidden tool stays
+    /// shortcut-armed everywhere.
+    @Published var toolbarTools: ToolbarToolLayout = .standard {
+        didSet { writeIfNotSyncing { $0.toolbarTools = toolbarTools } }
+    }
     /// Mirror of the pointer highlight diameter, in points.
     @Published var pointerSize: CGFloat {
         didSet { writeIfNotSyncing { $0.pointer.size = Double(pointerSize) } }
@@ -239,6 +249,7 @@ final class EditorState: ObservableObject {
             let lifetime = MainActor.assumeIsolated { preferences.laserLifetime }
             let orientation = MainActor.assumeIsolated { preferences.toolbarOrientation }
             let border = MainActor.assumeIsolated { preferences.toolbarBorder }
+            let toolsLayout = MainActor.assumeIsolated { preferences.toolbarTools }
             let whiteboard = MainActor.assumeIsolated { preferences.whiteboard }
             pointerSize = CGFloat(style.size)
             pointerShape = style.preset == .squircle ? "squircle" : "circle"
@@ -259,6 +270,7 @@ final class EditorState: ObservableObject {
             laserLifetime = lifetime.rawValue
             toolbarOrientation = orientation
             toolbarBorder = border
+            toolbarTools = toolsLayout
             boardPageBackground = whiteboard.background.rawValue
             boardScope = whiteboard.scope.rawValue
             boardShowBorder = whiteboard.showsBorder
@@ -333,6 +345,9 @@ final class EditorState: ObservableObject {
         }.store(in: &preferenceCancellables)
         model.$toolbarBorder.dropFirst().sink { [weak self] value in
             self?.syncFromModel { $0.toolbarBorder = value }
+        }.store(in: &preferenceCancellables)
+        model.$toolbarTools.dropFirst().sink { [weak self] value in
+            self?.syncFromModel { $0.toolbarTools = value }
         }.store(in: &preferenceCancellables)
         model.$tool.dropFirst().sink { [weak self] value in
             self?.syncFromModel { $0.tool = value }

@@ -99,11 +99,22 @@ struct ToolbarView: View {
     /// and the editor bar never show it). Disabled while one page remains,
     /// since the board can never go empty.
     var onDeletePage: (() -> Void)? = nil
-    /// The tools the bar offers. Defaults to the full drawing palette; a
-    /// surface where some tools cannot work (the capture editor) offers a
-    /// filtered set, so no dead button is shown and no dead shortcut arms a
-    /// hidden tool.
-    var toolGroups: [[Tool]] = Tool.toolbarGroups
+    /// The tools the bar offers. Nil (the default) means the drawing toolbar:
+    /// the section follows the persisted tool layout (T8/S10) mirrored in the
+    /// state, so a Settings change re-lays the bar live. A non-nil value is a
+    /// fixed palette — the capture editor passes the tools that can work over
+    /// a still image, so no dead button is shown and the configurable layout
+    /// never touches that surface.
+    var toolGroups: [[Tool]]? = nil
+
+    /// The tool section the bar draws (T8/S10): a fixed palette when one is
+    /// passed, or the persisted layout's visible groups — exactly the stored
+    /// order with the hidden tools skipped, no gaps, no phantom items,
+    /// nothing duplicated. Exposed so the selftest can pin that the rendered
+    /// bar follows the configured layout without poking SwiftUI internals.
+    var toolSection: [[Tool]] {
+        toolGroups ?? state.toolbarTools.visibleGroups
+    }
 
     /// The fixed trailing items in the order the bar draws them (T3/S4): the
     /// `⠇⠇` grab handle sits directly after the close button. The array is
@@ -145,11 +156,11 @@ struct ToolbarView: View {
     }
 
     /// Everything the bar offers, in the same order both orientations draw:
-    /// tool groups, inks, crop/extra actions, page controls, then undo, redo,
-    /// clear, close and the gripper tail (T3/S4).
+    /// the configured tool groups (T8/S10), inks, crop/extra actions, page
+    /// controls, then undo, redo, clear, close and the gripper tail (T3/S4).
     @ViewBuilder
     private var barItems: some View {
-            ForEach(Array(toolGroups.enumerated()), id: \.offset) { index, group in
+            ForEach(Array(toolSection.enumerated()), id: \.offset) { index, group in
                 if index > 0 { divider }
                 ForEach(group) { tool in
                     toolButton(tool)

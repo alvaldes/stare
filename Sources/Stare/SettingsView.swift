@@ -276,6 +276,7 @@ private struct GeneralPane: View {
                     .labelsHidden()
                     .frame(width: 220)
                 )
+                toolbarToolsSection
                 Text("The bar moves to the new edge as soon as you pick, and right-clicking the ⠇⠇ handle always returns it there.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -297,6 +298,76 @@ private struct GeneralPane: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    // MARK: Toolbar tools (T8/S10)
+
+    /// The visibility and reorder list for the drawing toolbar's tools, in
+    /// the persisted order: one row per tool with a show/hide toggle and
+    /// up/down buttons, writing through the model so the bar updates live.
+    /// Hidden tools keep their keyboard shortcut, and the list refuses to
+    /// hide the last visible tool — the bar can never go empty.
+    private var toolbarToolsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Tools on the bar")
+                .font(.system(size: 13, weight: .semibold))
+            ForEach(model.toolbarTools.tools) { tool in
+                toolbarToolRow(tool)
+            }
+            Text(
+                "The bar draws the tools in this order; hidden tools keep their keyboard shortcut. "
+                    + "The last visible tool cannot be hidden, so the bar never goes empty."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    private func toolbarToolRow(_ tool: Tool) -> some View {
+        let layout = model.toolbarTools
+        let index = layout.tools.firstIndex(of: tool) ?? 0
+        let isVisible = !layout.hidden.contains(tool)
+        return HStack(spacing: 12) {
+            Image(systemName: tool.symbolName)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+            Text(tool.displayName)
+                .font(.system(size: 13))
+            Spacer()
+            HStack(spacing: 4) {
+                Button {
+                    model.toolbarTools = layout.moving(tool, by: -1)
+                } label: {
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 10, weight: .medium))
+                        .frame(width: 22, height: 20)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(index == 0)
+                .help(Text(verbatim: "Move \(tool.displayName) earlier"))
+                Button {
+                    model.toolbarTools = layout.moving(tool, by: 1)
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10, weight: .medium))
+                        .frame(width: 22, height: 20)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(index == layout.tools.count - 1)
+                .help(Text(verbatim: "Move \(tool.displayName) later"))
+                Toggle("", isOn: Binding(
+                    get: { !model.toolbarTools.hidden.contains(tool) },
+                    set: { model.toolbarTools = model.toolbarTools.setting(tool, isVisible: $0) }
+                ))
+                .labelsHidden()
+                .disabled(isVisible && layout.visibleTools.count == 1)
+                .help(Text(verbatim: "Show \(tool.displayName) on the bar"))
+            }
+        }
+        .padding(.vertical, 2)
     }
 
     // MARK: Startup (launch at login, T10/S6)

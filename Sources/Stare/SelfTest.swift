@@ -220,6 +220,33 @@ enum SelfTest {
                 + "ok=\(dockDefaults && dockAllInside)"
         )
 
+        // Palette tool layout (T8/S10): the bar follows the persisted tool
+        // layout — a custom order with a hidden tool — resolved by the exact
+        // `toolSection` the view draws and rendered through the real view
+        // path. The section must be the layout's visible groups, with no
+        // gaps, no phantom items and nothing duplicated.
+        let layoutState = EditorState()
+        let customLayout = ToolbarToolLayout.standard
+            .setting(.number, isVisible: false)
+            .moving(.eraser, by: -1)
+        layoutState.toolbarTools = customLayout
+        let layoutView = ToolbarView(state: layoutState, onUndo: {}, onRedo: {}, onClear: {}, onDone: {})
+        let layoutSection = layoutView.toolSection
+        let layoutSectionFollows = layoutSection == customLayout.visibleGroups
+        let layoutFlat = layoutSection.flatMap { $0 }
+        let layoutHidesExactlyNumber = !layoutFlat.contains(.number)
+            && Set(layoutFlat) == Set(Tool.allCases).subtracting([.number])
+            && layoutFlat.firstIndex(of: .eraser)! < layoutFlat.firstIndex(of: .laser)!
+        let layoutRendered = renderPalette(
+            appearanceName: NSAppearance.Name.aqua,
+            layout: customLayout,
+            to: "/tmp/stare-palette-configured.png"
+        )
+        report.append(
+            "palette layout sectionFollows=\(layoutSectionFollows) hidesExactlyNumber=\(layoutHidesExactlyNumber) "
+                + "rendered=\(layoutRendered) ok=\(layoutSectionFollows && layoutHidesExactlyNumber && layoutRendered)"
+        )
+
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
             let rendered = renderEditorChrome(appearanceName: appearance, to: "/tmp/stare-editor-\(name).png")
             report.append("editor chrome \(name) rendered=\(rendered)")
@@ -3040,17 +3067,20 @@ enum SelfTest {
     }
 
     /// Renders the drawing palette offscreen with a fixed appearance. The
-    /// orientation follows the T9/S12 preference so the vertical stack is
-    /// rendered through the same path the bar really draws.
+    /// orientation follows the T9/S12 preference and the tool section follows
+    /// the T8/S10 layout, so both configured shapes render through the same
+    /// path the bar really draws.
     private static func renderPalette(
         appearanceName: NSAppearance.Name,
         orientation: ToolbarOrientation = .horizontal,
+        layout: ToolbarToolLayout = .standard,
         to path: String
     ) -> Bool {
         let state = EditorState()
         state.tool = .arrow
         state.ink = .green
         state.toolbarOrientation = orientation
+        state.toolbarTools = layout
         let hosting = NSHostingView(
             rootView: ToolbarView(state: state, onUndo: {}, onRedo: {}, onClear: {}, onDone: {})
         )

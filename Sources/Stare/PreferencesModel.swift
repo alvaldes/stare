@@ -55,6 +55,11 @@ final class PreferencesModel: ObservableObject {
     @Published var toolbarBorder: ToolbarBorder {
         didSet { persist() }
     }
+    /// Mirror of the drawing toolbar's tool layout (T8/S10): which tools the
+    /// bar shows and in what order; writing it persists the whole blob.
+    @Published var toolbarTools: ToolbarToolLayout {
+        didSet { persist() }
+    }
     /// Mirror of the first-run flag; writing it persists the whole blob.
     @Published var hasCompletedOnboarding: Bool {
         didSet { persist() }
@@ -127,6 +132,7 @@ final class PreferencesModel: ObservableObject {
         self.laserLifetime = loaded.general.laserLifetime
         self.toolbarOrientation = loaded.general.toolbarOrientation
         self.toolbarBorder = loaded.general.toolbarBorder
+        self.toolbarTools = loaded.general.toolbarTools
         self.hasCompletedOnboarding = loaded.hasCompletedOnboarding
         self.tool = loaded.tool
         self.ink = loaded.ink
@@ -149,7 +155,8 @@ final class PreferencesModel: ObservableObject {
             palettePlacement: palettePlacement,
             laserLifetime: laserLifetime,
             toolbarOrientation: toolbarOrientation,
-            toolbarBorder: toolbarBorder
+            toolbarBorder: toolbarBorder,
+            toolbarTools: toolbarTools
         )
         preferences.hasCompletedOnboarding = hasCompletedOnboarding
         preferences.tool = tool

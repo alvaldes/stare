@@ -114,6 +114,147 @@ final class GeneralPreferencesTests: XCTestCase {
         XCTAssertEqual(try Self.decode("{}"), GeneralPreferences.standard)
     }
 
+    // MARK: Toolbar tool layout (T8/S10)
+
+    /// Shorthand for the stored layout the Settings pane and the toolbar read.
+    /// Hidden tools keep their place in `tools`, so hiding one can never make
+    /// it fall off and come back as if it were new.
+    private static func decodeLayout(_ json: String) throws -> ToolbarToolLayout {
+        try JSONDecoder().decode(ToolbarToolLayout.self, from: Data(json.utf8))
+    }
+
+    func testStandardToolbarLayoutReproducesTodaysBar() {
+        // The shipped layout is exactly the grouped bar the app has always
+        // drawn: same groups, same order, nothing hidden.
+        XCTAssertEqual(ToolbarToolLayout.standard.visibleGroups, Tool.toolbarGroups)
+        XCTAssertEqual(ToolbarToolLayout.standard.visibleTools, Tool.toolbarGroups.flatMap { $0 })
+        XCTAssertTrue(ToolbarToolLayout.standard.hidden.isEmpty)
+        XCTAssertEqual(GeneralPreferences.standard.toolbarTools, .standard)
+    }
+
+    func testHidingRemovesExactlyThatToolWithNoGapsOrDuplicates() {
+        let layout = ToolbarToolLayout.standard.setting(.number, isVisible: false)
+
+        // The hidden tool is gone from the bar but keeps its stored place,
+        // so re-showing it does not shuffle the order.
+        XCTAssertEqual(layout.visibleTools, Tool.toolbarGroups.flatMap { $0 }.filter { $0 != .number })
+        XCTAssertTrue(layout.tools.contains(.number), "a hidden tool keeps its place in the stored order")
+        XCTAssertEqual(layout.visibleGroups.flatMap { $0 }, layout.visibleTools)
+    }
+
+    func testHidingTheLastVisibleToolIsRefused() {
+        // The bar can never go empty: hiding the one visible tool leaves the
+        // layout exactly as it was.
+        var only = ToolbarToolLayout.standard
+        for tool in ToolbarToolLayout.defaultOrder where tool != .pen {
+            only = only.setting(tool, isVisible: false)
+        }
+        XCTAssertEqual(only.visibleTools, [.pen])
+
+        XCTAssertEqual(only.setting(.pen, isVisible: false), only)
+    }
+
+    func testShowingAHidingToolPutsItBackWithoutShuffling() {
+        let hiddenBar = ToolbarToolLayout.standard.setting(.laser, isVisible: false)
+        XCTAssertEqual(hiddenBar.setting(.laser, isVisible: true), ToolbarToolLayout.standard)
+    }
+
+    func testMovingSwapsNeighbours() {
+        // One step up swaps with the tool before it.
+        let penMovedUp = [
+            Tool.pen, .select, .highlighter, .line, .arrow, .rectangle, .ellipse,
+            .text, .number, .blur, .laser, .eraser,
+        ]
+        XCTAssertEqual(ToolbarToolLayout.standard.moving(.pen, by: -1).tools, penMovedUp)
+    }
+
+    func testMovingUpSwapsTheToolIntoThePreviousSlot() {
+        XCTAssertEqual(ToolbarToolLayout.standard.moving(.blur, by: -1).visibleTools, [
+            .select, .pen, .highlighter, .line, .arrow, .rectangle, .ellipse,
+            .text, .blur, .number, .laser, .eraser,
+        ])
+    }
+
+    func testMovingDownSwapsTheToolIntoTheNextSlot() {
+        XCTAssertEqual(ToolbarToolLayout.standard.moving(.select, by: 1).visibleTools, [
+            .pen, .select, .highlighter, .line, .arrow, .rectangle, .ellipse,
+            .text, .number, .blur, .laser, .eraser,
+        ])
+    }
+
+    func testMovingClampsAtBothEnds() {
+        XCTAssertEqual(ToolbarToolLayout.standard.moving(.select, by: -1), ToolbarToolLayout.standard)
+        XCTAssertEqual(ToolbarToolLayout.standard.moving(.eraser, by: 5), ToolbarToolLayout.standard)
+    }
+
+    func testUnknownStoredIdentifiersAreDropped() throws {
+        let layout = try Self.decodeLayout(
+            #"{"tools":["pen","galaxy","select"],"hidden":[]}"#
+        )
+        // The two known tools keep their stored order; everything the list
+        // never mentioned is appended in the documented default order.
+        XCTAssertEqual(layout.visibleTools, [
+            .pen, .select, .highlighter, .line, .arrow, .rectangle, .ellipse,
+            .text, .number, .blur, .laser, .eraser,
+        ])
+    }
+
+    func testStoredListMissingANewlyAddedToolAppendsItSoItIsNeverInvisible() throws {
+        // A future build adds a tool; the stored list predates it. The new
+        // tool is appended at the end in the documented default order instead
+        // of being silently invisible.
+        let layout = try Self.decodeLayout(
+            #"{"tools":["select","pen","blur"],"hidden":["laser"]}"#
+        )
+        XCTAssertEqual(layout.hidden, [.laser])
+        let lastAppended = ToolbarToolLayout.defaultOrder.filter { ![.select, .pen, .blur, .laser].contains($0) }
+        XCTAssertEqual(Array(layout.visibleTools.dropFirst(3)), lastAppended)
+        XCTAssertFalse(layout.visibleTools.isEmpty)
+        XCTAssertTrue(layout.visibleTools.contains(.highlighter))
+    }
+
+    func testDuplicateStoredEntriesCollapseToTheirFirstOccurrence() throws {
+        let layout = try Self.decodeLayout(#"{"tools":["pen","select","pen"],"hidden":[]}"#)
+        XCTAssertEqual(layout.tools.filter { $0 == .pen }.count, 1)
+        XCTAssertEqual(layout.visibleTools.first, .pen)
+        XCTAssertEqual(Set(layout.visibleTools), Set(Tool.allCases))
+    }
+
+    func testEmptyStoredListFallsBackToTheDefaultInsteadOfAnEmptyBar() throws {
+        XCTAssertEqual(try Self.decodeLayout(#"{"tools":[],"hidden":[]}"#), .standard)
+        // Missing fields (an older blob) are the shipped layout too.
+        XCTAssertEqual(try Self.decodeLayout("{}"), .standard)
+        let general = try Self.decode(
+            #"{"toolbarOrientation":"vertical","toolbarTools":{"tools":[],"hidden":[]}}"#
+        )
+        XCTAssertEqual(general.toolbarTools, .standard)
+        XCTAssertEqual(general.toolbarOrientation, .vertical)
+    }
+
+    func testStoredBarThatHidesEveryToolLosesTheHiddenSet() throws {
+        // A corrupt document hiding everything is refused: the hidden set is
+        // dropped, the stored order keeps everything visible.
+        let layout = try Self.decodeLayout(
+            #"{"tools":["select","pen","highlighter","line","arrow","rectangle","ellipse","text","number","blur","laser","eraser"],"hidden":["select","pen","highlighter","line","arrow","rectangle","ellipse","text","number","blur","laser","eraser"]}"#
+        )
+        XCTAssertTrue(layout.hidden.isEmpty)
+        XCTAssertEqual(layout.visibleTools, ToolbarToolLayout.defaultOrder)
+    }
+
+    func testToolbarLayoutRoundTripsThroughGeneralPreferences() throws {
+        var general = GeneralPreferences.standard
+        general.toolbarTools = ToolbarToolLayout.standard
+            .setting(.number, isVisible: false)
+            .moving(.eraser, by: -1)
+
+        let data = try JSONEncoder().encode(general)
+        let decoded = try JSONDecoder().decode(GeneralPreferences.self, from: data)
+        XCTAssertEqual(decoded, general)
+        // And a hidden choice survives a round trip: the hidden tool stays
+        // hidden across launches.
+        XCTAssertFalse(decoded.toolbarTools.visibleTools.contains(.number))
+    }
+
     // MARK: Round trip
 
     func testRoundTripsEveryValue() throws {
