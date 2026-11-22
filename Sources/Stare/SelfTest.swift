@@ -174,6 +174,16 @@ enum SelfTest {
             report.append("palette \(name) rendered=\(rendered)")
         }
 
+        // Palette gripper (T3/S4): the `⠇⠇` handle is the item right after
+        // the close button — the order the bar tail maps over — and its reset
+        // targets the fresh-install anchor the app persists.
+        let gripperAfterClose = ToolbarView.trailingItems.suffix(2) == [.close, .gripper]
+        let gripperAnchorsAtFreshInstall = ToolbarGripperSpec.defaultAnchor == CGPoint(x: 0.5, y: 0.08)
+        report.append(
+            "palette gripper afterClose=\(gripperAfterClose) freshInstallAnchor=\(gripperAnchorsAtFreshInstall) "
+                + "ok=\(gripperAfterClose && gripperAnchorsAtFreshInstall)"
+        )
+
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
             let rendered = renderEditorChrome(appearanceName: appearance, to: "/tmp/stare-editor-\(name).png")
             report.append("editor chrome \(name) rendered=\(rendered)")

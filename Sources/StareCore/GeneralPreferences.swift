@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 /// Where the drawing overlay draws: every display or only the one under the
 /// pointer. Raw values are what the versioned preferences blob persists and
@@ -62,6 +63,23 @@ public enum LaserLifetime: Double, Codable, CaseIterable, Sendable {
         case .five: "5 seconds"
         }
     }
+}
+
+/// The palette's grab handle, the `⠇⠇` pattern after the close button (S4).
+/// The pure values the toolbar view draws from, written here so the tests can
+/// pin the layout and the reset target without spinning up AppKit.
+public enum ToolbarGripperSpec {
+    /// Dot columns the gripper draws — the owner's `⠇⠇` is two columns.
+    public static let dotColumns = 2
+    /// Dot rows the gripper draws — three stacked dots per column.
+    public static let dotRows = 3
+    /// Tooltip naming both actions: dragging the handle moves the bar, and
+    /// right-clicking it resets the bar's position.
+    public static let tooltip = "Drag to move · Right-click to reset position"
+    /// The relative screen anchor a fresh install opens at — the reset target
+    /// (S4): right-clicking the gripper clears the saved anchor, so the bar
+    /// lands back here.
+    public static let defaultAnchor = CGPoint(x: 0.5, y: 0.08)
 }
 
 /// The drawing preferences that are not the pointer style: the armed frame,

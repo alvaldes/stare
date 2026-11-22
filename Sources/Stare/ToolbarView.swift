@@ -14,6 +14,76 @@ struct ToolbarAction: Identifiable {
     let handler: () -> Void
 }
 
+/// The `⠇⠇` grab handle after the close button (T3/S4). An AppKit view
+/// because both actions it owns are window-level: dragging calls the window's
+/// own `performDrag` — the same move path the bar's background already has —
+/// and right-clicking resets the palette to the anchor the app persists, the
+/// path `ToolbarPanel.requestPositionReset()` provides (S12 ties that default
+/// to the orientation/border settings later).
+private struct ToolbarGripper: NSViewRepresentable {
+    func makeNSView(context: Context) -> ToolbarGripperView { ToolbarGripperView() }
+    func updateNSView(_ nsView: ToolbarGripperView, context: Context) {}
+}
+
+/// The handle itself: a 2×3 dot pattern on a hit area big enough to grab,
+/// drawn by the view — no new asset.
+final class ToolbarGripperView: NSView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        toolTip = ToolbarGripperSpec.tooltip
+        setAccessibilityElement(true)
+        setAccessibilityLabel(ToolbarGripperSpec.tooltip)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("ToolbarGripperView is created in code only")
+    }
+
+    override var intrinsicContentSize: NSSize {
+        // Comfortably wider than the dots themselves, so the whole area grabs.
+        NSSize(width: 16, height: 26)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.performDrag(with: event)
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        ToolbarPanel.requestPositionReset()
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .openHand)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        // Two columns of three stacked dots, centred in the hit area.
+        let dot: CGFloat = 3
+        let pitchX: CGFloat = 6
+        let pitchY: CGFloat = 5
+        let columns = ToolbarGripperSpec.dotColumns
+        let rows = ToolbarGripperSpec.dotRows
+        let gridWidth = CGFloat(columns - 1) * pitchX + dot
+        let gridHeight = CGFloat(rows - 1) * pitchY + dot
+        let originX = (bounds.width - gridWidth) / 2
+        let originY = (bounds.height - gridHeight) / 2
+
+        NSColor.secondaryLabelColor.setFill()
+        for column in 0..<columns {
+            for row in 0..<rows {
+                let rect = CGRect(
+                    x: originX + CGFloat(column) * pitchX,
+                    y: originY + CGFloat(row) * pitchY,
+                    width: dot,
+                    height: dot
+                )
+                NSBezierPath(ovalIn: rect).fill()
+            }
+        }
+    }
+}
+
 struct ToolbarView: View {
     @ObservedObject var state: EditorState
     let onUndo: () -> Void
@@ -34,6 +104,16 @@ struct ToolbarView: View {
     /// filtered set, so no dead button is shown and no dead shortcut arms a
     /// hidden tool.
     var toolGroups: [[Tool]] = Tool.toolbarGroups
+
+    /// The fixed trailing items in the order the bar draws them (T3/S4): the
+    /// `⠇⠇` grab handle sits directly after the close button. The array is
+    /// the single source the `body` tail maps over, so the tests pin the
+    /// order here instead of inspecting SwiftUI internals.
+    enum TrailingItem: CaseIterable, Equatable {
+        case undo, redo, clear, close, gripper
+    }
+
+    static let trailingItems: [TrailingItem] = TrailingItem.allCases
 
     var body: some View {
         HStack(spacing: 4) {
@@ -87,10 +167,20 @@ struct ToolbarView: View {
 
             divider
 
-            iconButton("arrow.uturn.backward", help: "Undo (⌘Z)", action: onUndo)
-            iconButton("arrow.uturn.forward", help: "Redo (⇧⌘Z)", action: onRedo)
-            iconButton("trash", help: "Clear all (esc)", action: onClear)
-            iconButton("xmark", help: "Done (esc)", action: onDone)
+            ForEach(ToolbarView.trailingItems, id: \.self) { item in
+                switch item {
+                case .undo:
+                    iconButton("arrow.uturn.backward", help: "Undo (⌘Z)", action: onUndo)
+                case .redo:
+                    iconButton("arrow.uturn.forward", help: "Redo (⇧⌘Z)", action: onRedo)
+                case .clear:
+                    iconButton("trash", help: "Clear all (esc)", action: onClear)
+                case .close:
+                    iconButton("xmark", help: "Done (esc)", action: onDone)
+                case .gripper:
+                    ToolbarGripper().frame(width: 16, height: 26)
+                }
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

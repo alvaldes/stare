@@ -126,7 +126,7 @@ final class ToolbarPanel: NSPanel {
     func positionNearPointerDisplay(placement: PalettePlacement) {
         guard let target = targetScreen(for: placement) else { return }
 
-        let anchor = savedAnchor() ?? CGPoint(x: 0.5, y: 0.08)
+        let anchor = savedAnchor() ?? ToolbarGripperSpec.defaultAnchor
         let center = CGPoint(
             x: target.frame.minX + anchor.x * target.frame.width,
             y: target.frame.minY + anchor.y * target.frame.height

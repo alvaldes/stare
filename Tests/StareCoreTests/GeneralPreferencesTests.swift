@@ -152,6 +152,24 @@ final class GeneralPreferencesTests: XCTestCase {
         XCTAssertNil(PreferencesMigration.migratedGeneralPreferences(in: InMemoryPreferenceStore()))
     }
 
+    // MARK: Toolbar gripper (T3 / S4)
+
+    func testGripperSpecPinsTheTwoByThreeDotPattern() {
+        // The owner's `⠇⠇`: two columns of three stacked dots.
+        XCTAssertEqual(ToolbarGripperSpec.dotColumns, 2)
+        XCTAssertEqual(ToolbarGripperSpec.dotRows, 3)
+    }
+
+    func testGripperSpecTooltipNamesBothActions() {
+        XCTAssertEqual(ToolbarGripperSpec.tooltip, "Drag to move · Right-click to reset position")
+    }
+
+    func testGripperSpecResetTargetIsTheFreshInstallAnchor() {
+        // Right-clicking the gripper sends the bar back to the anchor the app
+        // stores; with nothing stored the palette opens at this spot.
+        XCTAssertEqual(ToolbarGripperSpec.defaultAnchor, CGPoint(x: 0.5, y: 0.08))
+    }
+
     // MARK: Helpers
 
     private static func decode(_ json: String) throws -> GeneralPreferences {
