@@ -462,6 +462,11 @@ enum SelfTest {
         // path over a synthetic screen and measure the pixels.
         report.append(contentsOf: blurRenderReport())
 
+        // Live blur re-arm (T5/S1): a restored session holding blur marks must
+        // ask the frame source for frames again — on re-entry and after a
+        // relaunch — and leaving the mode must stop the asking.
+        report.append(contentsOf: MainActor.assumeIsolated { liveBlurInterestReport() })
+
         // Tool cursors (T2/S2): the drawing-mode mapping through the real
         // view path — every tool owns a cursor role, the roles are all
         // distinct so the pointer tells tools apart, system roles serve the
@@ -3620,6 +3625,140 @@ enum SelfTest {
     }
 
     // MARK: - Live blur
+
+    /// Thread-safe record of the screen captures a fake frame source was
+    /// asked for: the capture closure runs off the main thread.
+    private final class CaptureRequestLog: @unchecked Sendable {
+        private let lock = NSLock()
+        private var displays: [CGDirectDisplayID] = []
+
+        func record(_ displayID: CGDirectDisplayID) {
+            lock.lock()
+            displays.append(displayID)
+            lock.unlock()
+        }
+
+        var count: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return displays.count
+        }
+    }
+
+    /// The interest contract end to end through the real controller: a stored
+    /// blur mark restored into a fresh activation must make the frame source
+    /// ask for frames again (relaunch and re-entry are the same restore path),
+    /// leaving the mode must stop the asking, and a session restored without
+    /// blur marks must never ask. The fake capture always answers, so screen
+    /// recording is never needed here.
+    @MainActor
+    private static func liveBlurInterestReport() -> [String] {
+        var report: [String] = []
+        let model = PreferencesModel(store: SelfTestPreferenceStore())
+        let bootTime = Date(timeIntervalSince1970: 7_000)
+        let store = SelfTestPreferenceStore()
+        func makeController(boot: Date, liveFrames: LiveFrameSource = LiveFrameSource(), store: SelfTestPreferenceStore) -> OverlayController {
+            OverlayController(
+                captureService: CaptureService(),
+                liveFrames: liveFrames,
+                preferences: model,
+                sessionStore: BootSessionStore(store: store, bootTime: { boot })
+            )
+        }
+
+        // Seed the archive the way the app produces it: draw a blur mark and
+        // leave the mode (the store write happens on deactivate).
+        let seeder = makeController(boot: bootTime, store: store)
+        seeder.activate()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        guard let seedView = seeder.selfTestViews.first, let seedPanel = seedView.window else {
+            report.append("FAIL: live blur restore no canvas panel")
+            seeder.deactivate(restoringFocus: false)
+            return report
+        }
+        seeder.state.tool = .blur
+        sendDrag(to: seedPanel, from: CGPoint(x: 300, y: 200), to: CGPoint(x: 500, y: 380))
+        guard seedView.session.strokes.contains(where: { $0.tool == .blur }) else {
+            report.append("FAIL: live blur restore nothing drawn")
+            seeder.deactivate(restoringFocus: false)
+            return report
+        }
+        seeder.deactivate(restoringFocus: false)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+
+        let requests = CaptureRequestLog()
+        guard let synthetic = syntheticScreenPattern(size: CGSize(width: 64, height: 48), scale: 1) else {
+            report.append("FAIL: live blur restore synthetic frame could not be built")
+            return report
+        }
+        func makeFrameSource() -> LiveFrameSource {
+            LiveFrameSource(capture: { displayID, _ in
+                requests.record(displayID)
+                return synthetic
+            })
+        }
+
+        // A relaunch: fresh controller, same boot.
+        let reloaded = makeController(boot: bootTime, liveFrames: makeFrameSource(), store: store)
+        reloaded.activate()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        let blurCameBack = reloaded.selfTestViews.contains { $0.hasLiveBlurMarks }
+        let framesAskedAfterRelaunch = requests.count > 0
+
+        // Leaving the mode stops the capture: no request within a window the
+        // 6 Hz timer would have filled several times.
+        let afterRelaunch = requests.count
+        reloaded.deactivate(restoringFocus: false)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+        let stoppedAfterLeave = requests.count == afterRelaunch
+
+        // Re-entering the drawing mode re-arms the restored blur without
+        // anyone drawing a new mark.
+        reloaded.activate()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        let reentered = reloaded.selfTestViews.contains { $0.hasLiveBlurMarks }
+        let framesAskedAfterReentry = requests.count > afterRelaunch
+        reloaded.deactivate(restoringFocus: false)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+
+        // A restore without blur marks must stay silent: a separate archive
+        // seeded with a pen line only, reloaded with a fresh log — no capture
+        // may be asked. A separate store because a later save carries the
+        // earlier display map forward.
+        let penStore = SelfTestPreferenceStore()
+        let penSeeder = makeController(boot: bootTime, store: penStore)
+        penSeeder.activate()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        var penSeeded = false
+        if let penView = penSeeder.selfTestViews.first, let penPanel = penView.window {
+            penSeeder.state.tool = .pen
+            sendDrag(to: penPanel, from: CGPoint(x: 300, y: 200), to: CGPoint(x: 500, y: 380))
+            penSeeded = penView.session.strokes.contains { $0.tool == .pen }
+        }
+        penSeeder.deactivate(restoringFocus: false)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        let beforePenReload = requests.count
+        let penOnly = makeController(boot: bootTime, liveFrames: makeFrameSource(), store: penStore)
+        penOnly.activate()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        let penRestored = !penOnly.selfTestViews.isEmpty
+            && penOnly.selfTestViews.contains { $0.session.strokes.contains { $0.tool == .pen } }
+        let noBlurMarksPenOnly = penRestored
+            && !penOnly.selfTestViews.contains { $0.hasLiveBlurMarks }
+        let silentWithoutBlur = requests.count == beforePenReload
+        penOnly.deactivate(restoringFocus: false)
+
+        let passed = blurCameBack && framesAskedAfterRelaunch && stoppedAfterLeave
+            && reentered && framesAskedAfterReentry && penSeeded && noBlurMarksPenOnly
+            && silentWithoutBlur
+        report.append(
+            "live blur restore blurCameBack=\(blurCameBack) framesAsked=\(framesAskedAfterRelaunch) "
+                + "leaveStopsCapture=\(stoppedAfterLeave) reenter=\(reentered) reenterFrames=\(framesAskedAfterReentry) "
+                + "penSeeded=\(penSeeded) penRestored=\(penRestored) noBlurInterest=\(noBlurMarksPenOnly) "
+                + "silentlyCaptured=\(silentWithoutBlur) requests=\(requests.count) ok=\(passed)"
+        )
+        return report
+    }
 
     /// Renders a blur mark through the view's own draw path over a synthetic
     /// screen and measures the result: inside the rectangle the pixels must be

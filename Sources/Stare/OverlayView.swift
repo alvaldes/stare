@@ -8,7 +8,16 @@ import StareCore
 /// layers share one input path.
 class OverlayView: NSView {
     let state: EditorState
-    var session = DrawingSession()
+    /// The session is also *replaced* whole (the boot-scoped restore on
+    /// re-entry and after a relaunch, `OverlayController.restoreDrawingSessions`),
+    /// and that path bypasses every incremental mutation below that calls
+    /// `noteBlurInterestChanged` explicitly. The observer is the one funnel that
+    /// cannot miss a restore: any new session — restored, cleared, page-swapped
+    /// — re-reports blur interest here, so a restored blur mark starts capturing
+    /// frames again instead of painting the neutral fallback.
+    var session = DrawingSession() {
+        didSet { noteBlurInterestChanged() }
+    }
     var onEscape: (() -> Void)?
     /// Reports a committed mark so the controller can undo across displays.
     /// Reports a committed mark so the controller can undo across displays.
