@@ -448,10 +448,17 @@ class WhiteboardView: OverlayView {
     /// refuse any record these stacks drift past, so a plain-path stack that
     /// an entry-driven pop already consumed can at worst return a no-op, and
     /// a draw-between records can only defer to the journal, never misroute.
-    private var clearUndoPages: [Int] = []
-    private var clearRedoPages: [Int] = []
-    private var batchUndoPages: [Int] = []
-    private var batchRedoPages: [Int] = []
+    /// The stacks still mirror the live history rather than accumulating:
+    /// the entry-driven routing pops the record whose page it acted on
+    /// (`popRecord(onPage:)`), a structural change remaps them with the
+    /// deleted pages' records gone, and a hard clear drops the wiped page's
+    /// records (see `clear()`), so a bare pop never walks a record that is
+    /// not backed by a live journal op — and never grows past the history.
+    /// Internal (readable) for the tests, which assert the boundedness.
+    private(set) var clearUndoPages: [Int] = []
+    private(set) var clearRedoPages: [Int] = []
+    private(set) var batchUndoPages: [Int] = []
+    private(set) var batchRedoPages: [Int] = []
 
     /// The base ops of the global history at the view layer, against whatever
     /// session the view holds: what the plain OverlayView methods do. Both
@@ -490,31 +497,57 @@ class WhiteboardView: OverlayView {
     }
 
     /// Undo of the clear the popped entry names, on the page it happened on
-    /// (T4/S5): the entry-driven path, no record bookkeeping.
+    /// (T4/S5): the entry-driven path. On success the record naming this page
+    /// leaves the bare-path stack — the global pop consumed the newest live
+    /// clear op of that page, exactly what the stack's last matching record
+    /// names — so the stacks mirror the live history instead of accumulating
+    /// every clear the board session ever performed. The journal guard still
+    /// defends any residual drift: a record kept by mistake can at worst make
+    /// a bare pop return a no-op.
     @discardableResult
     func undoClearedMarks(onPage pageIndex: Int) -> Bool {
-        borrowSession(onPage: pageIndex, self.undoClearedMarksOnSession)
+        let routed = borrowSession(onPage: pageIndex, self.undoClearedMarksOnSession)
+        if routed { popRecord(&clearUndoPages, onPage: pageIndex) }
+        return routed
     }
 
     /// Redo of the clear the popped entry names, on the page it happened on
-    /// (T4/S5): the entry-driven path, no record bookkeeping.
+    /// (T4/S5): the entry-driven path, with the same record bookkeeping as
+    /// the undo side above.
     @discardableResult
     func redoClearedMarks(onPage pageIndex: Int) -> Bool {
-        borrowSession(onPage: pageIndex, self.redoClearedMarksOnSession)
+        let routed = borrowSession(onPage: pageIndex, self.redoClearedMarksOnSession)
+        if routed { popRecord(&clearRedoPages, onPage: pageIndex) }
+        return routed
     }
 
     /// Undo of the group move the popped entry names, on the page it happened
-    /// on (T6b/S8): the entry-driven path, no record bookkeeping.
+    /// on (T6b/S8): the entry-driven path, with the same record bookkeeping
+    /// as the clear side above.
     @discardableResult
     func undoBatchMove(onPage pageIndex: Int) -> Bool {
-        borrowSession(onPage: pageIndex, self.undoBatchMoveOnSession)
+        let routed = borrowSession(onPage: pageIndex, self.undoBatchMoveOnSession)
+        if routed { popRecord(&batchUndoPages, onPage: pageIndex) }
+        return routed
     }
 
     /// Redo of the group move the popped entry names, on the page it happened
-    /// on (T6b/S8): the entry-driven path, no record bookkeeping.
+    /// on (T6b/S8): the entry-driven path, with the same record bookkeeping
+    /// as the clear side above.
     @discardableResult
     func redoBatchMove(onPage pageIndex: Int) -> Bool {
-        borrowSession(onPage: pageIndex, self.redoBatchMoveOnSession)
+        let routed = borrowSession(onPage: pageIndex, self.redoBatchMoveOnSession)
+        if routed { popRecord(&batchRedoPages, onPage: pageIndex) }
+        return routed
+    }
+
+    /// Removes the last record naming `pageIndex` — the stack is ordered
+    /// oldest first, so the last one is this page's newest pending clear (or
+    /// batch move), which is the journal op the entry-driven routing just
+    /// consumed. A page can hold several pending steps (clear, draw, clear),
+    /// and each global pop retires exactly one of them.
+    private func popRecord(_ pages: inout [Int], onPage pageIndex: Int) {
+        if let index = pages.lastIndex(of: pageIndex) { pages.remove(at: index) }
     }
 
     /// Global undo of the Escape clear (T4/S5) through the view alone: the
@@ -765,5 +798,22 @@ class WhiteboardView: OverlayView {
             return
         }
         super.keyUp(with: event)
+    }
+
+    /// A hard clear wipes the presented page's whole journal with no undo
+    /// step left behind (the deactivate-path `canvas.clear()` and the
+    /// toolbar's clear both land here), so every bare-path record naming
+    /// this page is dead: the journal guard would refuse each one, but the
+    /// records would still linger and accumulate across the board's open
+    /// lifetime. Dropping them here keeps the record stacks bounded by the
+    /// live history — the other pages' records stay, their journals are
+    /// untouched.
+    override func clear() {
+        super.clear()
+        let wipedPage = board.currentIndex
+        clearUndoPages.removeAll { $0 == wipedPage }
+        clearRedoPages.removeAll { $0 == wipedPage }
+        batchUndoPages.removeAll { $0 == wipedPage }
+        batchRedoPages.removeAll { $0 == wipedPage }
     }
 }

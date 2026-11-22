@@ -61,33 +61,46 @@ private enum HistoryEntry {
 
     /// Follows a structural page change of one display: this display's
     /// page-carrying entries take the page's new index, and an entry whose
-    /// page no longer exists — the page was deleted (⌘⌫) — comes back nil and
-    /// leaves the history, so a popped entry can never land on a neighbour's
-    /// slot and mutate another page. Mark entries carry no page and any other
-    /// display's entries are returned unchanged.
+    /// page no longer exists — the page was deleted (⌘⌫) — leaves the history
+    /// (returns nil, which the caller's compactMap drops), so a popped entry
+    /// can never land on a neighbour's slot and mutate another page. Entries
+    /// of other displays and page-less overlay entries are returned unchanged.
     func remappingPage(displayID: CGDirectDisplayID, mapping: (Int) -> Int?) -> HistoryEntry? {
         switch self {
         case .mark:
             return self
         case let .clear(id, page):
-            guard id == displayID, let page, let moved = mapping(page) else { return self }
+            guard id == displayID else { return self }
+            guard let page else { return self }
+            // Staleness case this covers: the entry's page was deleted, the
+            // mapping retires it — the step has nothing left to undo anywhere,
+            // so it leaves the history instead of sitting beside a stale index.
+            guard let moved = mapping(page) else { return nil }
             return .clear(displayID: id, page: moved)
         case let .batchMove(id, page):
-            guard id == displayID, let page, let moved = mapping(page) else { return self }
+            guard id == displayID else { return self }
+            guard let page else { return self }
+            // Same staleness case as the clear above: the move's page was
+            // deleted, the entry leaves.
+            guard let moved = mapping(page) else { return nil }
             return .batchMove(displayID: id, page: moved)
         }
     }
 
     /// Whether this entry was wiped out of the owning display's session by a
-    /// hard clear: marks with these ids are gone with no journal trail and
-    /// the journal itself was emptied, so both kinds are unroutable and
-    /// leave the history. A batch entry dies with the display's journal the
-    /// same way a clear entry does.
-    func isWipedByHardClear(displayID: CGDirectDisplayID, clearedIDs: Set<UUID>) -> Bool {
+    /// hard clear of the page the clear ran on: marks with these ids are gone
+    /// with no journal trail and that page's journal itself was emptied, so
+    /// both kinds are unroutable and leave the history. A hard clear in board
+    /// mode only wipes the page it ran on (the presented one, `page`), so only
+    /// the entries naming that page die — another page's clear keeps its undo
+    /// step. A batch entry dies with its page's journal the same way a clear
+    /// entry does. On the plain overlay (nil page) every entry names the one
+    /// session, so every page-carrying entry of the display dies as before.
+    func isWipedByHardClear(displayID: CGDirectDisplayID, clearedIDs: Set<UUID>, onPage page: Int?) -> Bool {
         switch self {
         case let .mark(id, strokeID): return id == displayID && clearedIDs.contains(strokeID)
-        case let .clear(id, _): return id == displayID
-        case let .batchMove(id, _): return id == displayID
+        case let .clear(id, entryPage): return id == displayID && entryPage == page
+        case let .batchMove(id, entryPage): return id == displayID && entryPage == page
         }
     }
 
@@ -131,6 +144,49 @@ final class OverlayController {
     private var historyOrder: [HistoryEntry] = []
     /// Undone entries waiting for Shift-Command-Z, newest last, across displays.
     private var redoOrder: [HistoryEntry] = []
+
+    /// The page each board-committed mark was drawn on, kept parallel to the
+    /// mark entries the controller maintains in its own history (one record
+    /// per mark entry, dropped wherever the entry is retired). A page delete
+    /// and a hard clear have to retire the mark entries naming that page even
+    /// when the marks are no longer live — already inside the page's cleared
+    /// journal batch, which neither a live-stroke snapshot nor an id check on
+    /// the present session can see (T4/S5). Overlay marks record nothing:
+    /// the drawing overlay has no pages, and its hard clear empties the whole
+    /// history anyway.
+    private struct MarkLocation: Hashable {
+        let displayID: CGDirectDisplayID
+        let strokeID: UUID
+    }
+    private var pageOfMark: [MarkLocation: Int] = [:]
+
+    /// Whether this mark entry names one of `strokeIDs` of `displayID` — the
+    /// retire rule the page deletion and the hard clear apply to the mark
+    /// side of the history.
+    private func namesMark(_ entry: HistoryEntry, ofDisplay displayID: CGDirectDisplayID, in strokeIDs: Set<UUID>) -> Bool {
+        guard case let .mark(id, strokeID) = entry, id == displayID else { return false }
+        return strokeIDs.contains(strokeID)
+    }
+
+    /// Retires the mark entries of one display's page: the page's journal was
+    /// emptied (hard clear), so every entry naming a mark ever committed
+    /// there is dead and its record is dropped with it. Entries of other
+    /// pages — including marks that a previous clear on another page left
+    /// waiting under their clear entry — stay exactly as they were. The page
+    /// is never nil at these call sites (board mode always carries one).
+    private func retireMarkEntries(ofDisplay displayID: CGDirectDisplayID, onPage page: Int?) {
+        let retired = Set(
+            pageOfMark
+                .filter { $0.key.displayID == displayID && $0.value == page }
+                .map(\.key.strokeID)
+        )
+        guard !retired.isEmpty else { return }
+        for id in retired {
+            pageOfMark.removeValue(forKey: MarkLocation(displayID: displayID, strokeID: id))
+        }
+        historyOrder.removeAll { self.namesMark($0, ofDisplay: displayID, in: retired) }
+        redoOrder.removeAll { self.namesMark($0, ofDisplay: displayID, in: retired) }
+    }
     private var toolbar: ToolbarPanel?
     private var previousApplication: NSRunningApplication?
     private let captureService: ScreenCapturing
@@ -344,6 +400,22 @@ final class OverlayController {
     /// mode is active, and the board a fresh whiteboard opened with.
     var firstCanvasDisplayID: CGDirectDisplayID? { activeCanvases.values.first?.displayID }
     var activeBoard: WhiteboardPages? { isBoardActive ? boards.values.first : nil }
+
+    /// Internal, for the tests: how many entries the global undo history
+    /// holds, and what its page-carrying entries name, oldest first — nil for
+    /// a mark or a page-less overlay entry. Lets a test observe that a page
+    /// deletion takes the deleted page's entries out of the history while the
+    /// surviving pages' entries stay.
+    var historyEntryCount: Int { historyOrder.count }
+    var historyNamedPages: [Int?] {
+        historyOrder.map { entry -> Int? in
+            switch entry {
+            case .mark: return nil
+            case .clear(_, let page): return page
+            case .batchMove(_, let page): return page
+            }
+        }
+    }
 
     func toggle() {
         if isActive { deactivate() } else { activate() }
@@ -617,9 +689,11 @@ final class OverlayController {
         saveSession()
         hideToolbar()
         // The marks stay on their pages, so the undo history cannot resurrect
-        // them in a future overlay session: start the history clean.
+        // them in a future overlay session: start the history clean — entries
+        // and the page records behind the mark entries alike.
         historyOrder.removeAll()
         redoOrder.removeAll()
+        pageOfMark.removeAll()
         liveFrames.stop()
         removeKeyMonitor()
         if restoringFocus { restoreFrontmostApplication() }
@@ -812,9 +886,21 @@ final class OverlayController {
     func clearAll() {
         if isBoardActive {
             for canvas in boardCanvases.values {
+                // A hard clear only wipes the presented page's session, so
+                // only the entries naming that page die (the staleness case
+                // the page predicate covers); the other pages' undo steps
+                // stay live. The mark side retires the page's own entries
+                // through the page record, which reaches the marks that a
+                // clear already folded into the same page's journal.
+                let clearedPage = canvas.view.historyPage
                 let ids = Set(canvas.view.session.strokes.map(\.id))
-                historyOrder.removeAll { $0.isWipedByHardClear(displayID: canvas.displayID, clearedIDs: ids) }
-                redoOrder.removeAll { $0.isWipedByHardClear(displayID: canvas.displayID, clearedIDs: ids) }
+                historyOrder.removeAll {
+                    $0.isWipedByHardClear(displayID: canvas.displayID, clearedIDs: ids, onPage: clearedPage)
+                }
+                redoOrder.removeAll {
+                    $0.isWipedByHardClear(displayID: canvas.displayID, clearedIDs: ids, onPage: clearedPage)
+                }
+                retireMarkEntries(ofDisplay: canvas.displayID, onPage: clearedPage)
                 canvas.clear()
             }
             return
@@ -822,6 +908,7 @@ final class OverlayController {
         for canvas in canvases.values { canvas.clear() }
         historyOrder.removeAll()
         redoOrder.removeAll()
+        pageOfMark.removeAll()
         liveFrames.stop()
     }
 
@@ -924,6 +1011,14 @@ final class OverlayController {
     private func wireHistoryAndSelection(_ view: OverlayView, displayID: CGDirectDisplayID) {
         view.onCommit = { [weak self] stroke in
             guard let self else { return }
+            // Board marks record the page they were committed on. The record
+            // is what lets a page deletion (or a hard clear) retire the
+            // entry even when the mark is no longer live — already inside
+            // the page's cleared journal batch, where no live snapshot
+            // can see it. Overlay marks record nothing (there are no pages).
+            if let page = view.historyPage {
+                self.pageOfMark[MarkLocation(displayID: displayID, strokeID: stroke.id)] = page
+            }
             historyOrder.append(.mark(displayID: displayID, strokeID: stroke.id))
             redoOrder.removeAll()
         }
@@ -931,6 +1026,11 @@ final class OverlayController {
             guard let self else { return }
             // A transform is a history entry like a draw, in real order; the
             // session forked its own redo journal, so the global one forks too.
+            // The entry carries the page the move happened on (nil on the
+            // overlay), so the undo reaches that page's journal.
+            if let page = view.historyPage {
+                self.pageOfMark[MarkLocation(displayID: displayID, strokeID: stroke.id)] = page
+            }
             historyOrder.append(.mark(displayID: displayID, strokeID: stroke.id))
             redoOrder.removeAll()
         }
@@ -951,6 +1051,9 @@ final class OverlayController {
             historyOrder.removeAll { $0.namesErasedMark(displayID: displayID, erasedIDs: [id]) }
             redoOrder.removeAll { $0.namesErasedMark(displayID: displayID, erasedIDs: [id]) }
             redoOrder.append(.mark(displayID: displayID, strokeID: id))
+            // The mark's page record goes with the retired entries (the redo
+            // entry besides is a re-add the redo journal answers by id).
+            self.pageOfMark.removeValue(forKey: MarkLocation(displayID: displayID, strokeID: id))
         }
         view.onClearMarks = { [weak self, weak view] in
             guard let self, let view else { return }
@@ -973,6 +1076,10 @@ final class OverlayController {
             let erased = Set(ids)
             historyOrder.removeAll { $0.namesErasedMark(displayID: displayID, erasedIDs: erased) }
             redoOrder.removeAll { $0.namesErasedMark(displayID: displayID, erasedIDs: erased) }
+            // The erased marks' page records go with their retired entries.
+            for id in erased {
+                self.pageOfMark.removeValue(forKey: MarkLocation(displayID: displayID, strokeID: id))
+            }
         }
         view.onUndo = { [weak self] in self?.undo() }
         view.onRedo = { [weak self] in self?.redo() }
@@ -1087,14 +1194,41 @@ final class OverlayController {
         }
     }
 
-    /// Keeps the page-carrying entries of one display on the pages they name:
-    /// a structural page change (⌘⌫ delete, ⌥← ⌥→ reorder) reports its
-    /// old→new index mapping, entries whose page moved follow it, and entries
-    /// whose page no longer exists leave the history safely — undo and redo
-    /// skip them instead of landing on another page's slot (T4/S5, T6b/S8).
+    /// Keeps one display's entries on the pages they name through a
+    /// structural page change (⌘⌫ delete, ⌥← ⌥→ reorder): the surviving
+    /// page-carrying entries follow their pages, and everything that named
+    /// the deleted page leaves the history safely — undo and redo skip it
+    /// instead of landing on another page's slot (T4/S5, T6b/S8). The page's
+    /// mark entries leave with it too: the page record knows the page each
+    /// mark entry came from, so the marks that live on only inside the
+    /// page's cleared journal batch — invisible to a live-stroke snapshot —
+    /// are retired the same way their clear entry is; never pruned before,
+    /// they would linger until a pop loop wasted a step refusing each one.
     private func remapHistoryPages(displayID: CGDirectDisplayID, mapping: (Int) -> Int?) {
-        historyOrder = historyOrder.compactMap { $0.remappingPage(displayID: displayID, mapping: mapping) }
-        redoOrder = redoOrder.compactMap { $0.remappingPage(displayID: displayID, mapping: mapping) }
+        historyOrder = historyOrder.compactMap {
+            $0.remappingPage(displayID: displayID, mapping: mapping)
+        }
+        redoOrder = redoOrder.compactMap {
+            $0.remappingPage(displayID: displayID, mapping: mapping)
+        }
+        // The record follows the same mapping: pages that survive slide with
+        // it, and the ids whose page vanished name the deleted page — those
+        // entries retire with the page, in either order.
+        var deletedIDs = Set<UUID>()
+        var remapped: [MarkLocation: Int] = [:]
+        for (location, page) in pageOfMark {
+            if location.displayID != displayID {
+                remapped[location] = page
+            } else if let moved = mapping(page) {
+                remapped[location] = moved
+            } else {
+                deletedIDs.insert(location.strokeID)
+            }
+        }
+        pageOfMark = remapped
+        guard !deletedIDs.isEmpty else { return }
+        historyOrder.removeAll { self.namesMark($0, ofDisplay: displayID, in: deletedIDs) }
+        redoOrder.removeAll { self.namesMark($0, ofDisplay: displayID, in: deletedIDs) }
     }
 
     /// The toolbar's ‹ › indicator follows the display the pointer is on, since
@@ -1152,9 +1286,17 @@ final class OverlayController {
     /// pages and their marks stay untouched.
     private func clearCurrentBoardPage() {
         guard let canvas = boardCanvasUnderPointer() else { return }
+        // Same page-scoped purge as `clearAll`'s board branch: only the
+        // presented page's entries die, the other pages keep their steps.
+        let clearedPage = canvas.view.historyPage
         let ids = Set(canvas.view.session.strokes.map(\.id))
-        historyOrder.removeAll { $0.isWipedByHardClear(displayID: canvas.displayID, clearedIDs: ids) }
-        redoOrder.removeAll { $0.isWipedByHardClear(displayID: canvas.displayID, clearedIDs: ids) }
+        historyOrder.removeAll {
+            $0.isWipedByHardClear(displayID: canvas.displayID, clearedIDs: ids, onPage: clearedPage)
+        }
+        redoOrder.removeAll {
+            $0.isWipedByHardClear(displayID: canvas.displayID, clearedIDs: ids, onPage: clearedPage)
+        }
+        retireMarkEntries(ofDisplay: canvas.displayID, onPage: clearedPage)
         canvas.clear()
     }
 
