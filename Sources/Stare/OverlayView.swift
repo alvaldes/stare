@@ -26,8 +26,9 @@ class OverlayView: NSView {
     /// the owning display's redo stack.
     var onDelete: ((UUID) -> Void)?
     /// Escape with nothing selected: clears this layer's marks (the whiteboard's
-    /// current page) and stays in drawing mode. The controller routes it so the
-    /// display's entries also leave the global history.
+    /// current page) and stays in drawing mode. The clear goes into the global
+    /// history as one undoable step (T4/S5), so the controller routes it and
+    /// a later Command-Z can restore everything it removed.
     var onClearMarks: (() -> Void)?
     /// This view selected a mark: the controller clears the selection on every
     /// other display, so at most one mark is selected in the whole app.
@@ -264,6 +265,50 @@ class OverlayView: NSView {
         noteBlurInterestChanged()
         noteSessionChanged()
         needsDisplay = true
+    }
+
+    /// The Escape clear (T4/S5): the whole layer goes as ONE undoable step of
+    /// the global history — the session journals the batch, so a later
+    /// Command-Z restores the exact marks and Shift-Command-Z clears them
+    /// again. An empty layer reports false and adds no history step.
+    @discardableResult
+    func clearForUndo() -> Bool {
+        let removedAny = session.clearForUndo()
+        committedBounds.removeAll()
+        clearSelection()
+        finishTextEditing(commit: false)
+        stopLaserTimer()
+        noteBlurInterestChanged()
+        noteSessionChanged()
+        needsDisplay = true
+        return removedAny
+    }
+
+    /// Global undo of the Escape clear (T4/S5): the batch the clear removed
+    /// comes back exactly as it was. The guard keeps the global order and the
+    /// session's journal from drifting — a popped clear entry can never undo
+    /// a different change than the one it names.
+    @discardableResult
+    func undoClearedMarks() -> Bool {
+        guard session.canUndoClear, session.undo() else { return false }
+        if let selected = selectedMarkID, !session.strokes.contains(where: { $0.id == selected }) {
+            clearSelection()
+        }
+        noteBlurInterestChanged()
+        noteSessionChanged()
+        needsDisplay = true
+        return true
+    }
+
+    /// Global redo of the Escape clear (T4/S5): the restored batch goes away
+    /// again, with the same session agreement as the undo side.
+    @discardableResult
+    func redoClearedMarks() -> Bool {
+        guard session.canRedoClear, session.redo() else { return false }
+        noteBlurInterestChanged()
+        noteSessionChanged()
+        needsDisplay = true
+        return true
     }
 
     /// Discards the mark being dragged, if any.

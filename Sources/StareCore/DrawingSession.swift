@@ -25,6 +25,10 @@ public struct DrawingSession: Equatable, Sendable {
         case added(Stroke)
         /// The mark was transformed; undo restores the previous geometry.
         case transformed(previous: Stroke, transformed: Stroke)
+        /// Every mark was cleared together in one step (the Escape clear,
+        /// T4/S5); undo restores the whole batch. The strokes are journalled
+        /// in draw order as they were when the clear took them.
+        case cleared([Stroke])
     }
 
     /// What redo can reapply, newest last.
@@ -33,6 +37,8 @@ public struct DrawingSession: Equatable, Sendable {
         case removed(Stroke)
         /// The mark holds the previous geometry; redo reapplies the transform.
         case transformed(previous: Stroke, transformed: Stroke)
+        /// The cleared batch was restored; redo clears it again (T4/S5).
+        case cleared([Stroke])
     }
 
     private var undoOps: [UndoOp] = []
@@ -225,6 +231,20 @@ public struct DrawingSession: Equatable, Sendable {
                 strokes[index] = previous
                 redoOps.append(.transformed(previous: previous, transformed: live))
                 return true
+            case let .cleared(removed):
+                // The marks the clear took away come back exactly as they
+                // were, draw order included. A batch member deleted by hand
+                // in the meantime stays gone — that is the eraser's rule.
+                let restored = removed.filter { stroke in
+                    !strokes.contains(where: { $0.id == stroke.id })
+                }
+                guard !restored.isEmpty else { continue }
+                strokes.append(contentsOf: restored)
+                if restored.contains(where: { $0.stepNumber != nil }) {
+                    renumberFromScratch()
+                }
+                redoOps.append(.cleared(restored))
+                return true
             }
         }
         return false
@@ -251,6 +271,20 @@ public struct DrawingSession: Equatable, Sendable {
             strokes[index] = transformed
             undoOps.append(.transformed(previous: previous, transformed: transformed))
             return true
+        case let .cleared(restore):
+            // The restored batch goes away again (T4/S5). Whatever was
+            // already deleted by hand stays gone, and numbering stays
+            // gapless exactly like a single-mark removal.
+            var cleared: [Stroke] = []
+            for stroke in restore {
+                guard let index = strokes.firstIndex(where: { $0.id == stroke.id }) else { continue }
+                cleared.append(strokes.remove(at: index))
+            }
+            if cleared.contains(where: { $0.stepNumber != nil }) {
+                renumberFromScratch()
+            }
+            undoOps.append(.cleared(cleared))
+            return !cleared.isEmpty
         }
     }
 
@@ -271,13 +305,60 @@ public struct DrawingSession: Equatable, Sendable {
         return true
     }
 
-    /// Removes every mark and restarts the numbered sequence.
+    /// Removes every mark and restarts the numbered sequence. The hard clear:
+    /// it never journals anything, so what it removes is gone for good. The
+    /// Escape clear that goes into the history is `clearForUndo` (T4/S5).
     public mutating func clear() {
         strokes.removeAll()
         redoOps.removeAll()
         undoOps.removeAll()
         active = nil
         nextStepNumber = 1
+    }
+
+    /// The Escape clear (T4/S5): every committed mark goes away as one undoable
+    /// step, journalled in draw order, so `undo` restores the exact batch and
+    /// `redo` clears it again. A clear is an edit like the eraser, so the redo
+    /// history forks. An empty layer gives false and adds no history step —
+    /// and leaves the redo history alone. The mark in progress is discarded
+    /// unjournaled, the way every clear has always treated it.
+    @discardableResult
+    public mutating func clearForUndo() -> Bool {
+        active = nil
+        guard !strokes.isEmpty else { return false }
+        let removed = strokes
+        strokes.removeAll()
+        redoOps.removeAll()
+        undoOps.append(.cleared(removed))
+        nextStepNumber = 1
+        return true
+    }
+
+    /// Whether the newest *live* undo entry is a clear (T4/S5), so the global
+    /// history can route a popped clear entry here and never undo a different
+    /// op than the one it named. The scan skips stale entries exactly the way
+    /// `undo` skips them, so both scans always stop on the same op.
+    public var canUndoClear: Bool {
+        for op in undoOps.reversed() {
+            switch op {
+            case let .added(stroke):
+                guard strokes.contains(where: { $0.id == stroke.id }) else { continue }
+                return false
+            case let .transformed(_, transformed):
+                guard strokes.contains(where: { $0.id == transformed.id }) else { continue }
+                return false
+            case .cleared:
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Whether the newest redo entry is a clear (T4/S5), so the global history
+    /// can route a popped clear entry here.
+    public var canRedoClear: Bool {
+        guard case .cleared = redoOps.last else { return false }
+        return true
     }
 
     /// Drops a specific mark, used by the cursor's ⌫ and the overlay's history
@@ -304,6 +385,7 @@ public struct DrawingSession: Equatable, Sendable {
         switch op {
         case let .removed(stroke): return stroke.id == id
         case let .transformed(_, transformed): return transformed.id == id
+        case .cleared: return false
         }
     }
 
@@ -321,6 +403,10 @@ public struct DrawingSession: Equatable, Sendable {
             case let .transformed(_, transformed):
                 guard strokes.contains(where: { $0.id == transformed.id }) else { continue }
                 return transformed.id == id
+            case .cleared:
+                // The clear is the newest live op: no single mark can match
+                // it, and the scan must stop here like `undo` will.
+                return false
             }
         }
         return false

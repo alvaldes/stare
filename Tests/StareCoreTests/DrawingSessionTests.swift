@@ -673,8 +673,7 @@ final class DrawingSessionTests: XCTestCase {
 
     // T11/S6 defect F: sessions that differ only in their undo/redo journals
     // behave differently on undo/redo, so they must not compare equal.
-    func testSessionsDifferingOnlyInHistoryAreNotEqual() {
-        var base = DrawingSession()
+    func testSessionsDifferingOnlyInHistoryAreNotEqual() {        var base = DrawingSession()
         drawLine(in: &base, tool: .rectangle, points: [CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 10)])
 
         var transformed = base
@@ -686,5 +685,150 @@ final class DrawingSessionTests: XCTestCase {
 
         XCTAssertEqual(transformed.strokes, plain.strokes, "the visible state is the same…")
         XCTAssertNotEqual(transformed, plain, "…but a different history must not compare equal")
+    }
+
+    // MARK: - T4/S5: the Escape clear is one undoable step
+
+    // The owner's report verbatim: "si limpio con esc y despues hago cmd+z
+    // se debe restaurar lo que se limpio". The clear journals the whole batch
+    // at once, so one ⌘Z restores every mark with its exact ids and geometry.
+    func testEscapeClearThenUndoRestoresTheExactSetOfMarks() {
+        var session = DrawingSession()
+        drawLine(in: &session, tool: .pen, points: [CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 10)])
+        drawLine(in: &session, tool: .rectangle, points: [CGPoint(x: 20, y: 20), CGPoint(x: 40, y: 40)])
+        drawLine(in: &session, tool: .line, points: [CGPoint(x: 50, y: 50), CGPoint(x: 60, y: 30)])
+        let original = session.strokes
+
+        XCTAssertTrue(session.clearForUndo(), "a clear of marks reports a journalled step")
+        XCTAssertTrue(session.strokes.isEmpty, "the clear took every mark away")
+
+        XCTAssertTrue(session.undo(), "the clear is one undo step, not one per mark")
+        XCTAssertEqual(session.strokes, original, "every mark comes back exactly: ids, geometry, inks")
+    }
+
+    // ⇧⌘Z after the ⌘Z restore clears the batch again, and the round trip
+    // keeps working one more step.
+    func testEscapeClearThenRedoClearsItAgain() {
+        var session = DrawingSession()
+        drawLine(in: &session, tool: .pen)
+        drawLine(in: &session, tool: .pen, points: [CGPoint(x: 30, y: 30), CGPoint(x: 40, y: 40)])
+        let original = session.strokes
+
+        XCTAssertTrue(session.clearForUndo())
+        XCTAssertTrue(session.undo())
+        XCTAssertTrue(session.canRedoClear, "the restored clear waits for redo")
+
+        XCTAssertTrue(session.redo())
+        XCTAssertTrue(session.strokes.isEmpty, "⇧⌘Z clears what ⌘Z restored")
+
+        XCTAssertTrue(session.undo())
+        XCTAssertEqual(session.strokes, original, "the round trip can start over")
+    }
+
+    // The clear is one step: the undo after it works mark by mark, exactly
+    // like the history before the clear did.
+    func testUndoAfterARestoredClearRemovesSingleMarksAgain() {
+        var session = DrawingSession()
+        drawLine(in: &session)
+        drawLine(in: &session, points: [CGPoint(x: 20, y: 20), CGPoint(x: 40, y: 40)])
+        let ids = session.strokes.map(\.id)
+
+        XCTAssertTrue(session.clearForUndo())
+        XCTAssertTrue(session.undo())
+
+        XCTAssertTrue(session.undo(), "the next undo removes one mark, not both")
+        XCTAssertEqual(session.strokes.map(\.id), [ids[0]])
+        XCTAssertTrue(session.undo())
+        XCTAssertTrue(session.strokes.isEmpty)
+    }
+
+    // The exact contract the global history needs: after a clear the newest
+    // live op is the clear, so a popped clear entry never undoes a different
+    // op than the one it names.
+    func testCanUndoClearMatchesTheNewestLiveOp() {
+        var session = DrawingSession()
+        drawLine(in: &session)
+        drawLine(in: &session, points: [CGPoint(x: 20, y: 20), CGPoint(x: 40, y: 40)])
+
+        XCTAssertFalse(session.canUndoClear, "nothing was cleared yet")
+        XCTAssertTrue(session.clearForUndo())
+        XCTAssertTrue(session.canUndoClear)
+        XCTAssertFalse(session.canUndo(markWithID: session.strokes.first?.id ?? UUID()))
+
+        drawLine(in: &session, points: [CGPoint(x: 70, y: 70), CGPoint(x: 80, y: 80)])
+        XCTAssertFalse(session.canUndoClear, "a later draw is the newest live op")
+
+        XCTAssertTrue(session.undo())
+        XCTAssertTrue(session.canUndoClear, "the clear is newest again once the draw is undone")
+    }
+
+    func testCanRedoClearTracksTheRedoJournal() {
+        var session = DrawingSession()
+        drawLine(in: &session)
+
+        XCTAssertTrue(session.clearForUndo())
+        XCTAssertFalse(session.canRedoClear, "a clear is an edit: the redo history forked")
+
+        XCTAssertTrue(session.undo())
+        XCTAssertTrue(session.canRedoClear)
+
+        XCTAssertTrue(session.redo())
+        XCTAssertFalse(session.canRedoClear)
+    }
+
+    // An empty canvas adds no history step, and it must not touch the redo
+    // history either: Escape on an empty layer is a no-op.
+    func testClearOfAnEmptyCanvasAddsNoHistoryStep() {
+        var session = DrawingSession()
+
+        XCTAssertFalse(session.clearForUndo())
+        XCTAssertFalse(session.canUndoClear, "no step was journalled")
+        XCTAssertFalse(session.undo(), "nothing to undo")
+
+        // The empty case with an undo waiting for redo: Escape (the clear of
+        // an empty canvas) must not kill it.
+        drawLine(in: &session)
+        XCTAssertTrue(session.undo())
+        XCTAssertTrue(session.strokes.isEmpty)
+
+        XCTAssertFalse(session.clearForUndo())
+        XCTAssertTrue(session.redo(), "the clear of an empty canvas left the redo history alone")
+    }
+
+    // An uncommitted mark is discarded by the clear, never journalled: it was
+    // never part of the history.
+    func testEscapeClearDiscardsTheActiveMarkWithoutJournalling() {
+        var session = DrawingSession()
+        session.begin(at: .zero, tool: .pen, ink: .red)
+        session.extend(to: CGPoint(x: 10, y: 10))
+
+        XCTAssertFalse(session.clearForUndo(), "no committed mark, no history step")
+        XCTAssertNil(session.active)
+        XCTAssertFalse(session.canUndoClear)
+        XCTAssertFalse(session.undo())
+    }
+
+    // The numbered-badge rule survives the batch restore: numbers stay
+    // gapless, the marks drawn after the clear keep their numbers and no
+    // duplicate ever shows up.
+    func testEscapeClearUndoKeepsNumberingGapless() {
+        var session = DrawingSession()
+        for index in 0..<3 {
+            session.begin(at: CGPoint(x: CGFloat(index) * 60, y: 0), tool: .number, ink: .green)
+        }
+
+        XCTAssertTrue(session.clearForUndo())
+        session.begin(at: CGPoint(x: 300, y: 0), tool: .number, ink: .green)
+        XCTAssertEqual(session.strokes.compactMap(\.stepNumber), [1], "the new mark takes number 1 again")
+
+        XCTAssertTrue(session.undo(), "the newest change — the draw after the clear — undoes first")
+        XCTAssertTrue(session.strokes.isEmpty)
+
+        XCTAssertTrue(session.undo(), "one undo step restores the whole cleared batch")
+        XCTAssertEqual(session.strokes.compactMap(\.stepNumber), [1, 2, 3], "gapless, the original numbers")
+        XCTAssertEqual(session.nextStepNumber, 4)
+
+        session.begin(at: CGPoint(x: 300, y: 0), tool: .number, ink: .green)
+        XCTAssertEqual(session.strokes.compactMap(\.stepNumber), [1, 2, 3, 4], "no duplicate where number 1 was")
     }
 }

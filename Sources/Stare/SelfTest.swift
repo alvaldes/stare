@@ -1946,9 +1946,9 @@ enum SelfTest {
         var exitCalls = 0
         var clearCalls = 0
         view.onEscape = { exitCalls += 1 }
-        // The controller's real routing: drop the display's marks and keep
-        // the layer up.
-        view.onClearMarks = { clearCalls += 1; view.clear() }
+        // The controller's real routing (T4/S5): the clear is one undoable
+        // step of the global history.
+        view.onClearMarks = { clearCalls += 1; _ = view.clearForUndo() }
 
         drag(view, window: window, from: CGPoint(x: 100, y: 100), to: CGPoint(x: 300, y: 140))
         guard view.session.strokes.count == 1 else {
@@ -1957,13 +1957,21 @@ enum SelfTest {
         }
 
         // Escape with nothing selected: the hint's promise — the marks clear
-        // and drawing mode stays up; the exit path never fires.
+        // and drawing mode stays up; the exit path never fires. The clear is
+        // undoable: ⌘Z brings the exact mark back, ⇧⌘Z clears it again.
         key(view, 53, "\u{1B}")
         let cleared = view.session.strokes.isEmpty && clearCalls == 1
         let stayedInDrawing = exitCalls == 0
+        let undoRestores = view.session.canUndoClear && view.undoClearedMarks()
+            && view.session.strokes.count == 1 && view.session.canRedoClear
+        let redoClears = undoRestores && view.redoClearedMarks()
+            && view.session.strokes.isEmpty
+            && view.session.canUndoClear
         report.append(
             "escape cleared=\(cleared) stayedInDrawing=\(stayedInDrawing) "
-                + "marks=\(view.session.strokes.count) expect 0 exits=\(exitCalls) expect 0 ok=\(cleared && stayedInDrawing)"
+                + "marks=\(view.session.strokes.count) expect 0 exits=\(exitCalls) expect 0 "
+                + "undoRestores=\(undoRestores) redoClears=\(redoClears) "
+                + "ok=\(cleared && stayedInDrawing && undoRestores && redoClears)"
         )
 
         // A new stroke can be drawn immediately after the clear.
@@ -1995,7 +2003,7 @@ enum SelfTest {
         var boardExitCalls = 0
         var boardClearCalls = 0
         boardView.onEscape = { boardExitCalls += 1 }
-        boardView.onClearMarks = { boardClearCalls += 1; boardView.clear() }
+        boardView.onClearMarks = { boardClearCalls += 1; _ = boardView.clearForUndo() }
         drag(boardView, window: boardWindow, from: CGPoint(x: 150, y: 150), to: CGPoint(x: 350, y: 190))
         guard board.pages[0].session.strokes.count == 1 else {
             report.append("FAIL: escape board mark was not committed")
@@ -2004,13 +2012,22 @@ enum SelfTest {
         key(boardView, 53, "\u{1B}")
         let boardCleared = board.pages[0].session.strokes.isEmpty && boardClearCalls == 1
         let boardStayedOpen = boardExitCalls == 0 && board.count == 1
+        // Same round trip through the board's page bridging: the journalled
+        // clear restores onto the current page and redo clears it again.
+        let boardUndoRestores = board.pages[0].session.canUndoClear && boardView.undoClearedMarks()
+            && board.pages[0].session.strokes.count == 1
+        let boardRedoClears = boardUndoRestores && boardView.redoClearedMarks()
+            && board.pages[0].session.strokes.isEmpty
         report.append(
             "escape board cleared=\(boardCleared) stayedOpen=\(boardStayedOpen) "
-                + "marks=\(board.pages[0].session.strokes.count) expect 0 exits=\(boardExitCalls) expect 0 ok=\(boardCleared && boardStayedOpen)"
+                + "marks=\(board.pages[0].session.strokes.count) expect 0 exits=\(boardExitCalls) expect 0 "
+                + "undoRestores=\(boardUndoRestores) redoClears=\(boardRedoClears) "
+                + "ok=\(boardCleared && boardStayedOpen && boardUndoRestores && boardRedoClears)"
         )
 
-        let passed = cleared && stayedInDrawing && keepsDrawing && selectionFirst
-            && boardCleared && boardStayedOpen
+        let passed = cleared && stayedInDrawing && undoRestores && redoClears && keepsDrawing
+            && selectionFirst && boardCleared && boardStayedOpen
+            && boardUndoRestores && boardRedoClears
         report.append("escape result=\(passed ? "PASS" : "FAIL")")
         return report
     }

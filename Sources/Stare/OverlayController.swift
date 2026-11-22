@@ -32,6 +32,43 @@ enum CaptureFile {
     }
 }
 
+/// One entry of the global history. A `mark` is a single mark that was added
+/// or transformed on one display; a `clear` is a display's whole layer erased
+/// in one step (the Escape clear, T4/S5) — one undo step, not one per mark.
+private enum HistoryEntry {
+    case mark(displayID: CGDirectDisplayID, strokeID: UUID)
+    case clear(displayID: CGDirectDisplayID)
+
+    /// The display the entry routes to.
+    var owningDisplayID: CGDirectDisplayID {
+        switch self {
+        case let .mark(displayID, _): return displayID
+        case let .clear(displayID): return displayID
+        }
+    }
+
+    /// Whether this entry was wiped out of the owning display's session by a
+    /// hard clear: marks with these ids are gone with no journal trail and
+    /// the journal itself was emptied, so both kinds are unroutable and
+    /// leave the history.
+    func isWipedByHardClear(displayID: CGDirectDisplayID, clearedIDs: Set<UUID>) -> Bool {
+        switch self {
+        case let .mark(id, strokeID): return id == displayID && clearedIDs.contains(strokeID)
+        case let .clear(id): return id == displayID
+        }
+    }
+
+    /// Whether this entry names one of the marks removed by an erase or a
+    /// per-mark delete — the session op it named is stale where it sits.
+    /// Clear entries are never touched here: the batch a clear names was
+    /// already off the canvas when the erase happened, and the session's
+    /// journal still holds it, so the entry keeps its routing.
+    func namesErasedMark(displayID: CGDirectDisplayID, erasedIDs: Set<UUID>) -> Bool {
+        guard case let .mark(id, strokeID) = self, id == displayID else { return false }
+        return erasedIDs.contains(strokeID)
+    }
+}
+
 /// Owns the drawing overlay: one panel per display, the editor state shared
 /// with the toolbar, and the activate/deactivate lifecycle.
 final class OverlayController {
@@ -51,14 +88,15 @@ final class OverlayController {
     private(set) var isBoardActive = false
     private var boardCanvases: [CGDirectDisplayID: DisplayCanvas] = [:]
     private var boards: [CGDirectDisplayID: WhiteboardPages] = [:]
-    /// Global history across displays, in real order: draws and cursor
-    /// transforms interleave exactly as they happened, newest last, so Command-Z
-    /// replays the session backwards no matter which display each change
-    /// happened on. Each entry routes to the owning view's session, which
-    /// decides whether it removes a mark or restores its geometry.
-    private var historyOrder: [(displayID: CGDirectDisplayID, strokeID: UUID)] = []
+    /// Global history across displays, in real order: draws, cursor transforms
+    /// and layer clears interleave exactly as they happened, newest last, so
+    /// Command-Z replays the session backwards no matter which display each
+    /// change happened on. Each entry routes to the owning view's session,
+    /// which decides whether it removes a mark, restores geometry or brings a
+    /// cleared batch back.
+    private var historyOrder: [HistoryEntry] = []
     /// Undone entries waiting for Shift-Command-Z, newest last, across displays.
-    private var redoOrder: [(displayID: CGDirectDisplayID, strokeID: UUID)] = []
+    private var redoOrder: [HistoryEntry] = []
     private var toolbar: ToolbarPanel?
     private var previousApplication: NSRunningApplication?
     private let captureService: ScreenCapturing
@@ -656,8 +694,8 @@ final class OverlayController {
         if isBoardActive {
             for canvas in boardCanvases.values {
                 let ids = Set(canvas.view.session.strokes.map(\.id))
-                historyOrder.removeAll { ids.contains($0.strokeID) }
-                redoOrder.removeAll { ids.contains($0.strokeID) }
+                historyOrder.removeAll { $0.isWipedByHardClear(displayID: canvas.displayID, clearedIDs: ids) }
+                redoOrder.removeAll { $0.isWipedByHardClear(displayID: canvas.displayID, clearedIDs: ids) }
                 canvas.clear()
             }
             return
@@ -669,16 +707,17 @@ final class OverlayController {
     }
 
     /// Command-Z: first the mark being dragged, then the newest entry in the
-    /// global history — a draw or a transform, on whichever display it
-    /// happened. The owning view's session agrees before it acts, so a popped
-    /// entry can never undo a different change than the one it names.
+    /// global history — a draw, a transform, or a layer clear on whichever
+    /// display it happened. The owning view's session agrees before it acts,
+    /// so a popped entry can never undo a different change than the one it
+    /// names.
     func undo() {
         let canvases = activeCanvases
         if let canvas = activeCanvasUnderPointer(), canvas.discardActiveMark() { return }
         while let last = historyOrder.popLast() {
-            if let canvas = canvases[last.displayID], canvas.undoMark(id: last.strokeID) {
+            if let canvas = canvases[last.owningDisplayID], canvas.undo(entry: last) {
                 redoOrder.append(last)
-                Diag.log("undo display=\(last.displayID) remaining=\(historyOrder.count)")
+                Diag.log("undo display=\(last.owningDisplayID) remaining=\(historyOrder.count)")
                 return
             }
         }
@@ -686,13 +725,13 @@ final class OverlayController {
     }
 
     /// Shift-Command-Z: puts back the newest undone change, on the display it
-    /// came from — a removed mark or a transform, whichever it was.
+    /// came from — a removed mark, a transform, or the cleared batch.
     func redo() {
         let canvases = activeCanvases
         while let last = redoOrder.popLast() {
-            if let canvas = canvases[last.displayID], canvas.redoMark(id: last.strokeID) {
+            if let canvas = canvases[last.owningDisplayID], canvas.redo(entry: last) {
                 historyOrder.append(last)
-                Diag.log("redo display=\(last.displayID) remaining=\(redoOrder.count)")
+                Diag.log("redo display=\(last.owningDisplayID) remaining=\(redoOrder.count)")
                 return
             }
         }
@@ -766,41 +805,42 @@ final class OverlayController {
     private func wireHistoryAndSelection(_ view: OverlayView, displayID: CGDirectDisplayID) {
         view.onCommit = { [weak self] stroke in
             guard let self else { return }
-            historyOrder.append((displayID, stroke.id))
+            historyOrder.append(.mark(displayID: displayID, strokeID: stroke.id))
             redoOrder.removeAll()
         }
         view.onTransform = { [weak self] stroke in
             guard let self else { return }
             // A transform is a history entry like a draw, in real order; the
             // session forked its own redo journal, so the global one forks too.
-            historyOrder.append((displayID, stroke.id))
+            historyOrder.append(.mark(displayID: displayID, strokeID: stroke.id))
             redoOrder.removeAll()
         }
         view.onDelete = { [weak self] id in
             guard let self else { return }
             // Deleting is its own undo: the mark's entries leave the history
             // and it waits for redo, exactly like a Command-Z left it.
-            historyOrder.removeAll { $0.strokeID == id }
-            redoOrder.removeAll { $0.strokeID == id }
-            redoOrder.append((displayID, id))
+            historyOrder.removeAll { $0.namesErasedMark(displayID: displayID, erasedIDs: [id]) }
+            redoOrder.removeAll { $0.namesErasedMark(displayID: displayID, erasedIDs: [id]) }
+            redoOrder.append(.mark(displayID: displayID, strokeID: id))
         }
         view.onClearMarks = { [weak self, weak view] in
             guard let self, let view else { return }
-            // Escape with nothing selected: this display's marks (the current
-            // whiteboard page in board mode) are cleared and drawing keeps
-            // going there. The display's entries leave the global history, so
-            // undo and redo cannot resurrect what Escape just erased — the
-            // same rule an erase follows.
-            let ids = Set(view.session.strokes.map(\.id))
-            historyOrder.removeAll { ids.contains($0.strokeID) }
-            redoOrder.removeAll { ids.contains($0.strokeID) }
-            view.clear()
+            // Escape with nothing selected (T4/S5): this display's marks (the
+            // current whiteboard page in board mode) are cleared and drawing
+            // keeps going there, and the clear enters the global history as
+            // ONE undoable step — Command-Z restores everything it removed,
+            // Shift-Command-Z clears it again. A clear is an edit like the
+            // eraser, so the redo history forks; an empty layer is a no-op
+            // that adds no history step.
+            guard view.clearForUndo() else { return }
+            historyOrder.append(.clear(displayID: displayID))
+            redoOrder.removeAll()
         }
         view.onErase = { [weak self] ids in
             guard let self else { return }
             let erased = Set(ids)
-            historyOrder.removeAll { erased.contains($0.strokeID) }
-            redoOrder.removeAll { erased.contains($0.strokeID) }
+            historyOrder.removeAll { $0.namesErasedMark(displayID: displayID, erasedIDs: erased) }
+            redoOrder.removeAll { $0.namesErasedMark(displayID: displayID, erasedIDs: erased) }
         }
         view.onUndo = { [weak self] in self?.undo() }
         view.onRedo = { [weak self] in self?.redo() }
@@ -954,8 +994,8 @@ final class OverlayController {
     private func clearCurrentBoardPage() {
         guard let canvas = boardCanvasUnderPointer() else { return }
         let ids = Set(canvas.view.session.strokes.map(\.id))
-        historyOrder.removeAll { ids.contains($0.strokeID) }
-        redoOrder.removeAll { ids.contains($0.strokeID) }
+        historyOrder.removeAll { $0.isWipedByHardClear(displayID: canvas.displayID, clearedIDs: ids) }
+        redoOrder.removeAll { $0.isWipedByHardClear(displayID: canvas.displayID, clearedIDs: ids) }
         canvas.clear()
     }
 
@@ -1054,4 +1094,21 @@ final class DisplayCanvas {
     func discardActiveMark() -> Bool { view.discardActiveMark() }
     func redoMark(id: UUID) -> Bool { view.redoMark(id: id) }
     func undoMark(id: UUID) -> Bool { view.undoMark(id: id) }
+
+    /// Routes one global-history entry against this display's session: a
+    /// single mark (draw or transform) or the batch the Escape clear took
+    /// away (T4/S5).
+    fileprivate func undo(entry: HistoryEntry) -> Bool {
+        switch entry {
+        case let .mark(_, id): return undoMark(id: id)
+        case .clear: return view.undoClearedMarks()
+        }
+    }
+
+    fileprivate func redo(entry: HistoryEntry) -> Bool {
+        switch entry {
+        case let .mark(_, id): return redoMark(id: id)
+        case .clear: return view.redoClearedMarks()
+        }
+    }
 }
