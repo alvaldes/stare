@@ -23,5 +23,10 @@ let package = Package(
             dependencies: ["StareCore"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        .testTarget(
+            name: "StareTests",
+            dependencies: ["Stare"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
     ]
 )
