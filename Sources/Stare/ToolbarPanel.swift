@@ -15,6 +15,54 @@ final class ToolbarHostingView: NSHostingView<ToolbarView> {
     /// to a window, so the panel can take the content's new size.
     var onFittingSizeChange: (() -> Void)?
 
+    // MARK: Toolbar cursor (T2/S3)
+
+    /// Over any part of the bar that is not the gripper the cursor is the
+    /// arrow: the whole content is one arrow cursor rect, and the gripper's
+    /// own deeper rect (open hand, closed hand while dragging) wins over its
+    /// slot. `.activeAlways` mirrors the overlay's tracking area: the bar
+    /// floats above other apps, so its pointer must hold while Stare is not
+    /// the active one, which cursor rectangles alone do not allow.
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .arrow)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        // Only the areas this class installs: the hosting view's SwiftUI
+        // content keeps its own.
+        for area in trackingAreas where area.owner === self { removeTrackingArea(area) }
+        addTrackingArea(
+            NSTrackingArea(
+                rect: bounds,
+                options: [.cursorUpdate, .activeAlways, .inVisibleRect],
+                owner: self,
+                userInfo: nil
+            )
+        )
+    }
+
+    /// The gripper's own tracking area speaks for its rect, so the arrow here
+    /// never fights the hand: when the pointer is inside the gripper's frame
+    /// this handler stands down whatever order AppKit delivers in.
+    override func cursorUpdate(with event: NSEvent) {
+        if let gripper = gripperView, gripper.frameInWindow.contains(event.locationInWindow) { return }
+        NSCursor.arrow.set()
+    }
+
+    /// The gripper subview, if present: the representable nests it below
+    /// SwiftUI's intermediate views, so the lookup walks the tree — shallow,
+    /// and only ever runs on a cursor boundary crossing.
+    private var gripperView: ToolbarGripperView? {
+        var stack: [NSView] = [self]
+        while let view = stack.popLast() {
+            if let gripper = view as? ToolbarGripperView { return gripper }
+            stack.append(contentsOf: view.subviews)
+        }
+        return nil
+    }
+
+
     private var lastReportedFittingSize: NSSize = .zero
     private var intrinsicSizeObservation: NSKeyValueObservation?
 

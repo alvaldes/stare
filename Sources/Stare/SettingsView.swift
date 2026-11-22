@@ -263,7 +263,7 @@ private struct GeneralPane: View {
                 SettingRow(
                     title: "Bar orientation",
                     detail: "Horizontal lays the tools in a row; vertical stacks them in one column.",
-                    content: Picker("", selection: $model.toolbarOrientation) {
+                    content: Picker("", selection: toolbarOrientationSelection) {
                         ForEach(ToolbarOrientation.allCases, id: \.self) { orientation in
                             Text(orientation.title).tag(orientation)
                         }
@@ -275,7 +275,9 @@ private struct GeneralPane: View {
                     title: "Docked edge",
                     detail: "The edge of the screen the bar rests at when it has not been dragged.",
                     content: Picker("", selection: $model.toolbarBorder) {
-                        ForEach(ToolbarBorder.allCases, id: \.self) { border in
+                        // Only the edges the chosen orientation can sit on
+                        // (T3/S4): horizontal → top/bottom, vertical → left/right.
+                        ForEach(ToolbarBorder.validEdges(for: model.toolbarOrientation), id: \.self) { border in
                             Text(border.title).tag(border)
                         }
                     }
@@ -304,6 +306,24 @@ private struct GeneralPane: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    // MARK: Toolbar edge validity (T3/S4)
+
+    /// The orientation picker's binding: flipping the orientation may leave
+    /// the stored border invalid for the new shape (a top dock on a vertical
+    /// column), so the same fallback the decode applies re-docks the border on
+    /// the new orientation's default edge at once — the stored pair is never
+    /// left inconsistent, and the bar moves to that edge through the panel's
+    /// own re-dock path.
+    private var toolbarOrientationSelection: Binding<ToolbarOrientation> {
+        Binding(
+            get: { model.toolbarOrientation },
+            set: { orientation in
+                model.toolbarOrientation = orientation
+                model.toolbarBorder = model.toolbarBorder.validated(for: orientation)
+            }
+        )
     }
 
     // MARK: Toolbar tools (T8/S10)

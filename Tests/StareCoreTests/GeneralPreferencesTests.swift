@@ -131,7 +131,10 @@ final class GeneralPreferencesTests: XCTestCase {
             #"{"showArmedFrame":false,"scope":"active","palettePlacement":"fixed","laserLifetime":3,"toolbarOrientation":"diagonal","toolbarBorder":"left"}"#
         )
         XCTAssertEqual(general.toolbarOrientation, .horizontal)
-        XCTAssertEqual(general.toolbarBorder, .left)
+        // T3/S4: the decoded border is never left inconsistent with the
+        // orientation, so the legacy `left` re-docks on the horizontal row's
+        // own default edge.
+        XCTAssertEqual(general.toolbarBorder, .top)
         XCTAssertEqual(general.scope, .active)
         XCTAssertEqual(general.laserLifetime, .three)
     }
@@ -140,7 +143,10 @@ final class GeneralPreferencesTests: XCTestCase {
         let general = try Self.decode(
             #"{"scope":"active","palettePlacement":"fixed","laserLifetime":3,"toolbarOrientation":"vertical","toolbarBorder":"sky"}"#
         )
-        XCTAssertEqual(general.toolbarBorder, .top)
+        // T3/S4: the unknown raw value first falls back to the global
+        // default, and that guess is then made valid for the stored
+        // orientation — so the vertical bar never keeps a top/bottom dock.
+        XCTAssertEqual(general.toolbarBorder, .left)
         XCTAssertEqual(general.toolbarOrientation, .vertical)
         XCTAssertEqual(general.scope, .active)
         XCTAssertEqual(general.laserLifetime, .three)
@@ -482,6 +488,84 @@ final class GeneralPreferencesTests: XCTestCase {
         )
         XCTAssertEqual(general.toolbarOrientation, GeneralPreferences.standard.toolbarOrientation)
         XCTAssertEqual(general.toolbarBorder, GeneralPreferences.standard.toolbarBorder)
+    }
+
+    // MARK: Valid edges per orientation (T3/S4)
+
+    func testHorizontalDocksWithOnlyTopAndBottom() {
+        XCTAssertEqual(ToolbarBorder.validEdges(for: .horizontal), [.top, .bottom])
+    }
+
+    func testVerticalDocksWithOnlyLeftAndRight() {
+        XCTAssertEqual(ToolbarBorder.validEdges(for: .vertical), [.left, .right])
+    }
+
+    func testFallbackEdgeIsTheFirstValidEdgeOfTheOrientation() {
+        // The horizontal answer is the dock the app has always opened with;
+        // the vertical one mirrors it onto the column's first edge.
+        XCTAssertEqual(ToolbarBorder.fallbackEdge(for: .horizontal), .top)
+        XCTAssertEqual(ToolbarBorder.fallbackEdge(for: .vertical), .left)
+    }
+
+    func testValidationKeepsEveryValidPairAndFallsBackForEveryInvalidOne() {
+        // All eight orientation × border combinations: a valid edge is
+        // itself; an invalid one is that orientation's fallback edge.
+        for border in ToolbarBorder.allCases {
+            XCTAssertEqual(
+                border.validated(for: .horizontal),
+                border == .top || border == .bottom ? border : .top,
+                "horizontal/\(border.rawValue)"
+            )
+            XCTAssertEqual(
+                border.validated(for: .vertical),
+                border == .left || border == .right ? border : .left,
+                "vertical/\(border.rawValue)"
+            )
+        }
+    }
+
+    func testDecodingAnInvalidStoredPairFallsBackToTheOrientationsDefaultEdge() throws {
+        // horizontal + left and vertical + bottom are the inconsistent pairs
+        // S4 refuses: decoding re-docks them on the orientation's own default
+        // edge, so the bar lands somewhere the orientation can actually sit.
+        let horizontalLeft = try Self.decode(
+            #"{"showArmedFrame":false,"toolbarOrientation":"horizontal","toolbarBorder":"left"}"#
+        )
+        XCTAssertEqual(horizontalLeft.toolbarOrientation, .horizontal)
+        XCTAssertEqual(horizontalLeft.toolbarBorder, .top)
+
+        let verticalBottom = try Self.decode(
+            #"{"scope":"active","toolbarOrientation":"vertical","toolbarBorder":"bottom"}"#
+        )
+        XCTAssertEqual(verticalBottom.toolbarOrientation, .vertical)
+        XCTAssertEqual(verticalBottom.toolbarBorder, .left)
+    }
+
+    func testDecodingAValidStoredPairRoundTripsItExactly() throws {
+        // A stored pair that is already consistent survives the decode
+        // untouched — the fallback must never move a bar that sits legally.
+        let horizontalBottom = try Self.decode(
+            #"{"toolbarOrientation":"horizontal","toolbarBorder":"bottom"}"#
+        )
+        XCTAssertEqual(horizontalBottom.toolbarOrientation, .horizontal)
+        XCTAssertEqual(horizontalBottom.toolbarBorder, .bottom)
+
+        let verticalRight = try Self.decode(
+            #"{"toolbarOrientation":"vertical","toolbarBorder":"right"}"#
+        )
+        XCTAssertEqual(verticalRight.toolbarOrientation, .vertical)
+        XCTAssertEqual(verticalRight.toolbarBorder, .right)
+    }
+
+    func testToolbarPairRoundTripsThroughEncodeAndDecodeConsistent() throws {
+        var general = GeneralPreferences.standard
+        general.toolbarOrientation = .vertical
+        general.toolbarBorder = .right
+
+        let data = try JSONEncoder().encode(general)
+        let decoded = try JSONDecoder().decode(GeneralPreferences.self, from: data)
+        XCTAssertEqual(decoded, general)
+        XCTAssertEqual(decoded.toolbarBorder, .right, "a valid pair survives the round trip unchanged")
     }
 
     // MARK: Helpers

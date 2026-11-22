@@ -28,6 +28,15 @@ private struct ToolbarGripper: NSViewRepresentable {
 /// The handle itself: a 2×3 dot pattern on a hit area big enough to grab,
 /// drawn by the view — no new asset.
 final class ToolbarGripperView: NSView {
+    /// Whether the gripper's own drag is running (T2/S3). While it does, the
+    /// cursor is the closed hand — the same pair the board's pan shows.
+    private(set) var isDragging = false
+
+    /// The cursor the gripper shows while hovered (T2/S3): an open hand, or a
+    /// closed one while the drag runs. Every cursor path below serves this
+    /// one answer, so hover and drag can never disagree.
+    var hoverCursor: NSCursor { isDragging ? .closedHand : .openHand }
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         toolTip = ToolbarGripperSpec.tooltip
@@ -46,15 +55,73 @@ final class ToolbarGripperView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        beginDrag()
         window?.performDrag(with: event)
+        endDrag()
     }
 
     override func rightMouseDown(with event: NSEvent) {
         ToolbarPanel.requestPositionReset()
     }
 
+    /// Opens the drag (T2/S3): the closed hand takes over, exactly like the
+    /// board's pan. Split from `mouseDown` so the selftest and the unit tests
+    /// can pin the hand pair without performing a real window drag.
+    func beginDrag() {
+        isDragging = true
+        NSCursor.closedHand.set()
+    }
+
+    /// Closes the drag (T2/S3): the pointer is over the gripper still after
+    /// the move, so the open hand returns — never a stale closed hand or
+    /// arrow left by the bar.
+    func endDrag() {
+        isDragging = false
+        NSCursor.openHand.set()
+    }
+
+    /// The drag ends because the view is going away (T2/S3): forget the drag
+    /// state and hand the cursor back as the neutral arrow — whatever sits
+    /// under the bar (overlay or board) owns the real cursor next and
+    /// re-asserts it on its first pointer event.
+    func abandonDrag() {
+        isDragging = false
+        NSCursor.arrow.set()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil { abandonDrag() }
+    }
+
     override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .openHand)
+        addCursorRect(bounds, cursor: hoverCursor)
+    }
+
+    /// The gripper's frame in window coordinates (T2/S3): what the hosting
+    /// view's cursor arbitration reads to stand down its arrow over this rect.
+    var frameInWindow: NSRect {
+        convert(bounds, to: nil)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(
+            NSTrackingArea(
+                rect: bounds,
+                options: [.cursorUpdate, .activeAlways, .inVisibleRect],
+                owner: self,
+                userInfo: nil
+            )
+        )
+    }
+
+    /// `.activeAlways` mirrors the overlay's own cursor discipline: the bar
+    /// floats above other apps, so its pointers must hold while Stare is not
+    /// the active one, which cursor rectangles alone do not allow.
+    override func cursorUpdate(with event: NSEvent) {
+        hoverCursor.set()
     }
 
     override func draw(_ dirtyRect: NSRect) {

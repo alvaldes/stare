@@ -15,4 +15,35 @@ final class ToolbarGripperTests: XCTestCase {
             "the gripper must be the item right after the close button, and the last in the bar"
         )
     }
+
+    // MARK: Gripper cursors (T2/S3)
+
+    func testGripperHoversWithTheOpenHandAndDragsWithTheClosedHand() {
+        // T2/S3: over the gripper the open hand shows; while the drag runs it
+        // is the closed hand — the same pair the board's pan shows.
+        let gripper = ToolbarGripperView()
+        XCTAssertFalse(gripper.isDragging)
+        XCTAssertEqual(gripper.hoverCursor, .openHand)
+
+        gripper.beginDrag()
+        XCTAssertTrue(gripper.isDragging)
+        XCTAssertEqual(gripper.hoverCursor, .closedHand)
+
+        gripper.endDrag()
+        XCTAssertFalse(gripper.isDragging)
+        XCTAssertEqual(gripper.hoverCursor, .openHand, "releasing the drag returns the open hand")
+    }
+
+    func testGripperAbandonsTheDragWhenItLeavesTheWindow() {
+        // T2/S3: the removal path must not leave a drag (or a hand cursor)
+        // behind — the view forgets the drag state, and whatever sits under
+        // the bar owns the cursor next.
+        let gripper = ToolbarGripperView()
+        gripper.beginDrag()
+        XCTAssertTrue(gripper.isDragging)
+
+        gripper.abandonDrag()
+        XCTAssertFalse(gripper.isDragging)
+        XCTAssertEqual(gripper.hoverCursor, .openHand)
+    }
 }

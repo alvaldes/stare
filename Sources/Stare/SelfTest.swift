@@ -226,6 +226,30 @@ enum SelfTest {
                 + "ok=\(dockDefaults && dockAllInside)"
         )
 
+        // Palette cursors and edges (T2/T3, S3/S4): the gripper's hover/drag
+        // pair is the board's pan pair — exercised on the real view without
+        // performing a window drag — and the border choice is only ever one
+        // of the orientation's two edges: every invalid stored pair re-docks
+        // on the orientation's own default edge, and a valid pair stays.
+        let gripper = ToolbarGripperView()
+        let hoverOpenHand = !gripper.isDragging && gripper.hoverCursor == .openHand
+        gripper.beginDrag()
+        let dragClosedHand = gripper.isDragging && gripper.hoverCursor == .closedHand
+        gripper.endDrag()
+        let releaseOpenHand = !gripper.isDragging && gripper.hoverCursor == .openHand
+        let edgeFallbacksHold = ToolbarBorder.fallbackEdge(for: .horizontal) == .top
+            && ToolbarBorder.fallbackEdge(for: .vertical) == .left
+            && ToolbarBorder.left.validated(for: .horizontal) == .top
+            && ToolbarBorder.right.validated(for: .horizontal) == .top
+            && ToolbarBorder.top.validated(for: .vertical) == .left
+            && ToolbarBorder.bottom.validated(for: .vertical) == .left
+            && ToolbarBorder.bottom.validated(for: .horizontal) == .bottom
+            && ToolbarBorder.left.validated(for: .vertical) == .left
+        report.append(
+            "palette cursors hover=\(hoverOpenHand) drag=\(dragClosedHand) release=\(releaseOpenHand) "
+                + "edges fallbacks=\(edgeFallbacksHold) ok=\(hoverOpenHand && dragClosedHand && releaseOpenHand && edgeFallbacksHold)"
+        )
+
         // Palette tool layout (T8/S10): the bar follows the persisted tool
         // layout — a custom order with a hidden tool — resolved by the exact
         // `toolSection` the view draws and rendered through the real view

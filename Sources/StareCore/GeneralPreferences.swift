@@ -106,6 +106,34 @@ public enum ToolbarBorder: String, Codable, CaseIterable, Sendable {
         case .right: "Right"
         }
     }
+
+    /// The docked edges that make sense for an orientation (T3/S4): a
+    /// horizontal row rests on the top or bottom edge; a vertical column on
+    /// the left or right. This is the exact list the Settings picker offers,
+    /// so an edge the orientation cannot sit on is never choosable.
+    public static func validEdges(for orientation: ToolbarOrientation) -> [ToolbarBorder] {
+        switch orientation {
+        case .horizontal: [.top, .bottom]
+        case .vertical: [.left, .right]
+        }
+    }
+
+    /// The edge an orientation falls back to (T3/S4): the first valid edge —
+    /// the top for a horizontal row (the dock the app has always opened
+    /// with), the left for a vertical column, its mirror on the column's
+    /// first edge.
+    public static func fallbackEdge(for orientation: ToolbarOrientation) -> ToolbarBorder {
+        validEdges(for: orientation)[0]
+    }
+
+    /// This edge made valid for `orientation` (T3/S4): itself when it is one
+    /// of the orientation's edges, the orientation's fallback edge otherwise.
+    /// Every stored pair passes through here on decode, so a changed
+    /// orientation can never leave the pair inconsistent (horizontal + left
+    /// or vertical + top).
+    public func validated(for orientation: ToolbarOrientation) -> ToolbarBorder {
+        Self.validEdges(for: orientation).contains(self) ? self : Self.fallbackEdge(for: orientation)
+    }
 }
 
 /// Which tools the drawing toolbar shows and in what order (T8/S10): the
@@ -400,6 +428,11 @@ public struct GeneralPreferences: Codable, Equatable, Sendable {
         self.toolbarOrientation = rawOrientation.flatMap(ToolbarOrientation.init(rawValue:)) ?? .horizontal
         let rawBorder = try? container.decode(String.self, forKey: .toolbarBorder)
         self.toolbarBorder = rawBorder.flatMap(ToolbarBorder.init(rawValue:)) ?? .top
+        // T3/S4: the stored pair must never decode inconsistent — a border
+        // the stored orientation cannot sit on re-docks on that orientation's
+        // own default edge (horizontal → top, vertical → left); a valid pair
+        // passes unchanged.
+        self.toolbarBorder = self.toolbarBorder.validated(for: self.toolbarOrientation)
         // Lenient like every field: an unparseable layout (or a blob written
         // before it existed) keeps the shipped bar.
         self.toolbarTools = (try? container.decode(ToolbarToolLayout.self, forKey: .toolbarTools)) ?? .standard
