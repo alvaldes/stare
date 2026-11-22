@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stare Settings — 03 promoted preview, compact column</title>
+<style>
+  :root{
+    --desk:#e9edf3; --paper:#fff; --graphite:#1c2030; --muted:#5b6275; --rule:#d3d9e3;
+    --blue:#007aff; --pane:#eff1f5; --surface:#fff; --hair:rgba(28,32,48,.08);
+    --font:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%}
+  body{background:var(--desk);font-family:var(--font);color:var(--graphite);
+       display:flex;flex-direction:column;align-items:center;gap:12px;padding:16px 24px 24px}
+  :focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+  .board-label{width:1000px;display:flex;align-items:baseline;gap:10px}
+  .board-label h1{font-size:13px;font-weight:650;margin:0;white-space:nowrap}
+  .board-label p{font-size:12px;color:var(--muted);margin:0}
+  .board-label .n{font-variant-numeric:tabular-nums;color:var(--blue);font-weight:700}
+
+  .win{width:1000px;height:660px;display:flex;flex-direction:column;background:var(--paper);
+       border-radius:12px;overflow:hidden;
+       box-shadow:0 30px 80px -24px rgba(28,32,48,.45),0 0 0 1px rgba(28,32,48,.10)}
+  .titlebar{height:30px;flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:0 12px;
+       background:linear-gradient(#f8f9fb,#f1f3f7);border-bottom:1px solid var(--rule)}
+  .lights{display:flex;gap:8px}
+  .lights i{width:12px;height:12px;border-radius:50%;display:block}
+  .lights i:nth-child(1){background:#ff5f57}
+  .lights i:nth-child(2){background:#febc2e}
+  .lights i:nth-child(3){background:#28c840}
+  .titlebar .t{flex:1;text-align:center;font-size:13px;font-weight:590;color:#4b5058;margin-right:52px}
+  .shell{flex:1;display:flex;min-height:0}
+
+  .side{width:190px;flex:0 0 auto;background:#f4f6fa;border-right:1px solid var(--rule);
+        padding:10px 8px;display:flex;flex-direction:column;gap:1px;overflow:hidden}
+  .brand{display:flex;align-items:center;gap:9px;padding:2px 6px 12px}
+  .mark{width:30px;height:30px;border-radius:8px;background:linear-gradient(#3b4252,#1c2030);
+        display:grid;place-items:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.14)}
+  .mark span{width:12px;height:12px;border-radius:50%;border:2.5px solid #fff;display:block}
+  .brand b{font-size:13.5px;font-weight:650}
+  .grp{font-size:10px;font-weight:660;letter-spacing:.07em;color:#8a91a0;
+       padding:11px 8px 4px;text-transform:uppercase}
+  .item{display:flex;align-items:center;gap:8px;height:27px;padding:0 8px;border-radius:6px;
+        font-size:13px;color:#31364a;text-decoration:none}
+  .item .ic{width:15px;height:15px;flex:0 0 auto;opacity:.78}
+  .item[aria-current="page"]{background:#dde5f4;color:#122748;font-weight:560}
+  .item[aria-current="page"] .ic{opacity:1}
+  .item:hover{background:#e8ecf4}
+
+  .pane{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--pane);min-height:0;position:relative}
+  .fade{position:absolute;left:0;right:0;bottom:0;height:36px;pointer-events:none;
+        background:linear-gradient(rgba(239,241,245,0),#eff1f5)}
+  .scroll{flex:1;min-height:0;overflow:auto;padding:16px 22px 22px}
+  .scroll::-webkit-scrollbar{width:0}
+  .column{width:620px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+  .pane-head{margin-bottom:2px}
+  .pane-head h2{margin:0 0 3px;font-size:17px;font-weight:660;letter-spacing:-.01em}
+  .pane-head p{margin:0;font-size:12px;color:var(--muted)}
+
+  /* today's card chrome, kept: material surface, icon tile, section title */
+  .card{background:rgba(255,255,255,.86);border:1px solid var(--hair);border-radius:14px;
+        box-shadow:0 1px 2px rgba(28,32,48,.05);overflow:hidden}
+  .card > header{display:flex;align-items:center;gap:9px;padding:11px 15px 10px;
+                 border-bottom:1px solid var(--hair)}
+  .icon{width:22px;height:22px;border-radius:6px;background:#e7ebf3;display:grid;place-items:center;
+        color:#4a5162}
+  .card > header h3{margin:0;font-size:13px;font-weight:620}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:16px;
+       padding:9px 15px;min-height:38px;border-top:1px solid var(--hair)}
+  .row:first-of-type{border-top:0}
+  .row .lab{display:flex;flex-direction:column;gap:1px;min-width:0}
+  .row .lab b{font-size:12.5px;font-weight:560}
+  .row .lab small{font-size:11px;color:var(--muted);line-height:1.35}
+  .row .ctl{flex:0 0 auto;display:flex;align-items:center;gap:8px}
+
+  .seg{display:flex;background:#e8ebf0;border-radius:7px;padding:2px;gap:2px}
+  .seg span{font-size:11.5px;padding:3px 9px;border-radius:5px;color:#414756;white-space:nowrap}
+  .seg span[aria-selected="true"]{background:#fff;box-shadow:0 1px 2px rgba(28,32,48,.16);font-weight:560}
+  .slider{width:128px;height:16px;position:relative;display:flex;align-items:center}
+  .slider .trk{position:absolute;left:0;right:0;height:4px;top:6px;background:#d7dbe2;border-radius:2px}
+  .slider .fill{position:absolute;height:4px;top:6px;left:0;background:var(--blue);border-radius:2px}
+  .slider .knob{position:absolute;width:15px;height:15px;border-radius:50%;background:#fff;
+                border:1px solid rgba(28,32,48,.18);box-shadow:0 1px 2px rgba(28,32,48,.22);top:1px}
+  .val{font-size:12px;font-variant-numeric:tabular-nums;color:#4b5162;min-width:40px;text-align:right}
+  .pop{display:flex;align-items:center;gap:14px;background:#fff;border:1px solid rgba(28,32,48,.16);
+       border-radius:6px;padding:3px 6px 3px 9px;font-size:12px;box-shadow:0 1px 1px rgba(28,32,48,.05)}
+  .pop svg{opacity:.5}
+  .sw{width:34px;height:20px;border-radius:10px;background:var(--blue);position:relative;flex:0 0 auto}
+  .sw::after{content:"";position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:50%;
+             background:#fff;box-shadow:0 1px 2px rgba(28,32,48,.3)}
+  .chips{display:flex;gap:6px}
+  .chip{width:18px;height:18px;border-radius:50%;border:1px solid rgba(28,32,48,.18);display:block}
+  .chip[aria-current="true"]{box-shadow:0 0 0 2px #fff,0 0 0 3.5px var(--blue)}
+
+  .tiles{display:flex;gap:12px;justify-content:center;padding:14px}
+  .tile{width:148px;height:148px;border-radius:10px;position:relative;overflow:hidden;
+        display:grid;place-items:center;border:1px solid var(--hair)}
+  .tile.light{background:#fff}
+  .tile.dark{background:#292a2e;border-color:#1b1c20}
+  .ring{width:78px;height:78px;border-radius:50%;border:7px dashed #ff9500;
+        box-shadow:0 0 0 6px rgba(255,149,0,.20),0 0 22px 7px rgba(255,149,0,.28)}
+  .dot{position:absolute;width:8px;height:8px;border-radius:50%;background:#ff9500;
+       box-shadow:0 0 0 3px rgba(255,149,0,.22)}
+  .tile .tag{position:absolute;top:7px;left:9px;font-size:9.5px;letter-spacing:.05em;
+             text-transform:uppercase;color:#9aa1ae}
+  .foot{padding:0 15px 12px;font-size:11px;color:var(--muted)}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+  <div class="board-label">
+    <h1><span class="n">03</span> Promoted preview, compact column</h1>
+    <p>Keeps today's card chrome. The preview moves directly under the first group, and the whole pane becomes one 620 pt column. In <b>Bar</b> the preview sits just above the tool pool.</p>
+  </div>
+
+  <div class="win" role="application" aria-label="Stare Settings">
+    <div class="titlebar">
+      <div class="lights"><i></i><i></i><i></i></div>
+      <div class="t">Stare Settings</div>
+    </div>
+
+    <div class="shell">
+      <nav class="side" aria-label="Settings sections">
+        <div class="brand">
+          <div class="mark" aria-hidden="true"><span></span></div>
+          <b>Stare</b>
+        </div>
+        <div class="grp">Capture</div>
+        <a class="item" href="#"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="4" width="13" height="9.5" rx="2"/><circle cx="8" cy="8.7" r="2.6"/><path d="M5.6 4l.9-1.6h3l.9 1.6"/></svg>Capture</a>
+        <div class="grp">Draw</div>
+        <a class="item" href="#"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="2.6 2"><rect x="1.6" y="2.6" width="12.8" height="10.8" rx="1.6"/></svg>Overlay</a>
+        <a class="item" href="#"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.4 13.6l1.2-4.2 6.6-6.6 2.6 2.6-6.6 6.6z"/><path d="M10.2 2.8l2.6 2.6"/></svg>Tools</a>
+        <a class="item" href="#"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="3" width="13" height="3.4" rx="1"/><rect x="1.5" y="9.6" width="9" height="3.4" rx="1"/></svg>Bar</a>
+        <div class="grp">Pointer</div>
+        <a class="item" href="#" aria-current="page"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 13V6.2l3.1 3.1-1.5 3.7z"/><path d="M9.4 6.6l3.4-3.4M8.6 3.2h4.6v4.6"/></svg>Pointer Highlight</a>
+        <div class="grp">Board</div>
+        <a class="item" href="#"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="9" height="7.5" rx="1.2"/><rect x="6" y="6" width="8.5" height="7.5" rx="1.2" fill="#f4f6fa"/></svg>Whiteboard</a>
+        <div class="grp">System</div>
+        <a class="item" href="#"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.4" y="3.6" width="13.2" height="8.8" rx="1.4"/><path d="M4.4 6.4h1M7 6.4h1M9.6 6.4h1M4.4 9.4h7.2"/></svg>Shortcuts</a>
+        <a class="item" href="#"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="2.4"/><path d="M8 1.4v1.7M8 12.9v1.7M1.4 8h1.7M12.9 8h1.7M3.4 3.4l1.2 1.2M11.4 11.4l1.2 1.2M12.6 3.4l-1.2 1.2M4.6 11.4l-1.2 1.2"/></svg>General</a>
+        <a class="item" href="#"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1.6l5.2 2v4.2c0 3.3-2.2 5.4-5.2 6.6-3-1.2-5.2-3.3-5.2-6.6V3.6z"/></svg>Permissions</a>
+        <a class="item" href="#"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="6.4"/><path d="M8 10.8v.2M8 4.9c1 0 1.7.7 1.7 1.6 0 1.3-1.7 1.5-1.7 2.6"/></svg>About</a>
+      </nav>
+
+      <main class="pane">
+        <div class="fade" aria-hidden="true"></div>
+        <div class="scroll">
+          <div class="column">
+            <div class="pane-head">
+              <h2>Pointer Highlight</h2>
+              <p>The ring that follows your pointer while you present.</p>
+            </div>
+
+            <section class="card" aria-labelledby="c1">
+              <header><span class="icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="5.4"/><circle cx="8" cy="8" r="1.9"/></svg></span><h3 id="c1">Highlight</h3></header>
+              <div class="row">
+                <div class="lab"><b>Preset</b><small>Ring shape around the pointer</small></div>
+                <div class="ctl"><div class="seg"><span aria-selected="true">Circle</span><span>Ellipse</span><span>Rounded</span></div></div>
+              </div>
+              <div class="row">
+                <div class="lab"><b>Size</b></div>
+                <div class="ctl"><div class="slider"><div class="trk"></div><div class="fill" style="width:58%"></div><div class="knob" style="left:calc(58% - 7px)"></div></div><span class="val">72 pt</span></div>
+              </div>
+              <div class="row">
+                <div class="lab"><b>Band width</b></div>
+                <div class="ctl"><div class="slider"><div class="trk"></div><div class="fill" style="width:26%"></div><div class="knob" style="left:calc(26% - 7px)"></div></div><span class="val">6 pt</span></div>
+              </div>
+              <div class="row">
+                <div class="lab"><b>Border</b></div>
+                <div class="ctl"><div class="seg"><span>Solid</span><span aria-selected="true">Dashed</span><span>None</span></div></div>
+              </div>
+              <div class="row">
+                <div class="lab"><b>Opacity</b></div>
+                <div class="ctl"><div class="slider"><div class="trk"></div><div class="fill" style="width:85%"></div><div class="knob" style="left:calc(85% - 7px)"></div></div><span class="val">85%</span></div>
+              </div>
+            </section>
+
+            <section class="card" aria-labelledby="c2">
+              <header><span class="icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.4 8s2.4-4.2 6.6-4.2S14.6 8 14.6 8s-2.4 4.2-6.6 4.2S1.4 8 1.4 8z"/><circle cx="8" cy="8" r="1.8"/></svg></span><h3 id="c2">Preview</h3></header>
+              <div class="tiles">
+                <div class="tile light"><span class="tag">Light</span><div class="ring" aria-hidden="true"></div><i class="dot" style="left:52%;top:58%"></i></div>
+                <div class="tile dark"><span class="tag" style="color:#7d8492">Dark</span><div class="ring" aria-hidden="true"></div><i class="dot" style="left:46%;top:60%"></i></div>
+              </div>
+              <p class="foot">Drawn live by the same renderer the overlay uses.</p>
+            </section>
+
+            <section class="card" aria-labelledby="c3">
+              <header><span class="icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.6 8h2.6l1.6-4.6L8.4 13l1.6-5h4.4"/></svg></span><h3 id="c3">Motion</h3></header>
+              <div class="row">
+                <div class="lab"><b>Click animation</b></div>
+                <div class="ctl"><div class="pop">Ripple <svg width="9" height="12" viewBox="0 0 9 12" fill="currentColor"><path d="M4.5 0L8 4H1z"/><path d="M4.5 12L1 8h7z"/></svg></div></div>
+              </div>
+              <div class="row">
+                <div class="lab"><b>Glow</b><small>Soft light around the ring</small></div>
+                <div class="ctl"><div class="slider"><div class="trk"></div><div class="fill" style="width:40%"></div><div class="knob" style="left:calc(40% - 7px)"></div></div><span class="val">40%</span></div>
+              </div>
+              <div class="row">
+                <div class="lab"><b>Fade when idle</b><small>Dim the ring after two still seconds</small></div>
+                <div class="ctl"><div class="sw" role="switch" aria-checked="true" tabindex="0"></div></div>
+              </div>
+            </section>
+
+            <section class="card" aria-labelledby="c4">
+              <header><span class="icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="5.6"/><path d="M8 2.4a5.6 5.6 0 000 11.2z" fill="currentColor" stroke="none"/></svg></span><h3 id="c4">Colour</h3></header>
+              <div class="row">
+                <div class="lab"><b>Source</b></div>
+                <div class="ctl"><div class="seg"><span aria-selected="true">Follow ink</span><span>Fixed</span></div></div>
+              </div>
+              <div class="row">
+                <div class="lab"><b>Swatch</b><small>Used when the source is fixed</small></div>
+                <div class="ctl">
+                  <div class="chips">
+                    <i class="chip" style="background:#ff3b30"></i><i class="chip" style="background:#ff9500" aria-current="true"></i>
+                    <i class="chip" style="background:#ffcc00"></i><i class="chip" style="background:#34c759"></i>
+                    <i class="chip" style="background:#007aff"></i><i class="chip" style="background:#b052de"></i>
+                    <i class="chip" style="background:#fff"></i><i class="chip" style="background:#000"></i>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

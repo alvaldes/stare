@@ -10,10 +10,10 @@ final class SettingsWindowController {
     private let model: PreferencesModel
     private let permissionProbe: PermissionProbe
 
-    /// Default open size; the shell itself shrinks to 720x480 and stretches
-    /// with the window (`contentMinSize`).
-    private static let defaultSize = CGSize(width: 880, height: 560)
-    private static let minSize = CGSize(width: 720, height: 480)
+    /// Default open size is 1000x660; the shell itself shrinks to 860x560
+    /// and stretches with the window (`contentMinSize`).
+    private static let defaultSize = CGSize(width: 1000, height: 660)
+    private static let minSize = CGSize(width: 860, height: 560)
 
     init(model: PreferencesModel, permission: ScreenRecordingPermission) {
         self.model = model
