@@ -25,9 +25,22 @@ struct OnboardingView: View {
     /// focused explicitly once the first layout pass is done, so the ring is
     /// drawn around the button it belongs to.
     @FocusState private var primaryFocused: Bool
+    /// The window this view is drawn in, so a key-window change can be matched
+    /// to the guide's own window instead of taken as app-wide.
+    @State private var guideWindow: NSWindow?
     let onContinue: () -> Void
     let onRestart: () -> Void
     let onNotNow: () -> Void
+
+    /// Whether a key-window change should put the primary action back in focus.
+    ///
+    /// Every window the app owns posts this notification, so the decision is
+    /// made by identity: Settings, the capture editor or a toolbar panel
+    /// becoming key says nothing about the guide and must not move its focus.
+    static func shouldReassertFocus(for notification: Notification, guideWindow: NSWindow?) -> Bool {
+        guard let becameKey = notification.object as? NSWindow, let guideWindow else { return false }
+        return becameKey === guideWindow
+    }
 
     /// The guide's supporting copy: the header's one-liner, the card's status
     /// detail and the demoted "Not now". Kept as one named colour so the
@@ -81,7 +94,9 @@ struct OnboardingView: View {
         .onAppear {
             DispatchQueue.main.async { primaryFocused = true }
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+        .background(WindowReader { guideWindow = $0 })
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { note in
+            guard Self.shouldReassertFocus(for: note, guideWindow: guideWindow) else { return }
             DispatchQueue.main.async { primaryFocused = true }
         }
     }
@@ -275,6 +290,33 @@ struct OnboardingView: View {
         case .openSystemSettings: "Re-authorize Stare in System Settings"
         case .restartStare: "Restart Stare"
         case .continueOnboarding: "Continue"
+        }
+    }
+}
+
+/// Hands the guide its own `NSWindow` once AppKit attaches the view, so the
+/// key-window notification can be matched by identity. Reports only from
+/// `viewDidMoveToWindow`, never from `updateNSView`: writing the view's state
+/// while SwiftUI is updating it would be a re-entrancy bug.
+private struct WindowReader: NSViewRepresentable {
+    let onWindow: (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> ReporterView {
+        let view = ReporterView()
+        view.onWindow = onWindow
+        return view
+    }
+
+    func updateNSView(_ view: ReporterView, context: Context) {
+        view.onWindow = onWindow
+    }
+
+    final class ReporterView: NSView {
+        var onWindow: ((NSWindow?) -> Void)?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            onWindow?(window)
         }
     }
 }
