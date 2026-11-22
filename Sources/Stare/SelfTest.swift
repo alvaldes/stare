@@ -250,31 +250,39 @@ enum SelfTest {
                 + "edges fallbacks=\(edgeFallbacksHold) ok=\(hoverOpenHand && dragClosedHand && releaseOpenHand && edgeFallbacksHold)"
         )
 
-        // Palette tool layout (T8/S10): the bar follows the persisted tool
-        // layout — a custom order with a hidden tool — resolved by the exact
-        // `toolSection` the view draws and rendered through the real view
-        // path. The section must be the layout's visible groups, with no
-        // gaps, no phantom items and nothing duplicated.
+        // Palette tool layout (T6/S5): the bar renders exactly the stored
+        // item list — a custom order with real separators, not the family
+        // grouping — resolved by the exact `toolSection` the view draws and
+        // rendered through the real view path. The section must be the
+        // layout's items, with no gaps, no phantom items, nothing duplicated
+        // and the separators exactly where the layout holds them.
         let layoutState = EditorState()
-        let customLayout = ToolbarToolLayout.standard
-            .setting(.number, isVisible: false)
-            .moving(.eraser, by: -1)
+        let customLayout = ToolbarToolLayout(items: [
+            .tool(.select), .separator, .tool(.pen), .tool(.highlighter),
+            .separator, .tool(.eraser), .separator, .tool(.arrow),
+        ])
         layoutState.toolbarTools = customLayout
         let layoutView = ToolbarView(state: layoutState, onUndo: {}, onRedo: {}, onClear: {}, onDone: {})
         let layoutSection = layoutView.toolSection
-        let layoutSectionFollows = layoutSection == customLayout.visibleGroups
-        let layoutFlat = layoutSection.flatMap { $0 }
-        let layoutHidesExactlyNumber = !layoutFlat.contains(.number)
-            && Set(layoutFlat) == Set(Tool.allCases).subtracting([.number])
-            && layoutFlat.firstIndex(of: .eraser)! < layoutFlat.firstIndex(of: .laser)!
+        let layoutSectionFollows = layoutSection == customLayout.items
+        var layoutAdjacentSeparators = false
+        for pair in zip(layoutSection, layoutSection.dropFirst())
+        where pair.0 == .separator && pair.1 == .separator {
+            layoutAdjacentSeparators = true
+        }
+        let layoutSeparatorsAreRealItems = layoutSection.count == 8
+            && layoutSection.filter { $0 == .separator }.count == 3
+            && layoutSection.first != .separator && layoutSection.last != .separator
+            && !layoutAdjacentSeparators
+            && layoutSection.compactMap(\.tool) == [Tool.select, .pen, .highlighter, .eraser, .arrow]
         let layoutRendered = renderPalette(
             appearanceName: NSAppearance.Name.aqua,
             layout: customLayout,
             to: "/tmp/stare-palette-configured.png"
         )
         report.append(
-            "palette layout sectionFollows=\(layoutSectionFollows) hidesExactlyNumber=\(layoutHidesExactlyNumber) "
-                + "rendered=\(layoutRendered) ok=\(layoutSectionFollows && layoutHidesExactlyNumber && layoutRendered)"
+            "palette layout sectionFollows=\(layoutSectionFollows) separatorsPlaced=\(layoutSeparatorsAreRealItems) "
+                + "rendered=\(layoutRendered) ok=\(layoutSectionFollows && layoutSeparatorsAreRealItems && layoutRendered)"
         )
 
         // Palette live resize (T8/S10 + T9/S12): a visible palette's window

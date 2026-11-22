@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import StareCore
+import UniformTypeIdentifiers
 
 /// An action that lives in the palette itself, so the editor needs no second bar.
 /// `isSelected` marks it as the palette's one armed item (S6), in the same
@@ -151,6 +152,67 @@ final class ToolbarGripperView: NSView {
     }
 }
 
+/// The Settings organiser's hooks on the real bar (T6/S5). The preview
+/// embeds `ToolbarView` itself — not a mock — and installs these hooks so
+/// every placeable item becomes a drag source and a two-sided drop target:
+/// what the user arranges is the bar. The plain drawing bar installs
+/// nothing and behaves exactly as before.
+struct ToolbarOrganiserHooks {
+    /// The side of the target item a drop landed on.
+    enum Edge { case before, after }
+
+    /// Builds the drag payload for `item`: its stable identifier as plain
+    /// text (`ToolbarLayoutItem.identifier`). The payload names the item, never a
+    /// slot, so both zones of the organiser decode the same wire format and
+    /// a drag can start in the pool and land on the bar or the other way
+    /// round, and it stays meaningful however the draft changes while the
+    /// drag is in flight. Plain text because an `NSString` provider is the
+    /// format both the drag source and every drop target read without
+    /// registering a custom UTType.
+    var dragProvider: (ToolbarLayoutItem) -> NSItemProvider
+    /// Handles a drop of `payload` on the given side of `target`.
+    var drop: (ToolbarLayoutItem, Edge, ToolbarLayoutItem) -> Void
+}
+
+/// The measured sizes of the bar's items for the organiser: a drop's side
+/// needs the item's own midpoint, and the background GeometryReader passes
+/// it up to the bar that hosts the drop targets.
+private struct ToolbarItemSizeKey: PreferenceKey {
+    static var defaultValue: [ToolbarLayoutItem: CGSize] { [:] }
+    static func reduce(
+        value: inout [ToolbarLayoutItem: CGSize],
+        nextValue: () -> [ToolbarLayoutItem: CGSize]
+    ) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+/// The drop delegate one organiser slot uses: the drop's position inside the
+/// item decides the side — before its midpoint, after it. The payload is the
+/// item's stable identifier, decoded the same way in every zone.
+struct ToolbarSlotDropDelegate: DropDelegate {
+    let target: ToolbarLayoutItem
+    let size: CGSize
+    let axisVertical: Bool
+    let onDrop: (ToolbarLayoutItem, ToolbarOrganiserHooks.Edge, ToolbarLayoutItem) -> Void
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard let provider = info.itemProviders(for: [UTType.plainText]).first else { return false }
+        let centre = axisVertical ? size.height / 2 : size.width / 2
+        let along = axisVertical ? info.location.y : info.location.x
+        let edge: ToolbarOrganiserHooks.Edge = along < centre ? .before : .after
+        provider.loadObject(ofClass: NSString.self) { object, _ in
+            guard let raw = object as? String, let payload = ToolbarLayoutItem(identifier: raw) else { return }
+            onDrop(target, edge, payload)
+        }
+        return true
+    }
+}
+
 struct ToolbarView: View {
     @ObservedObject var state: EditorState
     let onUndo: () -> Void
@@ -173,15 +235,31 @@ struct ToolbarView: View {
     /// a still image, so no dead button is shown and the configurable layout
     /// never touches that surface.
     var toolGroups: [[Tool]]? = nil
+    /// The exact items the bar draws (T6/S5): nil (the default) means the
+    /// drawing toolbar follows the persisted layout's item list mirrored in
+    /// the state, so a Settings change re-lays the bar live. A non-nil value
+    /// pins the items — the Settings organiser's live preview passes the
+    /// draft, so what the user arranges is what this bar shows.
+    var toolItems: [ToolbarLayoutItem]? = nil
+    /// The Settings organiser hooks (T6/S5): nil keeps the bar inert, exactly
+    /// as every surface outside the organiser needs.
+    var organiser: ToolbarOrganiserHooks? = nil
+    /// The organiser's measured item sizes, for the drop targets' midpoints.
+    @State private var itemSizes: [ToolbarLayoutItem: CGSize] = [:]
 
-    /// The tool section the bar draws (T8/S10): a fixed palette when one is
-    /// passed, or the persisted layout's visible groups — exactly the stored
-    /// order with the hidden tools skipped, no gaps, no phantom items,
-    /// nothing duplicated. Exposed so the selftest can pin that the rendered
-    /// bar follows the configured layout without poking SwiftUI internals.
-    var toolSection: [[Tool]] {
-        toolGroups ?? state.toolbarTools.visibleGroups
+    /// The item list the bar draws (T6/S5): the organiser's draft when one
+    /// is passed, or the persisted layout's items — the stored order with
+    /// separators in place, no gaps, no phantom items, nothing duplicated.
+    /// Exposed so the tests and the selftest can pin that the rendered bar
+    /// follows the configured layout without poking SwiftUI internals.
+    var toolSection: [ToolbarLayoutItem] {
+        toolItems ?? state.toolbarTools.items
     }
+
+    /// The fixed tool groups the capture editor passes (S5/S7): the fixed
+    /// family-grouped palette over a still image, drawn with the same family
+    /// dividers as always. Exposed for the tests and the selftest.
+    var fixedToolGroups: [[Tool]]? { toolGroups }
 
     /// The fixed trailing items in the order the bar draws them (T3/S4): the
     /// `⠇⠇` grab handle sits directly after the close button. The array is
@@ -220,14 +298,17 @@ struct ToolbarView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
         )
+        .onPreferenceChange(ToolbarItemSizeKey.self) { itemSizes = $0 }
     }
 
     /// Everything the bar offers, in the same order both orientations draw:
-    /// the configured tool groups (T8/S10), inks, crop/extra actions, page
+    /// the configured tools (T6/S5: the stored item list, or the capture
+    /// editor's fixed grouped palette), inks, crop/extra actions, page
     /// controls, then undo, redo, clear, close and the gripper tail (T3/S4).
     @ViewBuilder
     private var barItems: some View {
-            ForEach(Array(toolSection.enumerated()), id: \.offset) { index, group in
+        if let toolGroups {
+            ForEach(Array(toolGroups.enumerated()), id: \.offset) { index, group in
                 if index > 0 { divider }
                 ForEach(group) { tool in
                     toolButton(tool)
@@ -235,6 +316,24 @@ struct ToolbarView: View {
             }
 
             divider
+        } else {
+            // The stored list, drawn exactly as stored: tools as buttons,
+            // separators as the same dividers the grouped bar always drew.
+            ForEach(Array(toolSection.enumerated()), id: \.offset) { _, item in
+                switch item {
+                case .tool(let tool):
+                    organiserWrapped(toolButton(tool), item)
+                case .separator:
+                    organiserWrapped(divider, item)
+                }
+            }
+            // The fixed divider before the inks, unless the layout already
+            // ends in a placed separator — the bar must not draw two
+            // adjacent dividers.
+            if toolSection.last?.tool != nil {
+                divider
+            }
+        }
 
             ForEach(Ink.allCases) { ink in
                 inkButton(ink)
@@ -292,6 +391,39 @@ struct ToolbarView: View {
                 }
             }
         }
+
+    /// Wraps an item in the organiser's drag and drop handling (T6/S5): a
+    /// drag source carrying the item's stable identifier, and a two-sided
+    /// drop target. Only the Settings preview installs the hooks.
+    @ViewBuilder
+    private func organiserWrapped(_ view: some View, _ item: ToolbarLayoutItem) -> some View {
+        if let organiser {
+            view
+                .onDrag { organiser.dragProvider(item) }
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(key: ToolbarItemSizeKey.self, value: [item: geo.size])
+                    }
+                )
+                .onDrop(of: [UTType.plainText], delegate: ToolbarSlotDropDelegate(
+                    target: item,
+                    size: itemSizes[item] ?? Self.fallbackItemSize(item),
+                    axisVertical: isVertical,
+                    onDrop: { target, edge, payload in organiser.drop(target, edge, payload) }
+                ))
+        } else {
+            view
+        }
+    }
+
+    /// The size an item renders before the first measurement pass answers.
+    private static func fallbackItemSize(_ item: ToolbarLayoutItem) -> CGSize {
+        if item.tool != nil {
+            CGSize(width: 28, height: 26)
+        } else {
+            CGSize(width: 12, height: 28)
+        }
+    }
 
     /// The separator the bar places between groups: a vertical rule in the
     /// horizontal row, a horizontal rule in the vertical stack.

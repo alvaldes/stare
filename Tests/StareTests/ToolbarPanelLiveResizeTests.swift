@@ -95,11 +95,8 @@ final class ToolbarPanelLiveResizeTests: XCTestCase {
 
         // Hide every tool but the pen: the bar draws fewer items, so the
         // window must take the smaller fitting size.
-        var layout = ToolbarToolLayout.standard
-        for tool in Tool.allCases where tool != .pen {
-            layout = layout.setting(tool, isVisible: false)
-        }
-        state.toolbarTools = layout
+        // Only the pen on the bar; every other tool waits in the pool.
+        state.toolbarTools = ToolbarToolLayout(items: [.tool(.pen)])
         runLoopTurns()
 
         let shrunkFit = hosting.fittingSize
@@ -137,11 +134,8 @@ final class ToolbarPanelLiveResizeTests: XCTestCase {
 
         // Hide tools: the bar shrinks, but a resize must keep the dragged
         // anchor — the bar's centre stays where the user parked it.
-        var layout = ToolbarToolLayout.standard
-        for tool in Tool.allCases where tool != .pen {
-            layout = layout.setting(tool, isVisible: false)
-        }
-        state.toolbarTools = layout
+        // Only the pen on the bar; every other tool waits in the pool.
+        state.toolbarTools = ToolbarToolLayout(items: [.tool(.pen)])
         runLoopTurns()
 
         // The resize itself must have happened, or the next assertions are

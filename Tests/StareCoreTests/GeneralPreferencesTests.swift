@@ -156,145 +156,264 @@ final class GeneralPreferencesTests: XCTestCase {
         XCTAssertEqual(try Self.decode("{}"), GeneralPreferences.standard)
     }
 
-    // MARK: Toolbar tool layout (T8/S10)
+    // MARK: Toolbar item layout (T6/S5)
 
-    /// Shorthand for the stored layout the Settings pane and the toolbar read.
-    /// Hidden tools keep their place in `tools`, so hiding one can never make
-    /// it fall off and come back as if it were new.
+    /// Shorthand for the stored layout the Settings organiser and the bar
+    /// read.
     private static func decodeLayout(_ json: String) throws -> ToolbarToolLayout {
         try JSONDecoder().decode(ToolbarToolLayout.self, from: Data(json.utf8))
     }
 
+    /// The bar a fresh install must draw, pinned literally: every tool in
+    /// the documented order, a separator exactly between the tool families —
+    /// the dividers the grouped bar has always placed.
+    private static let standardItems: [ToolbarLayoutItem] = [
+        .tool(.select), .separator,
+        .tool(.pen), .tool(.highlighter), .separator,
+        .tool(.line), .tool(.arrow), .tool(.rectangle), .tool(.ellipse), .separator,
+        .tool(.text), .tool(.number), .separator,
+        .tool(.blur), .tool(.laser), .separator,
+        .tool(.eraser),
+    ]
+
     func testStandardToolbarLayoutReproducesTodaysBar() {
-        // The shipped layout is exactly the grouped bar the app has always
-        // drawn: same groups, same order, nothing hidden.
-        XCTAssertEqual(ToolbarToolLayout.standard.visibleGroups, Tool.toolbarGroups)
+        XCTAssertEqual(ToolbarToolLayout.standard.items, Self.standardItems)
+        // Separators are placeable items, not automatic family grouping: the
+        // shipped layout simply holds them at the family boundaries.
+        XCTAssertEqual(ToolbarToolLayout.standard.items.filter { $0 == .separator }.count, 5)
         XCTAssertEqual(ToolbarToolLayout.standard.visibleTools, Tool.toolbarGroups.flatMap { $0 })
-        XCTAssertTrue(ToolbarToolLayout.standard.hidden.isEmpty)
+        XCTAssertTrue(ToolbarToolLayout.standard.pool.isEmpty)
         XCTAssertEqual(GeneralPreferences.standard.toolbarTools, .standard)
     }
 
-    func testHidingRemovesExactlyThatToolWithNoGapsOrDuplicates() {
-        let layout = ToolbarToolLayout.standard.setting(.number, isVisible: false)
-
-        // The hidden tool is gone from the bar but keeps its stored place,
-        // so re-showing it does not shuffle the order.
-        XCTAssertEqual(layout.visibleTools, Tool.toolbarGroups.flatMap { $0 }.filter { $0 != .number })
-        XCTAssertTrue(layout.tools.contains(.number), "a hidden tool keeps its place in the stored order")
-        XCTAssertEqual(layout.visibleGroups.flatMap { $0 }, layout.visibleTools)
+    /// Taking a placed separator back out: the first one goes, the rest of
+    /// the bar keeps its order.
+    func testRemovingAPlacedSeparatorRemovesTheFirstOneOnly() {
+        let layout = ToolbarToolLayout(items: Self.standardItems)
+        let without = layout.removing(.separator)
+        var expected = Self.standardItems
+        expected.remove(at: 1)
+        XCTAssertEqual(without.items, expected)
     }
 
-    func testHidingTheLastVisibleToolIsRefused() {
-        // The bar can never go empty: hiding the one visible tool leaves the
-        // layout exactly as it was.
-        var only = ToolbarToolLayout.standard
-        for tool in ToolbarToolLayout.defaultOrder where tool != .pen {
-            only = only.setting(tool, isVisible: false)
-        }
-        XCTAssertEqual(only.visibleTools, [.pen])
-
-        XCTAssertEqual(only.setting(.pen, isVisible: false), only)
-    }
-
-    func testShowingAHidingToolPutsItBackWithoutShuffling() {
-        let hiddenBar = ToolbarToolLayout.standard.setting(.laser, isVisible: false)
-        XCTAssertEqual(hiddenBar.setting(.laser, isVisible: true), ToolbarToolLayout.standard)
-    }
-
-    func testMovingSwapsNeighbours() {
-        // One step up swaps with the tool before it.
-        let penMovedUp = [
-            Tool.pen, .select, .highlighter, .line, .arrow, .rectangle, .ellipse,
-            .text, .number, .blur, .laser, .eraser,
-        ]
-        XCTAssertEqual(ToolbarToolLayout.standard.moving(.pen, by: -1).tools, penMovedUp)
-    }
-
-    func testMovingUpSwapsTheToolIntoThePreviousSlot() {
-        XCTAssertEqual(ToolbarToolLayout.standard.moving(.blur, by: -1).visibleTools, [
-            .select, .pen, .highlighter, .line, .arrow, .rectangle, .ellipse,
-            .text, .blur, .number, .laser, .eraser,
-        ])
-    }
-
-    func testMovingDownSwapsTheToolIntoTheNextSlot() {
-        XCTAssertEqual(ToolbarToolLayout.standard.moving(.select, by: 1).visibleTools, [
-            .pen, .select, .highlighter, .line, .arrow, .rectangle, .ellipse,
-            .text, .number, .blur, .laser, .eraser,
-        ])
-    }
-
-    func testMovingClampsAtBothEnds() {
-        XCTAssertEqual(ToolbarToolLayout.standard.moving(.select, by: -1), ToolbarToolLayout.standard)
-        XCTAssertEqual(ToolbarToolLayout.standard.moving(.eraser, by: 5), ToolbarToolLayout.standard)
-    }
-
-    func testUnknownStoredIdentifiersAreDropped() throws {
+    func testUnknownIdentifiersAreDroppedWhereverTheyAppear() throws {
+        // The stored document is identifier strings; anything neither a tool
+        // identifier nor the separator token is dropped, in the bar and in
+        // the pool alike, and pool entries for tools already on the bar drop
+        // too.
         let layout = try Self.decodeLayout(
-            #"{"tools":["pen","galaxy","select"],"hidden":[]}"#
+            #"{"items":["tool:pen","tool:galaxy","separator","tool:select","tool:galaxy"],"pool":["laser","galaxy","laser","select"]}"#
         )
-        // The two known tools keep their stored order; everything the list
-        // never mentioned is appended in the documented default order.
-        XCTAssertEqual(layout.visibleTools, [
-            .pen, .select, .highlighter, .line, .arrow, .rectangle, .ellipse,
-            .text, .number, .blur, .laser, .eraser,
-        ])
+        XCTAssertEqual(layout.items, [.tool(.pen), .separator, .tool(.select)])
+        XCTAssertEqual(layout.pool, [.laser] + ToolbarToolLayout.defaultOrder.filter { ![.select, .pen, .laser].contains($0) })
     }
 
-    func testStoredListMissingANewlyAddedToolAppendsItSoItIsNeverInvisible() throws {
-        // A future build adds a tool; the stored list predates it. The new
-        // tool is appended at the end in the documented default order instead
-        // of being silently invisible.
+    func testToolsTheStoredLayoutNeverMentionsLandInThePoolNeverOnTheBar() throws {
+        // A tool a stored layout never mentions — a future build's tool, or
+        // anything a document lost — must never appear silently on the bar:
+        // it lands in the pool, in the documented default order.
         let layout = try Self.decodeLayout(
-            #"{"tools":["select","pen","blur"],"hidden":["laser"]}"#
+            #"{"items":["tool:pen","tool:highlighter"],"pool":[]}"#
         )
-        XCTAssertEqual(layout.hidden, [.laser])
-        let lastAppended = ToolbarToolLayout.defaultOrder.filter { ![.select, .pen, .blur, .laser].contains($0) }
-        XCTAssertEqual(Array(layout.visibleTools.dropFirst(3)), lastAppended)
-        XCTAssertFalse(layout.visibleTools.isEmpty)
-        XCTAssertTrue(layout.visibleTools.contains(.highlighter))
+        XCTAssertEqual(layout.visibleTools, [.pen, .highlighter])
+        XCTAssertEqual(layout.pool, ToolbarToolLayout.defaultOrder.filter { ![.pen, .highlighter].contains($0) })
     }
 
-    func testDuplicateStoredEntriesCollapseToTheirFirstOccurrence() throws {
-        let layout = try Self.decodeLayout(#"{"tools":["pen","select","pen"],"hidden":[]}"#)
-        XCTAssertEqual(layout.tools.filter { $0 == .pen }.count, 1)
-        XCTAssertEqual(layout.visibleTools.first, .pen)
-        XCTAssertEqual(Set(layout.visibleTools), Set(Tool.allCases))
+    func testDuplicateStoredToolsCollapseToTheirFirstOccurrence() throws {
+        let layout = try Self.decodeLayout(
+            #"{"items":["tool:select","tool:pen","tool:select","tool:eraser"],"pool":[]}"#
+        )
+        XCTAssertEqual(layout.items, [.tool(.select), .tool(.pen), .tool(.eraser)])
+        XCTAssertEqual(layout.visibleTools.filter { $0 == .select }.count, 1)
+        XCTAssertEqual(layout.pool, ToolbarToolLayout.defaultOrder.filter { ![.select, .pen, .eraser].contains($0) })
     }
 
-    func testEmptyStoredListFallsBackToTheDefaultInsteadOfAnEmptyBar() throws {
-        XCTAssertEqual(try Self.decodeLayout(#"{"tools":[],"hidden":[]}"#), .standard)
-        // Missing fields (an older blob) are the shipped layout too.
+    func testLeadingTrailingAndRepeatedSeparatorsAreCleaned() throws {
+        // The bar cannot render an empty end: after normalisation a
+        // separator only exists between two tools.
+        let layout = try Self.decodeLayout(
+            #"{"items":["separator","tool:pen","separator","separator","tool:select","separator"],"pool":[]}"#
+        )
+        XCTAssertEqual(layout.items, [.tool(.pen), .separator, .tool(.select)])
+    }
+
+    func testAStoredBarWithoutAnyToolIsRefused() throws {
+        // Every one of these corrupt documents would leave the bar with no
+        // tool at all: the layout is refused and the shipped bar comes back.
         XCTAssertEqual(try Self.decodeLayout("{}"), .standard)
-        let general = try Self.decode(
-            #"{"toolbarOrientation":"vertical","toolbarTools":{"tools":[],"hidden":[]}}"#
-        )
+        XCTAssertEqual(try Self.decodeLayout(#"{"items":[],"pool":[]}"#), .standard)
+        XCTAssertEqual(try Self.decodeLayout(#"{"items":["separator","separator"],"pool":[]}"#), .standard)
+        XCTAssertEqual(try Self.decodeLayout(#"{"items":["separator"],"pool":["pen"]}"#), .standard)
+        let general = try Self.decode(#"{"toolbarOrientation":"vertical","toolbarTools":{"items":["separator"],"pool":[]}}"#)
         XCTAssertEqual(general.toolbarTools, .standard)
         XCTAssertEqual(general.toolbarOrientation, .vertical)
     }
 
-    func testStoredBarThatHidesEveryToolLosesTheHiddenSet() throws {
-        // A corrupt document hiding everything is refused: the hidden set is
-        // dropped, the stored order keeps everything visible.
+    // MARK: v0.4 decode migration (T6/S5)
+
+    func testV0_4StoredLayoutDecodesIntoTheNewShapeWithTheSameVisibleSetAndOrder() throws {
+        let layout = try Self.decodeLayout(
+            #"{"tools":["select","pen","highlighter","line","arrow","rectangle","ellipse","text","number","blur","laser","eraser"],"hidden":["number"]}"#
+        )
+        // Same visible set and order the v0.4 bar drew, with the family
+        // dividers it drew too...
+        XCTAssertEqual(layout.visibleTools, ToolbarToolLayout.defaultOrder.filter { $0 != .number })
+        XCTAssertEqual(layout.items, [
+            .tool(.select), .separator,
+            .tool(.pen), .tool(.highlighter), .separator,
+            .tool(.line), .tool(.arrow), .tool(.rectangle), .tool(.ellipse), .separator,
+            .tool(.text), .separator, .tool(.blur), .tool(.laser), .separator,
+            .tool(.eraser),
+        ])
+        // ...and the hidden tool lands in the pool instead of the old
+        // hidden set.
+        XCTAssertEqual(layout.pool, [.number])
+    }
+
+    func testV0_4StoredLayoutKeepsToolOrderAcrossFamiliesWithDividersWhereTheOldBarDrewThem() throws {
+        // A reordered v0.4 layout never had explicit separators: the old bar
+        // drew a divider wherever the family changed, so that is exactly
+        // where the migrated one places them.
+        let layout = try Self.decodeLayout(
+            #"{"tools":["pen","select","blur"],"hidden":[]}"#
+        )
+        XCTAssertEqual(layout.visibleTools, [.pen, .select, .blur])
+        XCTAssertEqual(layout.items, [.tool(.pen), .separator, .tool(.select), .separator, .tool(.blur)])
+        XCTAssertEqual(layout.pool, ToolbarToolLayout.defaultOrder.filter { ![.select, .pen, .blur].contains($0) })
+    }
+
+    func testV0_4EmptyStoredListStillFallsBackToTheDefault() throws {
+        XCTAssertEqual(try Self.decodeLayout(#"{"tools":[],"hidden":[]}"#), .standard)
+    }
+
+    func testV0_4LayoutThatHidesEveryToolIsRefused() throws {
         let layout = try Self.decodeLayout(
             #"{"tools":["select","pen","highlighter","line","arrow","rectangle","ellipse","text","number","blur","laser","eraser"],"hidden":["select","pen","highlighter","line","arrow","rectangle","ellipse","text","number","blur","laser","eraser"]}"#
         )
-        XCTAssertTrue(layout.hidden.isEmpty)
-        XCTAssertEqual(layout.visibleTools, ToolbarToolLayout.defaultOrder)
+        XCTAssertEqual(layout, .standard)
+    }
+
+    func testV0_4UnknownIdentifiersAreDroppedAndDuplicatesCollapse() throws {
+        let layout = try Self.decodeLayout(#"{"tools":["pen","galaxy","select","pen"],"hidden":[]}"#)
+        // The two stored tools keep their order; anything the list never
+        // mentions waits in the pool instead of silently joining the bar.
+        XCTAssertEqual(layout.visibleTools, [.pen, .select])
+        XCTAssertEqual(layout.pool, ToolbarToolLayout.defaultOrder.filter { ![.select, .pen].contains($0) })
+    }
+
+    // MARK: Organiser mutations (T6/S5)
+
+    func testInsertingAToolTakesItOffThePoolAtTheDroppedPosition() {
+        var layout = ToolbarToolLayout.standard
+        layout = layout.removing(.tool(.laser))
+        XCTAssertTrue(layout.pool.contains(.laser))
+        XCTAssertFalse(layout.visibleTools.contains(.laser))
+
+        // Dropping it before the eraser puts it exactly there.
+        let eraserIndex = layout.items.firstIndex(of: .tool(.eraser))!
+        layout = layout.inserting(.tool(.laser), at: eraserIndex)
+        XCTAssertEqual(layout.items[eraserIndex], .tool(.laser))
+        XCTAssertFalse(layout.pool.contains(.laser))
+    }
+
+    func testInsertingASeparatorNextToAnotherSeparatorCollapsesIntoOne() {
+        let layout = ToolbarToolLayout(items: [.tool(.pen), .tool(.eraser)])
+        let collapsed = layout.inserting(.separator, at: 1).inserting(.separator, at: 1)
+        XCTAssertEqual(collapsed.items, [.tool(.pen), .separator, .tool(.eraser)])
+    }
+
+    func testMovingReordersWithinTheBarWithoutTouchingThePool() {
+        var layout = ToolbarToolLayout.standard
+        layout = layout.removing(.tool(.laser))
+        XCTAssertTrue(layout.pool.contains(.laser))
+
+        // Move the pen in front of the select: index semantics are the
+        // insert position in the list as it would be without the item.
+        let moved = layout.moving(.tool(.pen), to: 0)
+        XCTAssertEqual(moved.items.first, .tool(.pen))
+        XCTAssertEqual(moved.items[1], .tool(.select))
+        XCTAssertEqual(moved.pool, layout.pool)
+        XCTAssertEqual(moved.visibleTools.first, .pen)
+    }
+
+    func testMovingAnItemTheBarDoesNotHoldChangesNothing() {
+        let layout = ToolbarToolLayout.standard
+        XCTAssertEqual(layout.moving(.tool(.select), to: 0), layout)
+    }
+
+    func testASeparatorClampsIntoTheSlotsBetweenTwoTools() {
+        let layout = ToolbarToolLayout(items: [.tool(.pen), .separator, .tool(.eraser)])
+        // A stray drag before the first item or after the last one must not
+        // strand the separator where normalisation would erase it: it stays
+        // in the only between-two-tools slot.
+        XCTAssertEqual(layout.moving(.separator, to: 0), layout)
+        XCTAssertEqual(layout.moving(.separator, to: layout.items.count), layout)
+        // And one dropped in front of the leading tool lands between the
+        // two tools instead of at the bar's empty end.
+        let plain = ToolbarToolLayout(items: [.tool(.pen), .tool(.eraser)])
+        XCTAssertEqual(plain.inserting(.separator, at: 0), layout)
+    }
+
+    func testASeparatorCannotJoinAOneToolBar() {
+        let layout = ToolbarToolLayout(items: [.tool(.pen)])
+        XCTAssertEqual(layout.inserting(.separator, at: 1), layout)
+        XCTAssertEqual(layout.moving(.separator, to: 0), layout)
+    }
+
+    func testRemovingTheLastToolIsRefused() {
+        var only = ToolbarToolLayout.standard
+        for tool in ToolbarToolLayout.defaultOrder where tool != .pen {
+            only = only.removing(.tool(tool))
+        }
+        XCTAssertEqual(only.visibleTools, [.pen])
+        XCTAssertEqual(only.removing(.tool(.pen)), only)
+    }
+
+    func testRemovingAToolDropsItIntoThePoolAtTheGivenPlace() {
+        var layout = ToolbarToolLayout.standard
+        layout = layout.removing(.tool(.laser))
+        layout = layout.removing(.tool(.eraser))
+        XCTAssertTrue(layout.pool.contains(.laser))
+
+        layout = layout.inserting(.tool(.eraser), at: 0).removing(.tool(.select), intoPoolAt: 0)
+        XCTAssertEqual(layout.pool.first, .select)
+        XCTAssertFalse(layout.visibleTools.contains(.select))
+        XCTAssertFalse(layout.items.contains(.tool(.select)))
+    }
+
+    func testPoolReorderingPersists() {
+        let layout = ToolbarToolLayout(items: [.tool(.pen)], pool: [])
+        XCTAssertEqual(layout.pool, ToolbarToolLayout.defaultOrder.filter { $0 != .pen })
+        let reordered = layout.movingInPool(.laser, to: 0)
+        XCTAssertEqual(reordered.pool.first, .laser)
+        XCTAssertEqual(Set(reordered.pool), Set(ToolbarToolLayout.defaultOrder).subtracting([.pen]))
+    }
+
+    func testPoolNormalisesDuplicatesAndBarMembersAway() {
+        let layout = ToolbarToolLayout(items: ToolbarToolLayout.standard.items, pool: [.laser, .laser, .select, .number])
+        // Every one of those tools is already on the bar: the pool keeps
+        // only the tools that are genuinely off it.
+        XCTAssertTrue(layout.pool.isEmpty)
     }
 
     func testToolbarLayoutRoundTripsThroughGeneralPreferences() throws {
         var general = GeneralPreferences.standard
-        general.toolbarTools = ToolbarToolLayout.standard
-            .setting(.number, isVisible: false)
-            .moving(.eraser, by: -1)
+        general.toolbarTools = ToolbarToolLayout(items: [
+            .tool(.select), .separator, .tool(.pen), .tool(.eraser),
+        ], pool: [.laser, .number])
 
         let data = try JSONEncoder().encode(general)
         let decoded = try JSONDecoder().decode(GeneralPreferences.self, from: data)
         XCTAssertEqual(decoded, general)
-        // And a hidden choice survives a round trip: the hidden tool stays
-        // hidden across launches.
-        XCTAssertFalse(decoded.toolbarTools.visibleTools.contains(.number))
+        // The pool order is part of the document: a reordered pool survives
+        // a relaunch, and the pool always lists every off-bar tool.
+        XCTAssertEqual(Array(decoded.toolbarTools.pool.prefix(2)), [.laser, .number])
+        XCTAssertEqual(
+            Set(decoded.toolbarTools.pool),
+            Set(ToolbarToolLayout.defaultOrder).subtracting([
+                .select, .pen, .eraser,
+            ])
+        )
     }
 
     // MARK: Round trip

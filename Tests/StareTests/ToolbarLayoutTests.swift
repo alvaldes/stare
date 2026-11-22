@@ -3,42 +3,59 @@ import XCTest
 @testable import Stare
 import StareCore
 
-/// T8/S10: the drawing toolbar renders exactly the persisted tool layout —
-/// the stored order with the hidden tools skipped, no gaps, no phantom items,
-/// nothing duplicated — while the capture editor keeps its fixed palette and
-/// a hidden tool stays shortcut-armed. The tests run on the detached
-/// `EditorState()` the selftest harness uses, and read the section the real
-/// `ToolbarView` maps over (`toolSection`), so a regression in the view's
-/// resolution shows here, not just in the pure model.
+/// T6/S5: the drawing toolbar renders exactly the stored item list — tools
+/// and real separators, in order — while the capture editor keeps its fixed
+/// family-grouped palette and off-bar tools stay shortcut-armed. The tests
+/// run on the detached `EditorState()` the selftest harness uses, and read
+/// the section the real `ToolbarView` maps over (`toolSection`), so a
+/// regression in the view's resolution shows here, not just in the pure
+/// model.
 @MainActor
 final class ToolbarLayoutTests: XCTestCase {
 
-    private var defaultOrder: [Tool] { ToolbarToolLayout.defaultOrder }
-
     // MARK: - Default bar
 
-    func testFreshStateRendersTodaysGroups() {
-        // A detached state ships the standard layout, whose groups are
-        // exactly the groups the bar has always drawn.
+    func testFreshStateRendersTodaysItems() {
+        // A detached state ships the standard layout: every tool in the
+        // documented order with a separator between the families.
         let view = ToolbarView(state: EditorState(), onUndo: {}, onRedo: {}, onClear: {}, onDone: {})
-        XCTAssertEqual(view.toolSection, Tool.toolbarGroups)
+        XCTAssertEqual(view.toolSection, ToolbarToolLayout.standard.items)
+        XCTAssertTrue(view.toolSection.contains(.separator))
     }
 
     // MARK: - The bar follows the layout
 
-    func testTheBarSectionIsThePersistedLayoutsVisibleGroups() {
+    func testTheBarSectionIsExactlyTheLayoutsItemsIncludingSeparators() {
         let state = EditorState()
-        state.toolbarTools = ToolbarToolLayout.standard
-            .setting(.number, isVisible: false)
-            .moving(.eraser, by: -1)
+        let layout = ToolbarToolLayout(items: [
+            .tool(.pen), .separator, .tool(.eraser), .separator, .tool(.laser),
+        ])
+        state.toolbarTools = layout
 
         let view = ToolbarView(state: state, onUndo: {}, onRedo: {}, onClear: {}, onDone: {})
-        XCTAssertEqual(view.toolSection, state.toolbarTools.visibleGroups)
-        // No gaps, no phantom items, no duplicates: the flat section is the
-        // stored order minus the hidden tool, and each tool appears once.
-        let flat = view.toolSection.flatMap { $0 }
-        XCTAssertEqual(flat, state.toolbarTools.visibleTools)
-        XCTAssertEqual(Set(flat).count, flat.count)
+        // The bar draws the stored list exactly: nothing re-grouped, nothing
+        // reordered, separators left exactly where the user placed them.
+        XCTAssertEqual(view.toolSection, layout.items)
+        XCTAssertEqual(Set(view.toolSection), Set(layout.items))
+    }
+
+    func testTheOrganiserPreviewRendersTheDraftItemsDirectly() {
+        // The Settings organiser's live preview passes the draft item list;
+        // that must win over the state's own stored layout, so what the user
+        // arranges is what the preview shows.
+        let state = EditorState()
+        state.toolbarTools = ToolbarToolLayout.standard
+
+        let draft = ToolbarToolLayout(items: [
+            .tool(.eraser), .separator, .tool(.pen),
+        ])
+        let view = ToolbarView(
+            state: state,
+            onUndo: {}, onRedo: {}, onClear: {}, onDone: {},
+            toolItems: draft.items
+        )
+        XCTAssertEqual(view.toolSection, draft.items)
+        XCTAssertNotEqual(view.toolSection, state.toolbarTools.items)
     }
 
     // MARK: - Fixed surfaces stay fixed
@@ -52,23 +69,27 @@ final class ToolbarLayoutTests: XCTestCase {
             onUndo: {}, onRedo: {}, onClear: {}, onDone: {},
             toolGroups: Tool.captureEditorGroups
         )
-        XCTAssertEqual(editor.toolSection, Tool.captureEditorGroups)
+        XCTAssertEqual(editor.fixedToolGroups, Tool.captureEditorGroups)
+        // The fixed palette is the grouped one, not the item list: the bar
+        // draws family dividers there because the editor's surface never
+        // takes the persisted layout.
+        XCTAssertTrue(editor.fixedToolGroups != nil)
     }
 
     // MARK: - A shortcut is not the bar
 
-    func testAHidingToolStaysShortcutArmedAndMarkable() {
+    func testAOffBarToolStaysShortcutArmedAndMarkable() {
         let state = EditorState()
-        state.toolbarTools = ToolbarToolLayout.standard.setting(.laser, isVisible: false)
+        state.toolbarTools = ToolbarToolLayout(items: [.tool(.pen)])
 
         // The bar does not draw the laser…
         let view = ToolbarView(state: state, onUndo: {}, onRedo: {}, onClear: {}, onDone: {})
-        XCTAssertFalse(view.toolSection.flatMap { $0 }.contains(.laser))
+        XCTAssertFalse(view.toolSection.compactMap(\.tool).contains(.laser))
         // …but its shortcut routes exactly as before,
         XCTAssertEqual(state.shortcutRouter.resolve(Character("f")), .tool(.laser))
         // and if the laser is the armed tool (for example armed by that
         // shortcut or by an undo) the marking machinery answers as usual, so
-        // the bar marks it the moment it is shown again.
+        // the bar marks it the moment it comes back.
         state.select(.laser)
         XCTAssertTrue(state.isToolMarked(.laser))
     }

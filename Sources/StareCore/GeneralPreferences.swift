@@ -136,124 +136,244 @@ public enum ToolbarBorder: String, Codable, CaseIterable, Sendable {
     }
 }
 
-/// Which tools the drawing toolbar shows and in what order (T8/S10): the
-/// stored form is a list of tool identifiers in display order — hidden tools
-/// included, so a hidden tool never falls off the list and re-enters as if it
-/// were new — plus the hidden set. Decoding is tolerant: unknown identifiers
-/// are dropped, duplicates collapse to their first occurrence, and tools the
-/// stored list never mentions (a tool added in a newer build, or anything the
-/// document lost) are appended in the documented default order, so a new tool
-/// is never invisible for existing users. The bar can never go empty: a
-/// stored document that hides every tool loses the hidden set, and no write
-/// path in the app can persist a layout with zero visible tools.
+/// One placeable item of the drawing toolbar's layout (T6/S5): a tool, or a
+/// real separator the user can place, move and take away. Separators are
+/// items of the stored layout — not the automatic family grouping the bar
+/// used to draw — and the bar renders the list exactly as stored, with
+/// separators drawn as dividers.
+public enum ToolbarLayoutItem: Hashable, Sendable {
+    /// A drawing tool placed on the bar.
+    case tool(Tool)
+    /// A divider between two neighbouring items.
+    case separator
+
+    /// The stable identifier the stored document and the drag payload both
+    /// use. It names the item itself, never a slot, so every zone of the
+    /// organiser decodes the same wire format and an identifier stays
+    /// meaningful however the draft changes. The `tool:` prefix keeps a
+    /// future tool named "separator" unambiguous.
+    public var identifier: String {
+        switch self {
+        case .tool(let tool): "tool:\(tool.rawValue)"
+        case .separator: "separator"
+        }
+    }
+
+    /// The item an identifier names; anything else is nil and every decode
+    /// drops it.
+    public init?(identifier: String) {
+        if identifier == "separator" {
+            self = .separator
+        } else if identifier.hasPrefix("tool:"), let tool = Tool(rawValue: String(identifier.dropFirst(5))) {
+            self = .tool(tool)
+        } else {
+            return nil
+        }
+    }
+
+    /// The tool this item holds, or nil for a separator.
+    public var tool: Tool? {
+        if case .tool(let tool) = self { return tool }
+        return nil
+    }
+}
+
+/// Which tools the drawing toolbar shows, in what order, and which wait in
+/// the pool (T6/S5): the stored form is the bar's item list — every entry a
+/// tool or a separator — plus the pool's tools in pool order. Normalisation
+/// keeps every broken state unreachable: unknown identifiers drop, tools the
+/// bar list never mentions land in the pool (never silently on the bar),
+/// duplicated tools collapse to their first occurrence, and leading, trailing
+/// or repeated separators are cleaned so the bar can never render an empty
+/// end. A document that would leave the bar with no tool is refused and the
+/// shipped bar comes back.
 ///
 /// This is the drawing toolbar's layout only — the capture editor keeps its
-/// own fixed palette over a still image, and a keyboard shortcut is not the
-/// bar: a hidden tool stays shortcut-armed.
+/// own fixed family-grouped palette over a still image, and a keyboard
+/// shortcut is not the bar: an off-bar tool stays shortcut-armed.
 public struct ToolbarToolLayout: Codable, Equatable, Sendable {
-    /// Tools in display order; hidden ones keep their stored place for when
-    /// they come back.
-    public var tools: [Tool]
-    /// The hidden tools — drawn nowhere, still shortcut-armed.
-    public var hidden: Set<Tool>
+    /// The bar's items in display order: tools and separators, normalised.
+    public var items: [ToolbarLayoutItem]
+    /// Every tool that is not on the bar, in the pool's order.
+    public var pool: [Tool]
 
-    /// The documented default order: exactly today's grouped bar flattened —
-    /// the same sequence the four default `Tool.toolbarGroups` renders.
+    /// The documented default order: exactly the grouped bar flattened — the
+    /// same sequence `Tool.toolbarGroups` renders.
     public static let defaultOrder = Tool.toolbarGroups.flatMap { $0 }
 
-    /// The layout a fresh install gets: every tool, today's order, none
-    /// hidden.
+    /// The items a fresh install draws: every tool in the documented order
+    /// with a separator exactly between the tool families — the dividers the
+    /// grouped bar has always placed.
+    public static let standardItems: [ToolbarLayoutItem] = {
+        var items: [ToolbarLayoutItem] = []
+        for group in Tool.toolbarGroups {
+            if !items.isEmpty { items.append(.separator) }
+            items.append(contentsOf: group.map(ToolbarLayoutItem.tool))
+        }
+        return items
+    }()
+
+    /// The layout a fresh install gets: every tool on the bar in today's
+    /// order with the family dividers, an empty pool.
     public static let standard = ToolbarToolLayout()
 
-    /// Creates a layout. The stored order is normalized: duplicates collapse
-    /// to their first occurrence, tools the list never mentions are appended
-    /// in the documented default order, and a hidden set that leaves no
-    /// visible tool is dropped so the bar can never present itself empty.
-    public init(tools: [Tool] = ToolbarToolLayout.defaultOrder, hidden: Set<Tool> = []) {
-        var seen = Set<Tool>(minimumCapacity: Tool.allCases.count)
-        var ordered: [Tool] = []
-        for tool in tools where seen.insert(tool).inserted {
-            ordered.append(tool)
+    /// Creates a layout. The stored form is normalised: duplicate tools
+    /// collapse to their first occurrence, a separator only ever sits between
+    /// two tools (leading, trailing and repeated ones are cleaned), the pool
+    /// ends up holding exactly the tools that are off the bar — the stored
+    /// pool order first, anything it never mentions behind in the documented
+    /// default order — and a list without a single tool is refused, bringing
+    /// the shipped bar back.
+    public init(items: [ToolbarLayoutItem] = ToolbarToolLayout.standardItems, pool: [Tool] = []) {
+        var seen = Set<Tool>()
+        var ordered: [ToolbarLayoutItem] = []
+        for item in items {
+            switch item {
+            case .tool(let tool):
+                if seen.insert(tool).inserted { ordered.append(item) }
+            case .separator:
+                if ordered.last?.tool != nil { ordered.append(item) }
+            }
         }
-        for tool in ToolbarToolLayout.defaultOrder where seen.insert(tool).inserted {
-            ordered.append(tool)
+        while ordered.last == .separator { ordered.removeLast() }
+        guard ordered.contains(where: { $0.tool != nil }) else {
+            self = .standard
+            return
         }
-        self.tools = ordered
-        self.hidden = ordered.contains(where: { !hidden.contains($0) }) ? hidden : []
+        let onBar = Set(ordered.compactMap(\.tool))
+        var poolSeen = Set<Tool>()
+        var poolOrder: [Tool] = []
+        for tool in pool where !onBar.contains(tool) && poolSeen.insert(tool).inserted {
+            poolOrder.append(tool)
+        }
+        for tool in ToolbarToolLayout.defaultOrder where !onBar.contains(tool) && poolSeen.insert(tool).inserted {
+            poolOrder.append(tool)
+        }
+        self.items = ordered
+        self.pool = poolOrder
     }
 
-    /// The tools the bar draws, in order, with no gaps and nothing duplicated:
-    /// the stored order with the hidden ones skipped.
+    /// The tools the bar draws, in order.
     public var visibleTools: [Tool] {
-        tools.filter { !hidden.contains($0) }
+        items.compactMap(\.tool)
     }
 
-    /// The tool section the toolbar renders: runs of consecutive visible
-    /// tools that share a default family (the groups of
-    /// `Tool.toolbarGroups`). The shipped layout reproduces today's groups
-    /// exactly, and an arbitrary user order still gets a family divider only
-    /// between neighbouring relatives.
-    public var visibleGroups: [[Tool]] {
-        // Every tool belongs to exactly one default family (pinned by
-        // `ToolAndInkTests`); a nil comparison below only defends against a
-        // future tool missing from `toolbarGroups`.
+    /// The items of the v0.4-shaped bar: the stored tool order with a
+    /// separator wherever the family changed — the dividers the old
+    /// `visibleGroups` rendering drew.
+    static func itemsWithFamilySeparators(_ tools: [Tool]) -> [ToolbarLayoutItem] {
         var families: [Tool: Int] = [:]
         for (index, group) in Tool.toolbarGroups.enumerated() {
-            for tool in group {
-                families[tool] = index
-            }
+            for tool in group { families[tool] = index }
         }
-        var groups: [[Tool]] = []
-        for tool in visibleTools {
+        var items: [ToolbarLayoutItem] = []
+        var lastFamily: Int? = nil
+        for tool in tools {
             let family = families[tool]
-            if let last = groups.last, families[last[0]] == family {
-                groups[groups.count - 1].append(tool)
+            if let last = lastFamily, let family, last != family {
+                items.append(.separator)
+            }
+            items.append(.tool(tool))
+            lastFamily = family
+        }
+        return items
+    }
+
+    /// Drops `item` into the bar at `index` — the organiser's pool drop. A
+    /// tool comes out of the pool and lands where it is dropped; a separator
+    /// joins the bar, clamped to a slot strictly between two tools (the bar
+    /// can never render an empty end, so a one-tool bar refuses a separator
+    /// outright). Normalisation applies, so a separator dropped beside
+    /// another one collapses into it.
+    public func inserting(_ item: ToolbarLayoutItem, at index: Int) -> ToolbarToolLayout {
+        var copy = items
+        if item.tool == nil {
+            guard let target = Self.clampedSeparatorSlot(index, forBarCount: copy.count) else { return self }
+            copy.insert(item, at: target)
+        } else {
+            let target = min(max(index, 0), copy.count)
+            copy.insert(item, at: target)
+        }
+        let movedTool = item.tool
+        return ToolbarToolLayout(items: copy, pool: pool.filter { $0 != movedTool })
+    }
+
+    /// Moves `item` to `index` — the insert position in the list as it would
+    /// be without the item. A tool clamps at both ends; a separator clamps to
+    /// the slots strictly between two tools, so a stray drop can never strand
+    /// it where normalisation would erase it. An item the bar does not hold
+    /// changes nothing, and the pool is untouched.
+    public func moving(_ item: ToolbarLayoutItem, to index: Int) -> ToolbarToolLayout {
+        guard let current = items.firstIndex(of: item) else { return self }
+        var copy = items
+        copy.remove(at: current)
+        let target: Int
+        if item.tool == nil {
+            guard let slot = Self.clampedSeparatorSlot(index, forBarCount: copy.count) else { return self }
+            target = slot
+        } else {
+            target = min(max(index, 0), copy.count)
+        }
+        copy.insert(item, at: target)
+        return ToolbarToolLayout(items: copy, pool: pool)
+    }
+
+    /// Where a separator may sit: only strictly between two tools, so the
+    /// slots of a bar-to-be with `count` items are 1...(count-1). A one-tool
+    /// bar offers none.
+    private static func clampedSeparatorSlot(_ index: Int, forBarCount count: Int) -> Int? {
+        count >= 2 ? min(max(index, 1), count - 1) : nil
+    }
+
+    /// Takes `item` off the bar into the pool. The last tool is refused — the
+    /// bar can never go empty — and the layout comes back unchanged.
+    /// `poolIndex` places the tool inside the pool (clamped to its length);
+    /// nil appends at the end.
+    public func removing(_ item: ToolbarLayoutItem, intoPoolAt poolIndex: Int? = nil) -> ToolbarToolLayout {
+        guard let current = items.firstIndex(of: item) else { return self }
+        if item.tool != nil, visibleTools.count <= 1 { return self }
+        var copy = items
+        copy.remove(at: current)
+        var poolOrder = pool
+        if let tool = item.tool {
+            if let index = poolIndex, index <= poolOrder.count {
+                poolOrder.insert(tool, at: index)
             } else {
-                groups.append([tool])
+                poolOrder.append(tool)
             }
         }
-        return groups
+        return ToolbarToolLayout(items: copy, pool: poolOrder)
     }
 
-    /// Moves `tool` through the stored order by signed positions — one step
-    /// swaps with the neighbour — clamped at both ends; the hidden keep their
-    /// place and reorder too. A tool that is not stored comes back unchanged.
-    public func moving(_ tool: Tool, by positions: Int) -> ToolbarToolLayout {
-        guard let index = tools.firstIndex(of: tool) else { return self }
-        let target = min(max(index + positions, 0), tools.count - 1)
-        guard target != index else { return self }
-        var copy = self
-        copy.tools.remove(at: index)
-        copy.tools.insert(tool, at: target)
-        return copy
-    }
-
-    /// Shows or hides `tool`. Hiding the last visible tool is refused — the
-    /// bar can never go empty — and returns the layout unchanged.
-    public func setting(_ tool: Tool, isVisible: Bool) -> ToolbarToolLayout {
-        if isVisible {
-            var copy = self
-            copy.hidden.remove(tool)
-            return copy
-        }
-        let visibleCount = visibleTools.count
-        guard visibleTools.contains(tool) ? visibleCount > 1 : visibleCount > 0 else { return self }
-        var copy = self
-        copy.hidden.insert(tool)
-        return copy
+    /// Reorders the pool: `tool` moves to `index` — the insert position in
+    /// the pool as it would be without the tool (clamped). A tool not in the
+    /// pool changes nothing.
+    public func movingInPool(_ tool: Tool, to index: Int) -> ToolbarToolLayout {
+        guard pool.contains(tool) else { return self }
+        var copy = pool.filter { $0 != tool }
+        let target = min(max(index, 0), copy.count)
+        copy.insert(tool, at: target)
+        return ToolbarToolLayout(items: items, pool: copy)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case tools, hidden
+        case items, pool, tools, hidden
     }
 
-    /// Lenient decoding: identifiers are tool raw values, unknown ones drop,
-    /// duplicates collapse, missing tools append in the documented default
-    /// order, and an empty stored list is the shipped bar instead of an empty
-    /// one. The layout's own `init` applies every rule, so decoding only adds
-    /// the two fallbacks for missing or unparseable fields.
+    /// Lenient decoding. The v0.5 shape holds `items` (identifier strings:
+    /// `tool:` plus a tool raw value, or the `separator` token) and `pool`
+    /// (raw tool values); unknown identifiers drop. A blob without that shape
+    /// but holding the v0.4 `tools`/`hidden` fields decodes into the new one
+    /// with the same visible set and order the old bar drew — separators
+    /// wherever the family changed. Anything older is the shipped bar.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        if container.contains(.items) {
+            let rawItems = (try? container.decode([String].self, forKey: .items)) ?? []
+            let rawPool = (try? container.decode([String].self, forKey: .pool)) ?? []
+            self.init(items: rawItems.compactMap(ToolbarLayoutItem.init(identifier:)), pool: rawPool.compactMap(Tool.init(rawValue:)))
+            return
+        }
         let rawTools = (try? container.decode([String].self, forKey: .tools)) ?? []
         let rawHidden = (try? container.decode([String].self, forKey: .hidden)) ?? []
         guard !rawTools.isEmpty else {
@@ -262,14 +382,23 @@ public struct ToolbarToolLayout: Codable, Equatable, Sendable {
             self = .standard
             return
         }
-        self.init(tools: rawTools.compactMap(Tool.init(rawValue:)), hidden: Set(rawHidden.compactMap(Tool.init(rawValue:))))
+        var seen = Set<Tool>()
+        var stored: [Tool] = []
+        for tool in rawTools.compactMap(Tool.init(rawValue:)) where seen.insert(tool).inserted {
+            stored.append(tool)
+        }
+        self.init(
+            items: Self.itemsWithFamilySeparators(stored.filter { !rawHidden.contains($0.rawValue) }),
+            pool: stored.filter { rawHidden.contains($0.rawValue) }
+        )
     }
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(tools.map(\.rawValue), forKey: .tools)
-        // Sorted so the same layout always writes the same bytes.
-        try container.encode(hidden.map(\.rawValue).sorted(), forKey: .hidden)
+        try container.encode(items.map(\.identifier), forKey: .items)
+        // The pool's order is part of the layout, so it encodes in order,
+        // never sorted.
+        try container.encode(pool.map(\.rawValue), forKey: .pool)
     }
 }
 

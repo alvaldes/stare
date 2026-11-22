@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import StareCore
+import UniformTypeIdentifiers
 
 /// The areas of the Settings window, in sidebar order.
 enum SettingsArea: String, CaseIterable, Identifiable {
@@ -284,7 +285,7 @@ private struct GeneralPane: View {
                     .labelsHidden()
                     .frame(width: 220)
                 )
-                toolbarToolsSection
+                toolbarOrganiser
                 Text("The bar moves to the new edge as soon as you pick, and right-clicking the ⠇⠇ handle always returns it there.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -326,74 +327,255 @@ private struct GeneralPane: View {
         )
     }
 
-    // MARK: Toolbar tools (T8/S10)
+    // MARK: Toolbar organiser (T6/S5)
 
-    /// The visibility and reorder list for the drawing toolbar's tools, in
-    /// the persisted order: one row per tool with a show/hide toggle and
-    /// up/down buttons, writing through the model so the bar updates live.
-    /// Hidden tools keep their keyboard shortcut, and the list refuses to
-    /// hide the last visible tool — the bar can never go empty.
-    private var toolbarToolsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Tools on the bar")
-                .font(.system(size: 13, weight: .semibold))
-            ForEach(model.toolbarTools.tools) { tool in
-                toolbarToolRow(tool)
-            }
-            Text(
-                "The bar draws the tools in this order; hidden tools keep their keyboard shortcut. "
-                    + "The last visible tool cannot be hidden, so the bar never goes empty."
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
+    /// A detached editor state the live preview runs on: the real bar view
+    /// on the current orientation, border, tool and ink. The organiser keeps
+    /// it in step with the model below; it never touches the app's own
+    /// state.
+    @StateObject private var toolbarPreviewState = EditorState()
+    /// The bar's measured item sizes, picked up from the real bar view's
+    /// own measurement, and the pool chips' measured sizes.
+    @State private var poolSizes: [Tool: CGSize] = [:]
+
+    /// The measured chip sizes the pool's drop targets read.
+    private struct ToolbarPoolChipSizeKey: PreferenceKey {
+        static var defaultValue: [Tool: CGSize] { [:] }
+        static func reduce(
+            value: inout [Tool: CGSize],
+            nextValue: () -> [Tool: CGSize]
+        ) {
+            value.merge(nextValue(), uniquingKeysWith: { _, new in new })
         }
     }
 
-    private func toolbarToolRow(_ tool: Tool) -> some View {
-        let layout = model.toolbarTools
-        let index = layout.tools.firstIndex(of: tool) ?? 0
-        let isVisible = !layout.hidden.contains(tool)
-        return HStack(spacing: 12) {
-            Image(systemName: tool.symbolName)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 18)
-            Text(tool.displayName)
-                .font(.system(size: 13))
-            Spacer()
-            HStack(spacing: 4) {
-                Button {
-                    model.toolbarTools = layout.moving(tool, by: -1)
-                } label: {
-                    Image(systemName: "chevron.up")
-                        .font(.system(size: 10, weight: .medium))
-                        .frame(width: 22, height: 20)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .disabled(index == 0)
-                .help(Text(verbatim: "Move \(tool.displayName) earlier"))
-                Button {
-                    model.toolbarTools = layout.moving(tool, by: 1)
-                } label: {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 10, weight: .medium))
-                        .frame(width: 22, height: 20)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .disabled(index == layout.tools.count - 1)
-                .help(Text(verbatim: "Move \(tool.displayName) later"))
-                Toggle("", isOn: Binding(
-                    get: { !model.toolbarTools.hidden.contains(tool) },
-                    set: { model.toolbarTools = model.toolbarTools.setting(tool, isVisible: $0) }
-                ))
-                .labelsHidden()
-                .disabled(isVisible && layout.visibleTools.count == 1)
-                .help(Text(verbatim: "Show \(tool.displayName) on the bar"))
-            }
+    /// The drop delegate the pool's end zone uses: a tool lands at the end
+    /// of the pool, and a placed separator comes back off the bar — the one
+    /// way out for a placed separator. The pool never stores separators as
+    /// pool items.
+    private struct ToolbarPoolEndDropDelegate: DropDelegate {
+        let onDrop: (ToolbarLayoutItem) -> Void
+
+        func dropUpdated(info: DropInfo) -> DropProposal? {
+            DropProposal(operation: .move)
         }
-        .padding(.vertical, 2)
+
+        func performDrop(info: DropInfo) -> Bool {
+            guard let provider = info.itemProviders(for: [UTType.plainText]).first else { return false }
+            provider.loadObject(ofClass: NSString.self) { object, _ in
+                guard let raw = object as? String, let payload = ToolbarLayoutItem(identifier: raw) else { return }
+                onDrop(payload)
+            }
+            return true
+        }
+    }
+
+    /// The organiser, Bartender-style: a live preview of the bar built from
+    /// the draft layout — the real bar view — and a pool with the tools that
+    /// are not on the bar plus the separators. Items move between the zones
+    /// and reorder inside them by dragging, and every drop writes the draft
+    /// at once: it persists through `PreferencesModel`, no Save button. The
+    /// model's normalisation keeps every broken state unreachable while the
+    /// user is mid-arrangement.
+    private var toolbarOrganiser: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Tools on the bar")
+                .font(.system(size: 13, weight: .semibold))
+            toolbarPreviewCard
+            Text("Tools in the pool")
+                .font(.system(size: 13, weight: .semibold))
+                .padding(.top, 2)
+            toolbarPoolRow
+            Text("What the preview shows is the bar, in that order. Pool tools stay off the bar but keep their keyboard shortcuts; every change saves at once.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .onReceive(model.$toolbarTools) { _ in syncToolbarPreview() }
+        .onReceive(model.$toolbarOrientation) { _ in syncToolbarPreview() }
+        .onReceive(model.$toolbarBorder) { _ in syncToolbarPreview() }
+        .onReceive(model.$tool) { _ in syncToolbarPreview() }
+        .onReceive(model.$ink) { _ in syncToolbarPreview() }
+    }
+
+    private func syncToolbarPreview() {
+        toolbarPreviewState.toolbarTools = model.toolbarTools
+        toolbarPreviewState.toolbarOrientation = model.toolbarOrientation
+        toolbarPreviewState.toolbarBorder = model.toolbarBorder
+        toolbarPreviewState.tool = model.tool
+        toolbarPreviewState.ink = model.ink
+    }
+
+    /// The live preview: the drawing bar itself, on the draft item list, in
+    /// the shape and dock the settings keep. Its hooks make every item a
+    /// drag source and every item a two-sided drop target — the drag payload
+    /// is the item's stable identifier, so pool drafts and bar reorders read
+    /// the same wire format.
+    private var toolbarPreviewCard: some View {
+        HStack {
+            Spacer(minLength: 0)
+            ToolbarView(
+                state: toolbarPreviewState,
+                onUndo: {}, onRedo: {}, onClear: {}, onDone: {},
+                toolItems: model.toolbarTools.items,
+                organiser: ToolbarOrganiserHooks(
+                    dragProvider: { NSItemProvider(object: $0.identifier as NSString) },
+                    drop: { target, edge, payload in
+                        handleBarDrop(target: target, edge: edge, payload: payload)
+                    }
+                )
+            )
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, model.toolbarOrientation == .vertical ? 4 : 12)
+        .frame(maxWidth: .infinity, minHeight: 66, alignment: .center)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.secondary.opacity(0.08))
+        )
+    }
+
+    /// The pool: the tools that are not on the bar, in the pool's order,
+    /// plus the separator — always available, never stored, one drop adds
+    /// one. Chips drag into the bar and reorder among themselves by their
+    /// halves; the dashed zone at the end always accepts a drop at the end
+    /// of the pool, even when it is empty.
+    private var toolbarPoolRow: some View {
+        HStack(spacing: 8) {
+            ForEach(model.toolbarTools.pool) { tool in
+                toolbarPoolChip(tool)
+            }
+            toolbarPoolSeparatorChip
+            toolbarPoolEndZone
+        }
+        .onPreferenceChange(ToolbarPoolChipSizeKey.self) { poolSizes = $0 }
+    }
+
+    private func toolbarPoolChip(_ tool: Tool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: tool.symbolName)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+            Text(tool.displayName)
+                .font(.system(size: 12))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.secondary.opacity(0.10))
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .onDrag { NSItemProvider(object: ToolbarLayoutItem.tool(tool).identifier as NSString) }
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(key: ToolbarPoolChipSizeKey.self, value: [tool: geo.size])
+            }
+        )
+        .onDrop(of: [UTType.plainText], delegate: ToolbarSlotDropDelegate(
+            target: .tool(tool),
+            size: poolSizes[tool] ?? CGSize(width: 80, height: 26),
+            axisVertical: false,
+            onDrop: { target, edge, payload in
+                handlePoolDrop(target: target, edge: edge, payload: payload)
+            }
+        ))
+        .help(Text(verbatim: "Drag \(tool.displayName) onto the bar"))
+    }
+
+    /// The separator chip: always available to drag onto the bar; it never
+    /// takes drops, because separators do not stack in the pool.
+    private var toolbarPoolSeparatorChip: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+            Text("Separator")
+                .font(.system(size: 12))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.secondary.opacity(0.10))
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .onDrag { NSItemProvider(object: ToolbarLayoutItem.separator.identifier as NSString) }
+        .help(Text(verbatim: "Drag a separator onto the bar"))
+    }
+
+    /// The always-open end of the pool: guides a drop when there is nothing
+    /// else to drop onto, landing the tool at the end of the pool.
+    private var toolbarPoolEndZone: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "plus")
+                .font(.system(size: 9, weight: .medium))
+            Text("Drop to pool")
+                .font(.system(size: 10))
+        }
+        .foregroundStyle(.tertiary)
+        .frame(minWidth: 72, minHeight: 26)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4]))
+                .foregroundStyle(Color.secondary.opacity(0.35))
+        )
+        .onDrop(of: [UTType.plainText], delegate: ToolbarPoolEndDropDelegate { payload in
+            handlePoolEndDrop(payload: payload)
+        })
+    }
+
+    // MARK: Toolbar organiser drops (T6/S5)
+
+    /// Handles a drop on the bar: a payload already on the bar reorders in
+    /// place, a payload from the pool is inserted — a tool comes out of the
+    /// pool at that very spot, a separator joins the bar. The destination
+    /// slot is the target item's position plus the drop's side.
+    private func handleBarDrop(target: ToolbarLayoutItem, edge: ToolbarOrganiserHooks.Edge, payload: ToolbarLayoutItem) {
+        let layout = model.toolbarTools
+        guard let targetIndex = layout.items.firstIndex(of: target) else { return }
+        let slot = targetIndex + (edge == .after ? 1 : 0)
+        if layout.items.contains(payload) {
+            // The move index is the insert position in the list as it would
+            // be without the item, so a slot the payload itself sits before
+            // closes up by one.
+            guard let currentIndex = layout.items.firstIndex(of: payload) else { return }
+            let adjusted = currentIndex < slot ? slot - 1 : slot
+            model.toolbarTools = layout.moving(payload, to: adjusted)
+        } else {
+            model.toolbarTools = layout.inserting(payload, at: slot)
+        }
+    }
+
+    /// Handles a drop on a pool chip: a payload already in the pool
+    /// reorders, a payload on the bar enters the pool at that very spot.
+    private func handlePoolDrop(target: ToolbarLayoutItem, edge: ToolbarOrganiserHooks.Edge, payload: ToolbarLayoutItem) {
+        guard case .tool(let tool) = payload, case .tool(let targetTool) = target else { return }
+        let layout = model.toolbarTools
+        guard let targetIndex = layout.pool.firstIndex(of: targetTool) else { return }
+        let slot = targetIndex + (edge == .after ? 1 : 0)
+        if layout.pool.contains(tool) {
+            let currentIndex = layout.pool.firstIndex(of: tool) ?? layout.pool.count
+            let adjusted = currentIndex < slot ? slot - 1 : slot
+            model.toolbarTools = layout.movingInPool(tool, to: adjusted)
+        } else {
+            model.toolbarTools = layout.removing(.tool(tool), intoPoolAt: slot)
+        }
+    }
+
+    /// Handles a drop on the pool's end zone: a bar tool lands at the end of
+    /// the pool, a pool tool moves there, and a placed separator comes off
+    /// the bar — the one way to take a placed separator back out.
+    private func handlePoolEndDrop(payload: ToolbarLayoutItem) {
+        let layout = model.toolbarTools
+        if case .tool(let tool) = payload {
+            if layout.items.contains(payload) {
+                model.toolbarTools = layout.removing(.tool(tool))
+            } else if layout.pool.contains(tool) {
+                model.toolbarTools = layout.movingInPool(tool, to: layout.pool.count)
+            }
+        } else if layout.items.contains(payload) {
+            model.toolbarTools = layout.removing(.separator)
+        }
     }
 
     // MARK: Startup (launch at login, T10/S6)
