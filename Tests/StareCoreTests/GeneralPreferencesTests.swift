@@ -90,6 +90,42 @@ final class GeneralPreferencesTests: XCTestCase {
         XCTAssertTrue(general.showArmedFrame)
     }
 
+    // MARK: Session persistence (T10/S11)
+
+    func testSessionPersistenceDefaultsToOn() {
+        // S11: by default what is drawn and the whiteboard pages persist
+        // until the machine restarts — the switch ships on.
+        XCTAssertTrue(GeneralPreferences.standard.persistsSession)
+        XCTAssertTrue(GeneralPreferences().persistsSession)
+    }
+
+    func testSessionPersistenceDecodesLenientlyAndKeepsTheRest() throws {
+        // A blob written before the field existed keeps the shipped default.
+        let missing = try Self.decode(#"{"showArmedFrame":false,"scope":"active"}"#)
+        XCTAssertTrue(missing.persistsSession)
+        XCTAssertFalse(missing.showArmedFrame)
+        XCTAssertEqual(missing.scope, .active)
+
+        // A wrongly typed value falls back to the default, per-field.
+        let wronglyTyped = try Self.decode(#"{"persistsSession":"yes"}"#)
+        XCTAssertTrue(wronglyTyped.persistsSession)
+
+        // The off choice survives decoding like any other value.
+        let off = try Self.decode(#"{"persistsSession":false,"showArmedFrame":true}"#)
+        XCTAssertFalse(off.persistsSession)
+        XCTAssertTrue(off.showArmedFrame)
+    }
+
+    func testSessionPersistenceRoundTrips() throws {
+        var general = GeneralPreferences.standard
+        general.persistsSession = false
+
+        let data = try JSONEncoder().encode(general)
+        let decoded = try JSONDecoder().decode(GeneralPreferences.self, from: data)
+        XCTAssertEqual(decoded, general)
+        XCTAssertFalse(decoded.persistsSession, "the off choice must survive a round trip")
+    }
+
     func testUnknownToolbarOrientationFallsBackToDefaultAndKeepsTheRest() throws {
         let general = try Self.decode(
             #"{"showArmedFrame":false,"scope":"active","palettePlacement":"fixed","laserLifetime":3,"toolbarOrientation":"diagonal","toolbarBorder":"left"}"#

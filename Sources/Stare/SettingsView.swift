@@ -225,6 +225,12 @@ private struct GeneralPane: View {
                     content: Toggle("", isOn: $model.showArmedFrame)
                         .labelsHidden()
                 )
+                SettingRow(
+                    title: "Keep marks and pages",
+                    detail: "What is drawn and the whiteboard pages survive closing Stare or leaving a mode, until the Mac restarts. Turning it off discards what was stored.",
+                    content: Toggle("", isOn: $model.persistsSession)
+                        .labelsHidden()
+                )
             }
 
             SettingsCard(title: "Displays", symbol: "display.2") {

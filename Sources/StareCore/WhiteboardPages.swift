@@ -198,7 +198,7 @@ public enum DotGrid: Sendable {
 /// consumed — paint, capture base, beneath-blur image. Inks are never
 /// remapped, so a mark colour that vanishes against the background is the
 /// user's call.
-public enum BoardBackground: String, CaseIterable, Equatable, Sendable {
+public enum BoardBackground: String, CaseIterable, Codable, Equatable, Sendable {
     /// Follows the system appearance: light → white, dark → black.
     case system
     case white
@@ -446,5 +446,88 @@ public final class WhiteboardPages {
     public func resetView() {
         pages[currentIndex].offset = .zero
         pages[currentIndex].zoom = 1
+    }
+}
+
+/// The persisted form of one board page (T10/S11): the page's marks (see
+/// `DrawingSession.persistedStrokes` — already without transient laser marks),
+/// its background, its pan offset and its zoom. The background rides as its
+/// raw value via `Codable`.
+public struct PersistedBoardPage: Codable, Equatable, Sendable {
+    public var strokes: [PersistedStroke]
+    public var background: BoardBackground
+    public var offset: CGSize
+    public var zoom: CGFloat
+
+    public init(strokes: [PersistedStroke], background: BoardBackground, offset: CGSize, zoom: CGFloat) {
+        self.strokes = strokes
+        self.background = background
+        self.offset = offset
+        self.zoom = zoom
+    }
+}
+
+/// The persisted form of one display's whole board (T10/S11): the ordered
+/// pages and which one was presented when the session was saved.
+public struct PersistedBoard: Codable, Equatable, Sendable {
+    public var pages: [PersistedBoardPage]
+    public var currentIndex: Int
+
+    public init(pages: [PersistedBoardPage], currentIndex: Int) {
+        self.pages = pages
+        self.currentIndex = currentIndex
+    }
+}
+
+/// The stored-form seam for board pages (T10/S11).
+extension BoardPage {
+    /// The stored form of the page: its non-transient marks, its background,
+    /// its pan and its zoom.
+    public var persisted: PersistedBoardPage {
+        PersistedBoardPage(
+            strokes: session.persistedStrokes.map(\.persisted),
+            background: background,
+            offset: offset,
+            zoom: zoom
+        )
+    }
+
+    /// Rebuilds the page from its stored form: marks come back exactly as
+    /// they were saved, with the numbered sequence continuing per page.
+    public init(persisted page: PersistedBoardPage) {
+        self.init(
+            session: .restored(strokes: page.strokes.compactMap(Stroke.init(persisted:))),
+            background: page.background,
+            offset: page.offset,
+            zoom: page.zoom
+        )
+    }
+}
+
+/// The stored-form seam for the board (T10/S11).
+public extension WhiteboardPages {
+    /// The stored form of the whole board: every page in order, without any
+    /// transient mark, and which page was presented.
+    func persistedBoard() -> PersistedBoard {
+        PersistedBoard(pages: pages.map(\.persisted), currentIndex: currentIndex)
+    }
+
+    /// Rebuilds a board from its stored form: the same pages, in the same
+    /// order, presenting the page that was presented. A stored board with no
+    /// pages — or one whose current index names a page it does not have — is
+    /// clamped into a state a fresh board can be: one page, at index 0. A nil
+    /// stored board builds a fresh single page on `fallbackBackground`, the
+    /// same thing a board without stored state has always opened with.
+    convenience init(restoring stored: PersistedBoard, fallbackBackground: BoardBackground) {
+        guard !stored.pages.isEmpty else {
+            self.init(background: fallbackBackground)
+            return
+        }
+        // The index is clamped before anything indexes with it, so a partial
+        // or foreign document can never trap the board.
+        let currentIndex = min(max(stored.currentIndex, 0), stored.pages.count - 1)
+        self.init(background: stored.pages[currentIndex].background)
+        pages = stored.pages.map(BoardPage.init(persisted:))
+        self.currentIndex = currentIndex
     }
 }

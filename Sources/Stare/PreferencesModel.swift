@@ -60,6 +60,11 @@ final class PreferencesModel: ObservableObject {
     @Published var toolbarTools: ToolbarToolLayout {
         didSet { persist() }
     }
+    /// Mirror of whether marks and whiteboard pages persist until the machine
+    /// restarts (T10/S11); writing it persists the whole blob.
+    @Published var persistsSession: Bool {
+        didSet { persist() }
+    }
     /// Mirror of the first-run flag; writing it persists the whole blob.
     @Published var hasCompletedOnboarding: Bool {
         didSet { persist() }
@@ -133,6 +138,7 @@ final class PreferencesModel: ObservableObject {
         self.toolbarOrientation = loaded.general.toolbarOrientation
         self.toolbarBorder = loaded.general.toolbarBorder
         self.toolbarTools = loaded.general.toolbarTools
+        self.persistsSession = loaded.general.persistsSession
         self.hasCompletedOnboarding = loaded.hasCompletedOnboarding
         self.tool = loaded.tool
         self.ink = loaded.ink
@@ -156,7 +162,8 @@ final class PreferencesModel: ObservableObject {
             laserLifetime: laserLifetime,
             toolbarOrientation: toolbarOrientation,
             toolbarBorder: toolbarBorder,
-            toolbarTools: toolbarTools
+            toolbarTools: toolbarTools,
+            persistsSession: persistsSession
         )
         preferences.hasCompletedOnboarding = hasCompletedOnboarding
         preferences.tool = tool

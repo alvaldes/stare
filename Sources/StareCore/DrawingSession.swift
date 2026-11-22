@@ -1,6 +1,67 @@
 import CoreGraphics
 import Foundation
 
+/// One mark's stored form (T10/S11): a DTO plain data types can persist, since
+/// `Tool` and `Ink` are plain enums that ride in the blob as raw values. The
+/// identity, geometry, ink, tool, numbering and every piece of mark metadata
+/// ride along, so a restored canvas is the canvas that was there.
+public struct PersistedStroke: Codable, Equatable, Sendable {
+    public var id: UUID
+    /// `Tool.rawValue` — an unknown value makes the mark unrenderable, so the
+    /// restore drops it instead of drawing a wrong shape.
+    public var tool: String
+    /// `Ink.rawValue` — like the blob's own fields, an unknown value falls
+    /// back to the default ink.
+    public var ink: String
+    public var points: [CGPoint]
+    public var stepNumber: Int?
+    public var text: String?
+    public var textSize: CGSize?
+    public var createdAt: Date?
+    public var badgeSize: CGFloat?
+    public var rotation: CGFloat
+}
+
+/// The persisted form of one mark (see `PersistedStroke`).
+extension Stroke {
+    /// The stored form of this mark.
+    public var persisted: PersistedStroke {
+        PersistedStroke(
+            id: id,
+            tool: tool.rawValue,
+            ink: ink.rawValue,
+            points: points,
+            stepNumber: stepNumber,
+            text: text,
+            textSize: textSize,
+            createdAt: createdAt,
+            badgeSize: badgeSize,
+            rotation: rotation
+        )
+    }
+
+    /// Rebuilds the mark from its stored form. nil when the tool named is one
+    /// this build does not know — a foreign document must never draw a wrong
+    /// shape; the mark is simply not restored. Transient marks (laser) are
+    /// refused here too: a stored mark that would have faded anyway must not
+    /// resurrect.
+    public init?(persisted stroke: PersistedStroke) {
+        guard let tool = Tool(rawValue: stroke.tool), !tool.isTransient else { return nil }
+        self.init(
+            id: stroke.id,
+            tool: tool,
+            ink: Ink(rawValue: stroke.ink) ?? .red,
+            points: stroke.points,
+            stepNumber: stroke.stepNumber,
+            text: stroke.text,
+            textSize: stroke.textSize,
+            createdAt: stroke.createdAt,
+            badgeSize: stroke.badgeSize,
+            rotation: stroke.rotation
+        )
+    }
+}
+
 /// The marks of one drawing layer plus its undo history. A session is a value
 /// type: the overlay owns one per display, and tests drive it directly.
 public struct DrawingSession: Equatable, Sendable {
@@ -521,5 +582,31 @@ public struct DrawingSession: Equatable, Sendable {
     public var canRedoBatchMove: Bool {
         guard case let .movedBatch(_, transformed) = redoOps.last else { return false }
         return strokes.contains { stroke in transformed.contains { $0.id == stroke.id } }
+    }
+}
+
+/// The persisted-form seam (T10/S11): what a snapshot keeps and how a
+/// restored session comes back.
+public extension DrawingSession {
+    /// The marks a persistence snapshot stores: every committed mark that is
+    /// not transient. A laser mark would have faded before the session was
+    /// ever saved, so it is never stored, and the snapshot intentionally
+    /// carries no undo state — the journals belong to the live session and
+    /// restart with it.
+    var persistedStrokes: [Stroke] {
+        strokes.filter { !$0.tool.isTransient }
+    }
+
+    /// Rebuilds a session from stored marks: every mark comes back exactly as
+    /// it was saved (identity, geometry, ink, tool, numbering), with the
+    /// numbered sequence continuing after the highest stored number, and no
+    /// mark in progress. Transient marks a stale or hand-built payload still
+    /// carries are refused, the same rule the writer keeps.
+    static func restored(strokes: [Stroke]) -> DrawingSession {
+        var session = DrawingSession()
+        let live = strokes.filter { !$0.tool.isTransient }
+        session.strokes = live
+        session.nextStepNumber = (live.compactMap(\.stepNumber).max() ?? 0) + 1
+        return session
     }
 }

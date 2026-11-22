@@ -113,6 +113,18 @@ final class OverlayController {
     /// creation can read the whiteboard defaults at open time. Nil in the
     /// selftest harness paths that run detached on defaults.
     private let preferences: PreferencesModel?
+    /// The boot-scoped session archive store (T10/S11): where the drawing
+    /// sessions and the board pages are written at the mode exits and at
+    /// termination, and read from when a mode opens. nil in the harness paths
+    /// that run detached — nothing is stored there.
+    private let sessionStore: BootSessionStore?
+    /// Whether the session archive is active (T10/S11): the persisted switch
+    /// reads through the preferences owner, and a detached harness keeps the
+    /// shipped default, which is on.
+    private var sessionPersistenceEnabled: Bool {
+        guard let preferences else { return GeneralPreferences.standard.persistsSession }
+        return MainActor.assumeIsolated { preferences.persistsSession }
+    }
     /// Live screen frames for blur marks (T5/S3). Captures run only while the
     /// overlay is active and at least one display has a visible blur mark.
     private let liveFrames: LiveFrameSource
@@ -131,11 +143,13 @@ final class OverlayController {
     init(
         captureService: ScreenCapturing = CaptureService(),
         liveFrames: LiveFrameSource = LiveFrameSource(),
-        preferences: PreferencesModel? = nil
+        preferences: PreferencesModel? = nil,
+        sessionStore: BootSessionStore? = nil
     ) {
         self.captureService = captureService
         self.liveFrames = liveFrames
         self.preferences = preferences
+        self.sessionStore = sessionStore
         self.state = EditorState(preferences: preferences)
         wireEditor()
         // Interest is asked from the canvases, so it is whatever the sessions
@@ -201,6 +215,17 @@ final class OverlayController {
         state.$boardShowBorder.map { _ in () }.eraseToAnyPublisher()
             .sink { [weak self] in self?.repaintBoardCanvases() }
             .store(in: &cancellables)
+        // S11: with the switch off nothing is stored, and anything already
+        // stored is dropped, so the next launch is empty. The subscription
+        // also fires once at launch, so stale data behind a switch that has
+        // been off for a while never lingers.
+        MainActor.assumeIsolated {
+            preferences?.$persistsSession.sink { [weak self] persists in
+                guard let self, !persists else { return }
+                MainActor.assumeIsolated { self.sessionStore?.drop() }
+            }
+            .store(in: &cancellables)
+        }
     }
 
     /// At most one mark is selected in the whole app: this drops every view's
@@ -409,6 +434,7 @@ final class OverlayController {
         NSApp.activate(ignoringOtherApps: true)
 
         buildCanvases()
+        restoreDrawingSessions()
         for canvas in canvases.values {
             canvas.view.syncPreferences()
             canvas.panel.orderFrontRegardless()
@@ -440,6 +466,11 @@ final class OverlayController {
         isActive = false
         isPinned = false
 
+        // S11: what is drawn survives leaving the mode, so the sessions are
+        // stored before the canvases clear — the next activation restores
+        // them. A failed write leaves the in-memory session untouched, and
+        // the clear below still runs like every deactivation always has.
+        saveSession()
         for canvas in canvases.values { canvas.panel.orderOut(nil) }
         hideToolbar()
         clearAll()
@@ -449,6 +480,56 @@ final class OverlayController {
         if restoringFocus { restoreFrontmostApplication() }
         NSCursor.arrow.set()
         Diag.log("deactivate")
+    }
+
+    // MARK: - Session persistence (T10/S11)
+
+    /// Writes the current drawing sessions and the boards' pages into the
+    /// boot-scoped archive, at the mode exits (deactivate, board close) and
+    /// at app termination. Cheap by contract: one JSON encode over the marks
+    /// plus one store write, all on the caller thread — a failed encode or a
+    /// skipped write never blocks, never crashes and leaves the in-memory
+    /// session exactly as it was. With the persisted switch off nothing is
+    /// stored, and anything already stored is dropped (S11).
+    func saveSession() {
+        guard let sessionStore else { return }
+        guard sessionPersistenceEnabled else {
+            sessionStore.drop()
+            return
+        }
+        // The stored display map is carried forward, so a save taken while a
+        // mode is closed (termination) never wipes a drawing an earlier mode
+        // exit already stored; a canvas that exists now overwrites its own
+        // display's entry, so cleared marks really are gone.
+        let previous = sessionStore.load()
+        var displays = previous?.displays ?? [:]
+        for canvas in canvases.values {
+            displays[String(canvas.displayID)] = canvas.view.session.persistedStrokes.map(\.persisted)
+        }
+        // The boards kept in memory are authoritative over their stored
+        // entries when they exist; a display's board that was never opened
+        // this run keeps whatever was stored for it.
+        var storedBoards = previous?.boards ?? [:]
+        for (displayID, board) in boards {
+            storedBoards[String(displayID)] = board.persistedBoard()
+        }
+        sessionStore.save(SessionArchive(displays: displays, boards: storedBoards))
+        Diag.log("session saved displays=\(displays.count) boards=\(storedBoards.count)")
+    }
+
+    /// Rebuilds the drawing canvases' sessions from the boot-scoped archive
+    /// at activation time — what was there when the app closed or the mode
+    /// was left is there again, marks with their geometry, ink, tool and
+    /// numbering. Nothing stored, nothing restored: a fresh launch behaves
+    /// fresh.
+    private func restoreDrawingSessions() {
+        guard sessionPersistenceEnabled, let archive = sessionStore?.load() else { return }
+        for canvas in canvases.values {
+            guard let stored = archive.displays[String(canvas.displayID)], !stored.isEmpty else { continue }
+            let restored = DrawingSession.restored(strokes: stored.compactMap(Stroke.init(persisted:)))
+            guard !restored.isEmpty else { continue }
+            canvas.view.session = restored
+        }
     }
 
     // MARK: - Whiteboard
@@ -504,6 +585,10 @@ final class OverlayController {
             canvas.panel.orderOut(nil)
         }
         boardCanvases.removeAll()
+        // S11: the pages survive the board closing — they already stayed in
+        // memory for the session, and the persisted switch keeps them across
+        // app launches, stored here at the mode exit.
+        saveSession()
         hideToolbar()
         // The marks stay on their pages, so the undo history cannot resurrect
         // them in a future overlay session: start the history clean.
@@ -911,9 +996,20 @@ final class OverlayController {
         // board — it applies to the next board. The scope and the border live
         // in the same blob's defaults and are read while the board is open.
         let defaults = whiteboardDefaults()
-        let fresh = WhiteboardPages(background: defaults.resolvedBackground(isDarkAppearance: isDarkAppearance()))
-        for _ in 1..<max(defaults.pagesOnOpen, 1) {
-            _ = fresh.selectNext()
+        let background = defaults.resolvedBackground(isDarkAppearance: isDarkAppearance())
+        // S11: the pages the app stored for this display earlier in the boot
+        // rebuild exactly as they were — marks, backgrounds, pan, zoom and the
+        // presented page. Only a board that is not already in memory restores;
+        // a live board keeps being authoritative.
+        let stored: PersistedBoard? = sessionPersistenceEnabled
+            ? sessionStore?.load()?.boards[String(displayID)]
+            : nil
+        let fresh = stored.flatMap { WhiteboardPages(restoring: $0, fallbackBackground: background) }
+            ?? WhiteboardPages(background: background)
+        if stored == nil {
+            for _ in 1..<max(defaults.pagesOnOpen, 1) {
+                _ = fresh.selectNext()
+            }
         }
         boards[displayID] = fresh
         return fresh

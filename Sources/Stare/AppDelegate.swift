@@ -12,7 +12,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let preferences = MainActor.assumeIsolated { PreferencesModel() }
     private lazy var overlay = OverlayController(
         captureService: captureService,
-        preferences: preferences
+        preferences: preferences,
+        // The boot-scoped session archive (T10/S11): the production path —
+        // the app's standard domain, tagged with the machine's boot instant.
+        sessionStore: BootSessionStore()
     )
     private var statusBar: StatusBarController?
     /// The Settings shell now observes the single preferences owner and the
@@ -150,6 +153,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    /// S11: at termination whatever is drawn and the boards' pages are stored
+    /// one last time, so they come back at the next launch of the same boot.
+    /// Cheap and lossless against the in-memory session by contract.
+    func applicationWillTerminate(_ notification: Notification) {
+        overlay.saveSession()
     }
 
     /// Marks the guide as seen, once. Idempotent, so reopening it from the

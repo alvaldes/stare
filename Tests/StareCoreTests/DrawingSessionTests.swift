@@ -1005,4 +1005,201 @@ final class DrawingSessionTests: XCTestCase {
         XCTAssertTrue(session.redo())
         XCTAssertFalse(session.canRedoBatchMove)
     }
+
+    // MARK: Session persistence (T10/S11)
+
+    /// Draws one pen line and one numbered badge, then one laser mark on top,
+    /// used by the persistence tests below.
+    private func mixedSession() -> DrawingSession {
+        var session = DrawingSession()
+        drawLine(in: &session, points: [CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 10)])
+        session.begin(at: CGPoint(x: 30, y: 30), tool: .number, ink: .green)
+        let now = Date()
+        session.begin(at: CGPoint(x: 50, y: 50), tool: .laser, ink: .red, now: now)
+        session.extend(to: CGPoint(x: 60, y: 60))
+        session.commit()
+        return session
+    }
+
+    func testPersistedStrokesExcludeLaserMarks() {
+        let session = mixedSession()
+
+        XCTAssertEqual(session.persistedStrokes, session.strokes.filter { !$0.tool.isTransient })
+        XCTAssertEqual(session.persistedStrokes.count, session.strokes.count - 1)
+    }
+
+    func testRestoredSessionRebuildsMarkIdentityGeometryInkToolAndNumbering() {
+        let session = mixedSession()
+
+        let restored = DrawingSession.restored(strokes: session.strokes)
+        XCTAssertEqual(restored.strokes, session.persistedStrokes, "ids, geometry, ink, tool and numbering come back exactly, without the transient mark")
+        XCTAssertEqual(restored.nextStepNumber, session.nextStepNumber, "the numbered sequence continues where it left off")
+        XCTAssertNil(restored.active, "an in-progress mark is never restored")
+    }
+
+    func testRestoredSessionDropsTransientMarksEvenFromAHandBuiltPayload() {
+        // A stale or hand-edited payload that still carries a laser mark must
+        // not resurrect it: it would have faded anyway.
+        let restored = DrawingSession.restored(strokes: mixedSession().strokes)
+        XCTAssertFalse(restored.strokes.contains { $0.tool.isTransient })
+        XCTAssertEqual(restored.strokes.count, 2)
+    }
+
+    func testRestoredSessionOfNothingIsEmpty() {
+        let restored = DrawingSession.restored(strokes: [])
+        XCTAssertTrue(restored.isEmpty)
+        XCTAssertEqual(restored.nextStepNumber, 1)
+    }
+
+    /// Pen stroke with every field a mark can carry, encoded once for the
+    /// round trips.
+    private static func featuredPersistedStroke(
+        id: UUID = UUID(),
+        tool: Tool,
+        stepNumber: Int? = nil,
+        text: String? = nil,
+        textSize: CGSize? = nil,
+        createdAt: Date? = nil,
+        badgeSize: CGFloat? = nil,
+        rotation: CGFloat = 0
+    ) -> PersistedStroke {
+        let stroke = Stroke(
+            id: id,
+            tool: tool,
+            ink: .purple,
+            points: [CGPoint(x: 1, y: 2), CGPoint(x: 3, y: 4)],
+            stepNumber: stepNumber,
+            text: text,
+            textSize: textSize,
+            createdAt: createdAt,
+            badgeSize: badgeSize,
+            rotation: rotation
+        )
+        return stroke.persisted
+    }
+
+    func testPersistedStrokeEncodesToolAndInkAsRawValuesAndRoundTrips() throws {
+        let stroke = Self.featuredPersistedStroke(tool: .number, stepNumber: 1)
+
+        let data = try JSONEncoder().encode(stroke)
+        let decoded = try JSONDecoder().decode(PersistedStroke.self, from: data)
+        XCTAssertEqual(decoded, stroke)
+
+        let restored = Stroke(persisted: decoded)
+        XCTAssertEqual(restored?.id, stroke.id)
+        XCTAssertEqual(restored?.tool, Tool.number)
+        XCTAssertEqual(restored?.ink, Ink.purple)
+        XCTAssertEqual(restored?.points, [CGPoint(x: 1, y: 2), CGPoint(x: 3, y: 4)])
+        XCTAssertEqual(restored?.stepNumber, 1)
+    }
+
+    func testPersistedStrokeRestoresEveryField() {
+        let stamp = Date(timeIntervalSince1970: 100)
+        let stroke = Self.featuredPersistedStroke(
+            tool: .text,
+            text: "hello",
+            textSize: CGSize(width: 40, height: 12),
+            createdAt: stamp,
+            badgeSize: 30,
+            rotation: 0.5
+        )
+
+        let restored = Stroke(persisted: stroke)
+        XCTAssertEqual(restored?.text, "hello")
+        XCTAssertEqual(restored?.textSize, CGSize(width: 40, height: 12))
+        XCTAssertEqual(restored?.createdAt, stamp)
+        XCTAssertEqual(restored?.badgeSize, 30)
+        XCTAssertEqual(restored?.rotation, 0.5)
+    }
+
+    func testPersistedStrokeWithAnUnknownToolIsDroppedNotMisrendered() throws {
+        // A foreign document that names a tool this build does not know: the
+        // mark is dropped (it behaves like a fresh launch) instead of a wrong
+        // shape appearing on screen.
+        var stroke = Self.featuredPersistedStroke(tool: .pen)
+        stroke.tool = "galaxy"
+
+        XCTAssertNil(Stroke(persisted: stroke))
+    }
+
+    func testPersistedStrokeWithAnUnknownInkFallsBackToTheDefault() throws {
+        var stroke = Self.featuredPersistedStroke(tool: .pen)
+        stroke.ink = "void"
+
+        XCTAssertEqual(Stroke(persisted: stroke)?.ink, Ink.red, "an unknown ink falls back like the blob's own fields do")
+    }
+
+    // MARK: Boot session store (T10/S11)
+
+    /// One pen mark's persisted form, shared by the store tests.
+    private static func penPersistedStroke(id: UUID = UUID()) -> PersistedStroke {
+        let stroke = Stroke(tool: .pen, ink: .red, points: [CGPoint(x: 2, y: 3), CGPoint(x: 8, y: 9)])
+        return Stroke(id: id, tool: stroke.tool, ink: stroke.ink, points: stroke.points).persisted
+    }
+
+    private static func archive(boot: Date, strokeID: UUID = UUID()) -> SessionArchive {
+        SessionArchive(
+            bootTime: boot,
+            displays: ["123": [penPersistedStroke()]],
+            boards: ["123": PersistedBoard(pages: [], currentIndex: 0)]
+        )
+    }
+
+    func testSessionArchiveRoundTripsThroughTheStoreWithinTheSameBoot() {
+        let store = InMemoryPreferenceStore()
+        let bootTime = Date(timeIntervalSince1970: 1000)
+        let sessionStore = BootSessionStore(store: store, bootTime: { bootTime })
+        let archive = Self.archive(boot: bootTime)
+
+        sessionStore.save(archive)
+
+        let reloaded = BootSessionStore(store: store, bootTime: { bootTime }).load()
+        XCTAssertEqual(reloaded, archive, "a session stored this boot is restored this boot")
+    }
+
+    func testSessionArchiveFromAnEarlierBootIsDiscarded() {
+        let store = InMemoryPreferenceStore()
+        let earlierBoot = Date(timeIntervalSince1970: 1000)
+        BootSessionStore(store: store, bootTime: { earlierBoot }).save(Self.archive(boot: earlierBoot))
+
+        // The machine restarted: the new boot's instant is a different one.
+        let afterRestart = Date(timeIntervalSince1970: 1_000_000)
+        XCTAssertNil(BootSessionStore(store: store, bootTime: { afterRestart }).load())
+    }
+
+    func testCorruptStoredSessionBehavesLikeAFreshLaunch() {
+        let store = InMemoryPreferenceStore()
+        let bootTime = Date(timeIntervalSince1970: 1000)
+        let sessionStore = BootSessionStore(store: store, bootTime: { bootTime })
+        sessionStore.save(Self.archive(boot: bootTime))
+        store.set(Data("not json at all".utf8), forKey: SessionArchive.storageKey)
+
+        XCTAssertNil(sessionStore.load(), "a corrupt payload must never fail the launch")
+    }
+
+    func testSessionStoreDropsStoredData() {
+        let store = InMemoryPreferenceStore()
+        let bootTime = Date(timeIntervalSince1970: 1000)
+        let sessionStore = BootSessionStore(store: store, bootTime: { bootTime })
+        sessionStore.save(Self.archive(boot: bootTime))
+
+        sessionStore.drop()
+
+        XCTAssertNil(BootSessionStore(store: store, bootTime: { bootTime }).load())
+    }
+
+    func testSessionStoreSkipsTheWriteWhenTheBootClockIsUnknown() {
+        // With no boot instant the store cannot tag the session, so it must
+        // not write untagged data a later boot could resurrect.
+        let store = InMemoryPreferenceStore()
+        let sessionStore = BootSessionStore(store: store, bootTime: { nil })
+
+        sessionStore.save(Self.archive(boot: Date()))
+
+        XCTAssertNil(store.data(forKey: SessionArchive.storageKey))
+    }
+
+    func testSessionStoreOfAnEmptyStoreIsFresh() {
+        XCTAssertNil(BootSessionStore(store: InMemoryPreferenceStore(), bootTime: { Date() }).load())
+    }
 }

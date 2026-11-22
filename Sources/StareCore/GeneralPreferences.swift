@@ -346,6 +346,12 @@ public struct GeneralPreferences: Codable, Equatable, Sendable {
     /// Which tools the drawing toolbar shows and in what order (T8/S10). The
     /// default is the shipped bar: every tool, today's order, none hidden.
     public var toolbarTools: ToolbarToolLayout
+    /// Whether marks and whiteboard pages persist until the machine restarts
+    /// (T10/S11). The switch ships on: a stored drawing session is discarded
+    /// at the next boot, never restored into a different boot. Turning it off
+    /// stops storing and drops anything already stored, back to the ephemeral
+    /// behaviour the app always had.
+    public var persistsSession: Bool
 
     /// The general preferences a fresh install gets, matching what the app
     /// ships today.
@@ -360,7 +366,8 @@ public struct GeneralPreferences: Codable, Equatable, Sendable {
         laserLifetime: LaserLifetime = .twoPointFive,
         toolbarOrientation: ToolbarOrientation = .horizontal,
         toolbarBorder: ToolbarBorder = .top,
-        toolbarTools: ToolbarToolLayout = .standard
+        toolbarTools: ToolbarToolLayout = .standard,
+        persistsSession: Bool = true
     ) {
         self.showArmedFrame = showArmedFrame
         self.scope = scope
@@ -369,11 +376,13 @@ public struct GeneralPreferences: Codable, Equatable, Sendable {
         self.toolbarOrientation = toolbarOrientation
         self.toolbarBorder = toolbarBorder
         self.toolbarTools = toolbarTools
+        self.persistsSession = persistsSession
     }
 
     private enum CodingKeys: String, CodingKey {
         case showArmedFrame, scope, palettePlacement, laserLifetime
         case toolbarOrientation, toolbarBorder, toolbarTools
+        case persistsSession
     }
 
     /// Lenient decoding: a missing or unknown raw value falls back to the
@@ -394,5 +403,8 @@ public struct GeneralPreferences: Codable, Equatable, Sendable {
         // Lenient like every field: an unparseable layout (or a blob written
         // before it existed) keeps the shipped bar.
         self.toolbarTools = (try? container.decode(ToolbarToolLayout.self, forKey: .toolbarTools)) ?? .standard
+        // A blob written before the switch existed keeps the shipped default:
+        // persistence is on (S11).
+        self.persistsSession = (try? container.decode(Bool.self, forKey: .persistsSession)) ?? true
     }
 }

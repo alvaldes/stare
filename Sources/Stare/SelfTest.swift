@@ -341,6 +341,13 @@ enum SelfTest {
         // drawing mode up — never leave it by way of the exit path.
         report.append(contentsOf: escapeReport())
 
+        // Session persistence (T10/S11): the real round trip through the
+        // store — draw, close the mode, reload into a fresh controller, the
+        // marks come back — plus the earlier-boot, corrupt-payload and
+        // switch-off rules. In-memory stores only: the user's data is never
+        // touched.
+        report.append(contentsOf: MainActor.assumeIsolated { sessionPersistenceReport() })
+
         // Click pulse (T7/S3): the pulse curve sampled the way the pointer
         // timer samples it, and the highlight rendered through the real
         // pointer drawing path at rest, peak and settled.
@@ -2268,6 +2275,146 @@ enum SelfTest {
             && selectionFirst && boardCleared && boardStayedOpen
             && boardUndoRestores && boardRedoClears
         report.append("escape result=\(passed ? "PASS" : "FAIL")")
+        return report
+    }
+
+    // MARK: - Session persistence (T10/S11)
+
+    /// The storage round trip through the real controller and the real store
+    /// seam, detached from the user's data (in-memory stores only, and a fixed
+    /// boot instant so the boot scope is deterministic): drawing marks survive
+    /// the mode closing and a controller reload; a stored session from an
+    /// earlier boot is discarded; a corrupt payload behaves like a fresh
+    /// launch; the switch off stops storing and drops what was stored; and the
+    /// whiteboard's pages round trip the same way.
+    @MainActor
+    private static func sessionPersistenceReport() -> [String] {
+        var report: [String] = []
+        let model = PreferencesModel(store: SelfTestPreferenceStore())
+        let bootTime = Date(timeIntervalSince1970: 5_000)
+        let store = SelfTestPreferenceStore()
+        func makeController(boot: Date) -> OverlayController {
+            OverlayController(
+                captureService: CaptureService(),
+                preferences: model,
+                sessionStore: BootSessionStore(store: store, bootTime: { boot })
+            )
+        }
+        func drawPenLine(on controller: OverlayController, at start: CGPoint) -> (id: UUID, points: [CGPoint])? {
+            guard let view = controller.selfTestViews.first, let panel = view.window else { return nil }
+            controller.state.tool = .pen
+            controller.state.ink = .red
+            sendDrag(to: panel, from: start, to: CGPoint(x: start.x + 80, y: start.y + 40))
+            guard let stroke = view.session.strokes.first else { return nil }
+            return (stroke.id, stroke.points)
+        }
+
+        // Same boot: draw, leave the mode, and a fresh controller restores
+        // the exact mark.
+        let controller = makeController(boot: bootTime)
+        controller.activate()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        let drawn = drawPenLine(on: controller, at: CGPoint(x: 300, y: 300))
+        controller.deactivate(restoringFocus: false)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        guard let drawn else {
+            report.append("FAIL: session persist nothing drawn")
+            return report
+        }
+
+        let reloaded = makeController(boot: bootTime)
+        reloaded.activate()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        // The marks come back on the display they were drawn on, so the probe
+        // is display-aware instead of "the first canvas".
+        let sameBootRestored = reloaded.selfTestViews.contains { view in
+            view.session.strokes.count == 1
+                && view.session.strokes.first?.id == drawn.id
+                && view.session.strokes.first?.points == drawn.points
+        }
+        reloaded.deactivate(restoringFocus: false)
+
+        // Earlier boot: the archive was written before a restart, so the new
+        // boot discards it and the canvas opens empty.
+        let stale = makeController(boot: bootTime.addingTimeInterval(-3_600))
+        stale.activate()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        let staleRestored = !stale.selfTestViews.isEmpty
+            && stale.selfTestViews.allSatisfy { $0.session.strokes.isEmpty }
+        stale.deactivate(restoringFocus: false)
+
+        // Corrupt payload: the archive stored under the key cannot decode, so
+        // the launch behaves exactly like a fresh one instead of failing.
+        let corruptStore = SelfTestPreferenceStore()
+        let stamped = BootSessionStore(store: corruptStore, bootTime: { bootTime })
+        stamped.save(SessionArchive(displays: ["1": []], boards: [:]))
+        corruptStore.set(Data("not an archive".utf8), forKey: SessionArchive.storageKey)
+        let corruptRestored = BootSessionStore(store: corruptStore, bootTime: { bootTime }).load() == nil
+
+        // The switch off drops what is stored at once and then stops storing:
+        // the next launch is empty.
+        model.persistsSession = false
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        let droppedOnSwitchOff = BootSessionStore(store: store, bootTime: { bootTime }).load() == nil
+        let offController = makeController(boot: bootTime)
+        offController.activate()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        _ = drawPenLine(on: offController, at: CGPoint(x: 300, y: 300))
+        offController.deactivate(restoringFocus: false)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        let nothingStoredWhileOff = BootSessionStore(store: store, bootTime: { bootTime }).load() == nil
+
+        // The whiteboard: pages round trip the same way — draw on page 1,
+        // open page 2, close the board, reload into a fresh controller, both
+        // pages and the presented page come back.
+        let boardModel = PreferencesModel(store: SelfTestPreferenceStore())
+        let boardStore = SelfTestPreferenceStore()
+        func makeBoardController(boot: Date) -> OverlayController {
+            OverlayController(
+                captureService: CaptureService(),
+                preferences: boardModel,
+                sessionStore: BootSessionStore(store: boardStore, bootTime: { boot })
+            )
+        }
+        let boardController = makeBoardController(boot: bootTime)
+        boardController.activate()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        boardController.toggleBoard()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        let page1Mark = drawPenLine(on: boardController, at: CGPoint(x: 200, y: 200))
+        (boardController.selfTestViews.first as? WhiteboardView)?.selectNextPage()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        let page2Mark = drawPenLine(on: boardController, at: CGPoint(x: 240, y: 240))
+        boardController.toggleBoard() // close: the pages are stored
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        guard let page1Mark, let page2Mark else {
+            report.append("FAIL: session persist board draws did not commit")
+            return report
+        }
+
+        let reloadedBoard = makeBoardController(boot: bootTime)
+        reloadedBoard.toggleBoard()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        // The board that drew the marks is the one that restores them, so the
+        // probe searches every display's board instead of the first canvas.
+        let pagesRestored = reloadedBoard.selfTestViews.contains { view in
+            guard let boardView = view as? WhiteboardView else { return false }
+            return boardView.board.count == 2
+                && boardView.board.currentIndex == 1
+                && boardView.board.pages.contains { $0.session.strokes.first?.id == page1Mark.id }
+                && boardView.board.pages.contains { $0.session.strokes.first?.id == page2Mark.id }
+        }
+        reloadedBoard.toggleBoard()
+        reloadedBoard.deactivate(restoringFocus: false)
+
+        let passed = sameBootRestored && staleRestored && corruptRestored
+            && droppedOnSwitchOff && nothingStoredWhileOff && pagesRestored
+        report.append(
+            "session persist sameBootRestore=\(sameBootRestored) earlierBootDiscarded=\(staleRestored) "
+                + "corruptFresh=\(corruptRestored) switchOffDrops=\(droppedOnSwitchOff) "
+                + "nothingStoredWhileOff=\(nothingStoredWhileOff) boardPagesRestore=\(pagesRestored) "
+                + "result=\(passed ? "PASS" : "FAIL")"
+        )
         return report
     }
 

@@ -589,4 +589,89 @@ final class WhiteboardPagesTests: XCTestCase {
         XCTAssertTrue(DotGrid.dots(in: .zero, spacing: 24).isEmpty)
         XCTAssertTrue(DotGrid.dots(in: CGRect(x: 0, y: 0, width: 100, height: 100), spacing: 0).isEmpty)
     }
+
+    // MARK: Session persistence (T10/S11)
+
+    /// Builds a two-page board: page 1 black with a pen mark and a numbered
+    /// badge, panned and zoomed; page 2 inheriting the background with its
+    /// own mark; presenting page 2.
+    private func populatedBoard() -> WhiteboardPages {
+        let board = WhiteboardPages()
+        board.toggleBackground() // page 1: white → black
+        board.adopt(drawnSession(stepCount: 1))
+        board.setOffset(CGSize(width: 12, height: 34))
+        _ = board.zoom(to: 2, anchoredAt: .zero)
+        board.selectNext() // page 2 inherits the background
+        board.adopt(drawnSession())
+        board.pan(by: CGSize(width: 5, height: 6))
+        return board
+    }
+
+    func testPersistedBoardRoundTripPreservesEveryPageWhoMarksBackgroundPanZoomAndTheCurrentPage() {
+        let board = populatedBoard()
+
+        let restored = WhiteboardPages(restoring: board.persistedBoard(), fallbackBackground: .white)
+        XCTAssertEqual(restored.count, board.count)
+        XCTAssertEqual(restored.currentIndex, board.currentIndex, "the presented page comes back presented")
+        for (restoredPage, storedPage) in zip(restored.pages, board.pages) {
+            XCTAssertEqual(restoredPage.session.strokes, storedPage.session.strokes, "ids, geometry, ink, tool and numbering come back exactly")
+            XCTAssertEqual(restoredPage.session.nextStepNumber, storedPage.session.nextStepNumber)
+            XCTAssertEqual(restoredPage.background, storedPage.background)
+            XCTAssertEqual(restoredPage.offset, storedPage.offset, "the page's pan comes back")
+            XCTAssertEqual(restoredPage.zoom, storedPage.zoom, "the page's zoom comes back")
+        }
+    }
+
+    func testPersistedBoardExcludesTransientMarksFromEveryPage() {
+        var laserPage = DrawingSession()
+        laserPage.begin(at: CGPoint(x: 8, y: 8), tool: .laser, ink: .red, now: Date())
+        laserPage.commit()
+        let board = WhiteboardPages()
+        board.adopt(drawnSession())
+        board.selectNext()
+        board.adopt(laserPage)
+
+        let persisted = board.persistedBoard()
+        XCTAssertTrue(persisted.pages[0].strokes.contains { $0.tool == "pen" })
+        XCTAssertTrue(persisted.pages[1].strokes.isEmpty, "a laser mark would have faded anyway; it is never stored")
+    }
+
+    func testRestoredBoardFallsBackToAFreshPageWhenNothingWasStored() {
+        let restored = WhiteboardPages(
+            restoring: PersistedBoard(pages: [], currentIndex: 0),
+            fallbackBackground: .black
+        )
+        XCTAssertEqual(restored.count, 1)
+        XCTAssertEqual(restored.currentIndex, 0)
+        XCTAssertEqual(restored.currentPage.background, .black)
+        XCTAssertTrue(restored.currentPage.session.isEmpty)
+    }
+
+    func testRestoredBoardClampsAnOutOfRangeCurrentPage() {
+        // A partial or foreign document naming a page the board does not
+        // have: the board presents its first page instead of failing.
+        let page = PersistedBoardPage(strokes: [], background: .white, offset: .zero, zoom: 1)
+        let restored = WhiteboardPages(
+            restoring: PersistedBoard(pages: [page], currentIndex: 9),
+            fallbackBackground: .white
+        )
+        XCTAssertEqual(restored.currentIndex, 0)
+        XCTAssertEqual(restored.count, 1)
+    }
+
+    func testPersistedBoardPageEncodesItsBackgroundAsItsRawValue() throws {
+        let stroke = Stroke(tool: .pen, ink: .red, points: [CGPoint(x: 1, y: 1), CGPoint(x: 2, y: 2)])
+        let page = PersistedBoardPage(
+            strokes: [stroke.persisted],
+            background: .black,
+            offset: CGSize(width: 3, height: 4),
+            zoom: 1.5
+        )
+
+        let data = try JSONEncoder().encode(page)
+        let json = String(data: data, encoding: .utf8) ?? ""
+        XCTAssertTrue(json.contains("\"background\":\"black\""), "the raw value is what the blob keeps: \(json)")
+        let decoded = try JSONDecoder().decode(PersistedBoardPage.self, from: data)
+        XCTAssertEqual(decoded, page)
+    }
 }
