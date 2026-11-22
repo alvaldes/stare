@@ -152,6 +152,12 @@ struct SettingsView: View {
         GeometryReader { proxy in
             HStack(spacing: 0) {
                 sidebar
+                    // The ring belongs to the keyboard, not to the selection
+                    // (S3): on open the selected row is also the window's
+                    // first responder, and macOS draws a focus ring around
+                    // what reads as a selected row. It stays off until the
+                    // first Tab.
+                    .focusEffectDisabled(!keyboardNavigationStarted)
                 Divider()
                 Self.pane(
                     for: area,
@@ -163,6 +169,33 @@ struct SettingsView: View {
             }
         }
         .frame(minWidth: 860, minHeight: 560)
+        .onAppear { installTabMonitor() }
+        .onDisappear { removeTabMonitor() }
+    }
+
+    // MARK: Focus ring (S3)
+
+    /// Whether the user has started moving through Settings with Tab. Until
+    /// then the sidebar draws no focus ring, because the window's first
+    /// responder being the selected row is not a keyboard decision.
+    @State private var keyboardNavigationStarted = false
+    /// The Tab watcher: removed with the window, so a closed Settings leaves
+    /// nothing behind.
+    @State private var tabMonitor: Any?
+
+    private func installTabMonitor() {
+        guard tabMonitor == nil else { return }
+        tabMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if event.keyCode == 48 {
+                keyboardNavigationStarted = true
+            }
+            return event
+        }
+    }
+
+    private func removeTabMonitor() {
+        if let tabMonitor { NSEvent.removeMonitor(tabMonitor) }
+        tabMonitor = nil
     }
 
     /// What a pane's cards get: the window, less the sidebar and a divider,
