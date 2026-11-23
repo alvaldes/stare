@@ -44,6 +44,14 @@ public struct AppPreferences: Codable, Equatable, Sendable {
     /// Guide…" item can still open it by hand without touching this flag.
     public var hasCompletedOnboarding: Bool
 
+    /// What a blur mark produces over what it covers (T6b/S13): the audited
+    /// gaussian blur (odd/tasks/capture-extras.md L4) or the randomized
+    /// pixelate beside it. Appended at the END of the versioned blob — an
+    /// append never reorders what a document already carried — and decoded
+    /// leniently: a missing or unknown value falls back to `.blur`, so every
+    /// blob written before this existed loads as today's behaviour.
+    public var redactionStyle: RedactionStyle
+
     /// The preferences a fresh install gets, matching the look the app ships
     /// today.
     public static let standard = AppPreferences()
@@ -61,7 +69,8 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         capture: CapturePreference = .standard,
         whiteboard: WhiteboardDefaults = .standard,
         updates: UpdateSchedulePreference = .standard,
-        hasCompletedOnboarding: Bool = false
+        hasCompletedOnboarding: Bool = false,
+        redactionStyle: RedactionStyle = .blur
     ) {
         self.pointer = pointer
         self.general = general
@@ -73,6 +82,7 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         self.whiteboard = whiteboard
         self.updates = updates
         self.hasCompletedOnboarding = hasCompletedOnboarding
+        self.redactionStyle = redactionStyle
     }
 
     /// Loads preferences from `store`. A corrupt or absent blob falls back to
@@ -85,7 +95,7 @@ public struct AppPreferences: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case pointer, general, toolShortcuts, hotkeys, tool, ink, capture, whiteboard, updates, hasCompletedOnboarding
+        case pointer, general, toolShortcuts, hotkeys, tool, ink, capture, whiteboard, updates, hasCompletedOnboarding, redactionStyle
     }
 
     /// Lenient decoding: a missing or undecodable field falls back to its
@@ -108,6 +118,11 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         self.whiteboard = (try? container.decode(WhiteboardDefaults.self, forKey: .whiteboard)) ?? .standard
         self.updates = (try? container.decode(UpdateSchedulePreference.self, forKey: .updates)) ?? .standard
         self.hasCompletedOnboarding = (try? container.decode(Bool.self, forKey: .hasCompletedOnboarding)) ?? false
+        // Appended last (T6b/S13): like `tool` and `ink`, an unknown raw
+        // value — a foreign document — falls back to the shipped default
+        // instead of failing the whole blob.
+        self.redactionStyle = (try? container.decode(String.self, forKey: .redactionStyle))
+            .flatMap(RedactionStyle.init(rawValue:)) ?? .blur
     }
 
     /// Encodes the preferences as JSON under the versioned key. `tool` and
@@ -126,6 +141,7 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         try container.encode(whiteboard, forKey: .whiteboard)
         try container.encode(updates, forKey: .updates)
         try container.encode(hasCompletedOnboarding, forKey: .hasCompletedOnboarding)
+        try container.encode(redactionStyle.rawValue, forKey: .redactionStyle)
     }
 
     /// Encodes the preferences as JSON under the versioned key. Legacy keys

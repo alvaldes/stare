@@ -20,6 +20,20 @@ public enum ArrowHeadStyle: String, CaseIterable, Sendable {
     }
 }
 
+/// How a blur mark redacts what is under it (S13). The blur audit
+/// (odd/tasks/capture-extras.md L4) measured the gaussian blur safe at the
+/// shipped parameters, so `.blur` stays the default it always was, and the
+/// randomized pixelate is the plain second option beside it: same tool, same
+/// geometry, no new mark kind.
+public enum RedactionStyle: String, CaseIterable, Sendable, Codable {
+    /// The gaussian diffusion the mark always painted; today's behaviour.
+    case blur
+    /// Pixelation with per-block randomized sampling (`PixelateEffect`), whose
+    /// block derives from the mark's rectangle — never a user knob — and whose
+    /// grid offsets move per `Stroke.redactionSeed`.
+    case randomizedPixelate
+}
+
 /// One mark on the screen. Points live in a top-left-origin, display-local space
 /// measured in points, which is what the overlay view and the capture both use.
 public struct Stroke: Identifiable, Equatable, Sendable {
@@ -51,6 +65,13 @@ public struct Stroke: Identifiable, Equatable, Sendable {
     /// S15: the head this arrow mark draws. A property of the mark like the
     /// fill; only ever set on `.arrow`.
     public var arrowHead: ArrowHeadStyle = .open
+    /// How the mark redacts what is under it (S13): the gaussian blur the audit
+    /// (odd/tasks/capture-extras.md L4) measured safe, or the randomized
+    /// pixelate beside it. A plain defaulted field, exactly the peer's
+    /// `isFilled`/`arrowHead` precedent: a document that never named the field
+    /// decodes as blur, so every mark drawn before it existed renders byte
+    /// -identically to what it always rendered.
+    public var redactionStyle: RedactionStyle = .blur
 
     public init(
         id: UUID = UUID(),
@@ -64,7 +85,8 @@ public struct Stroke: Identifiable, Equatable, Sendable {
         badgeSize: CGFloat? = nil,
         rotation: CGFloat = 0,
         fill: Bool = false,
-        arrowHead: ArrowHeadStyle = .open
+        arrowHead: ArrowHeadStyle = .open,
+        redactionStyle: RedactionStyle = .blur
     ) {
         self.id = id
         self.tool = tool
@@ -78,11 +100,41 @@ public struct Stroke: Identifiable, Equatable, Sendable {
         self.rotation = rotation
         self.isFilled = fill
         self.arrowHead = arrowHead
+        self.redactionStyle = redactionStyle
     }
 
     /// The mark's own badge diameter, falling back to the default.
     public var badgeDiameter: CGFloat {
         badgeSize ?? PathBuilder.badgeDiameter
+    }
+
+    /// The seed the randomized pixelate draws its per-block sampling offsets
+    /// from: mixed from the mark's own identity. The identifier is minted the
+    /// moment the mark is created — the honest answer for a redaction
+    /// primitive, because the branch review's `R1-pixelate-predictable-offsets`
+    /// flagged a public constant seed as the grid definition an attacker reads
+    /// out of the shipped source. Deriving from the identifier also keeps the
+    /// same mark on the same grid everywhere: the live preview, the saved
+    /// capture, the editor's zoom and a restored drawing all name the same
+    /// mark id, so all four agree byte for byte, and two marks over the same
+    /// content never align.
+    public var redactionSeed: UInt64 {
+        // 128 identity bytes → one stable word; explicit byte assembly keeps
+        // it independent of endianness or tuple memory alignment.
+        let identity = Array(withUnsafeBytes(of: id.uuid) { Array($0) })
+        func word(_ start: Int) -> UInt64 {
+            var value: UInt64 = 0
+            for index in 0..<8 {
+                value |= UInt64(identity[start + index]) << UInt64(8 * index)
+            }
+            return value
+        }
+        var state = word(0) ^ word(8) &* 0x9E37_79B9_7F4A_7C15
+        // One SplitMix64 step, so even a low-entropy identity still spreads.
+        state = state &+ 0x9E37_79B9_7F4A_7C15
+        state = (state ^ state >> 30) &* 0xBF58_476D_1CE4_E5B9
+        state = (state ^ state >> 27) &* 0x94D0_49BB_1331_11EB
+        return state ^ state >> 31
     }
 
     /// Ratio of the mark's own badge diameter to the default one, so a resized

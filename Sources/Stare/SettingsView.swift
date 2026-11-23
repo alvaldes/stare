@@ -1020,7 +1020,18 @@ private struct ToolsPane: View {
                     }
                 }
             )
-            Text("The choice persists across launches; while drawing the swatches and the number keys still switch the ink at once.")
+            // One redaction row for T6b/S13: the blur mark's shared choice.
+            SettingRow(
+                title: "Redaction",
+                detail: "What a blur mark paints over what it covers.",
+                content: Picker("", selection: $model.redactionStyle) {
+                    Text("Blur").tag(RedactionStyle.blur)
+                    Text("Pixelate").tag(RedactionStyle.randomizedPixelate)
+                }
+                .labelsHidden()
+                .frame(width: 160, alignment: .trailing)
+            )
+            Text("The ink and the redaction persist across launches; while drawing the swatches and the number keys still switch the ink at once.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

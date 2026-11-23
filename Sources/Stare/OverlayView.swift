@@ -2110,10 +2110,12 @@ class OverlayView: NSView {
                 width: viewRect.width * scale,
                 height: viewRect.height * scale
             )
-            if let blurred = BlurEffect.crop(
+            if let patch = MarkRenderer.redactionPatch(
                 image,
                 pixelRect: pixelRect,
-                radius: BlurEffect.defaultRadius * scale
+                style: stroke.redactionStyle,
+                seed: stroke.redactionSeed,
+                scale: scale
             ) {
                 // The crop may cover less than the full rect when the mark
                 // reaches past the image: draw it at the intersection, clipped
@@ -2135,7 +2137,7 @@ class OverlayView: NSView {
                 context.clip(to: rect)
                 context.translateBy(x: landedPage.minX, y: landedPage.maxY)
                 context.scaleBy(x: 1, y: -1)
-                context.draw(blurred, in: CGRect(origin: .zero, size: landedPage.size))
+                context.draw(patch, in: CGRect(origin: .zero, size: landedPage.size))
                 context.restoreGState()
                 return
             }

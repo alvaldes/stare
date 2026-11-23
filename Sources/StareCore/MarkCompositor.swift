@@ -200,16 +200,18 @@ public enum MarkCompositor {
             width: visible.width * sourceScale,
             height: visible.height * sourceScale
         )
-        guard let blurred = BlurEffect.crop(
+        guard let patch = MarkRenderer.redactionPatch(
             source,
             pixelRect: pixelRect,
-            radius: BlurEffect.defaultRadius * sourceScale
+            style: stroke.redactionStyle,
+            seed: stroke.redactionSeed,
+            scale: sourceScale
         ) else { return }
 
         context.saveGState()
         context.translateBy(x: visible.minX, y: visible.maxY)
         context.scaleBy(x: 1, y: -1)
-        context.draw(blurred, in: CGRect(origin: .zero, size: visible.size))
+        context.draw(patch, in: CGRect(origin: .zero, size: visible.size))
         context.restoreGState()
     }
 

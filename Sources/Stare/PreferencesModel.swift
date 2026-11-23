@@ -106,6 +106,14 @@ final class PreferencesModel: ObservableObject {
     @Published var updateSchedule: UpdateCheckSchedule {
         didSet { persist() }
     }
+    /// Mirror of what a blur mark produces over what it covers (T6b/S13):
+    /// the audited gaussian blur or the randomized pixelate beside it. The
+    /// Settings pane writes it, EditorState mirrors it, and every surface
+    /// that mints a mark reads it through its state; writing it persists the
+    /// whole blob.
+    @Published var redactionStyle: RedactionStyle {
+        didSet { persist() }
+    }
     /// Mirror of when the last update check succeeded (T10/S6): nil until one
     /// does, stamped by `noteUpdateCheck` — and seedable when a test harness
     /// runs detached on an in-memory store; never guessed in production.
@@ -148,6 +156,7 @@ final class PreferencesModel: ObservableObject {
         self.whiteboard = loaded.whiteboard
         self.updateSchedule = loaded.updates.schedule
         self.updateLastCheck = loaded.updates.lastCheck
+        self.redactionStyle = loaded.redactionStyle
     }
 
     /// Writes the one blob from the mirrors. Everything else keeps reading
@@ -173,6 +182,7 @@ final class PreferencesModel: ObservableObject {
         preferences.capture = capture
         preferences.whiteboard = whiteboard
         preferences.updates = UpdateSchedulePreference(schedule: updateSchedule, lastCheck: updateLastCheck)
+        preferences.redactionStyle = redactionStyle
         preferences.save(to: store)
     }
 

@@ -27,6 +27,10 @@ public struct PersistedStroke: Codable, Equatable, Sendable {
     /// other tool and in documents written before the field existed; an
     /// unknown raw value falls back to the open head.
     public var arrowHead: String? = nil
+    /// `RedactionStyle.rawValue` — the style the mark redacts with (S13).
+    /// Optional because a document written before the field existed carries
+    /// nothing: it decodes as nil and restores as the default blur.
+    public var redactionStyle: String?
 }
 
 /// The persisted form of one mark (see `PersistedStroke`).
@@ -45,7 +49,8 @@ extension Stroke {
             badgeSize: badgeSize,
             rotation: rotation,
             fill: isFilled ? true : nil,
-            arrowHead: isFilledHead ? arrowHead.rawValue : nil
+            arrowHead: isFilledHead ? arrowHead.rawValue : nil,
+            redactionStyle: redactionStyle.rawValue
         )
     }
 
@@ -68,7 +73,11 @@ extension Stroke {
             badgeSize: stroke.badgeSize,
             rotation: stroke.rotation,
             fill: stroke.fill ?? false,
-            arrowHead: stroke.arrowHead.flatMap(ArrowHeadStyle.init(rawValue:)) ?? .open
+            arrowHead: stroke.arrowHead.flatMap(ArrowHeadStyle.init(rawValue:)) ?? .open,
+            // Lenient like the blob's own fields: a document without the
+            // field (every drawing saved before it existed) restores as the
+            // audited blur, and an unknown raw value falls back to it too.
+            redactionStyle: stroke.redactionStyle.flatMap(RedactionStyle.init(rawValue:)) ?? .blur
         )
     }
 
@@ -192,6 +201,9 @@ public struct DrawingSession: Equatable, Sendable {
     /// Starts a mark. Numbered steps complete immediately; text stays active
     /// until its content is confirmed. The edit cursor never starts a mark: it
     /// transforms existing ones, so a stray drag must leave nothing behind.
+    /// `redactionStyle` (T6b/S13) is what the mark redacts with — today's blur
+    /// unless the calling surface names the persisted choice; every existing
+    /// caller compiles against the default.
     @discardableResult
     public mutating func begin(
         at point: CGPoint,
@@ -199,12 +211,14 @@ public struct DrawingSession: Equatable, Sendable {
         ink: Ink,
         fill: Bool = false,
         arrowHead: ArrowHeadStyle = .open,
-        now: Date = Date()
+        now: Date = Date(),
+        now: Date = Date(),
+        redactionStyle: RedactionStyle = .blur
     ) -> Stroke {
         guard !tool.isSelection else {
             return Stroke(tool: tool, ink: ink, points: [point])
         }
-        var stroke = Stroke(tool: tool, ink: ink, points: [point])
+        var stroke = Stroke(tool: tool, ink: ink, points: [point], redactionStyle: redactionStyle)
         if tool.isTransient { stroke.createdAt = now }
         // The badge stores the size it is drawn at, so a later uniform scale
         // scales the badge and its digit with it (advisory A).

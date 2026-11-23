@@ -12,8 +12,10 @@ import UniformTypeIdentifiers
 final class CaptureEditorController {
     private var windows: [CaptureEditorWindow] = []
 
-    func open(image: CGImage, capture: CapturePreference = .standard) {
-        let window = CaptureEditorWindow(image: image, capture: capture) { [weak self] closing in
+    func open(
+        image: CGImage, capture: CapturePreference = .standard, redactionStyle: RedactionStyle = .blur
+    ) {
+        let window = CaptureEditorWindow(image: image, capture: capture, redactionStyle: redactionStyle) { [weak self] closing in
             self?.windows.removeAll { $0 === closing }
         }
         windows.append(window)
@@ -31,8 +33,8 @@ final class CaptureEditorController {
 final class CaptureEditorWindow: NSWindow {
     override var canBecomeKey: Bool { true }
 
-    init(image: CGImage, capture: CapturePreference, onClose: @escaping (CaptureEditorWindow) -> Void) {
-        let content = CaptureEditorContent(image: image, capture: capture)
+    init(image: CGImage, capture: CapturePreference, redactionStyle: RedactionStyle = .blur, onClose: @escaping (CaptureEditorWindow) -> Void) {
+        let content = CaptureEditorContent(image: image, capture: capture, redactionStyle: redactionStyle)
         super.init(
             contentRect: CGRect(origin: .zero, size: content.preferredSize),
             styleMask: [.titled, .closable, .resizable],
@@ -63,7 +65,6 @@ final class CaptureEditorContent: NSView {
     private let state = EditorState()
     /// The preference the save panel defaults from (T11/S6).
     private let capture: CapturePreference
-
     var preferredSize: CGSize {
         let image = canvas.image
         let width = min(max(CGFloat(image.width) / 2, 480), 1100)
@@ -73,7 +74,7 @@ final class CaptureEditorContent: NSView {
         return CGSize(width: width, height: min(max(height, 260), 760) + chrome.fittingSize.height)
     }
 
-    init(image: CGImage, capture: CapturePreference) {
+    init(image: CGImage, capture: CapturePreference, redactionStyle: RedactionStyle) {
         self.capture = capture
         canvas = CaptureEditorCanvas(image: image)
         chrome = NSHostingView(
@@ -91,6 +92,10 @@ final class CaptureEditorContent: NSView {
         super.init(frame: .zero)
         chrome.sizingOptions = [.intrinsicContentSize]
         canvas.state = state
+        // The editor's own mark creation follows the same preference (T6b/S13):
+        // the redaction choice rides in from the overlay, so a mark drawn here
+        // redacts with the same style a mark drawn over the live screen does.
+        state.redactionStyle = redactionStyle
         rebuildChrome()
         addSubview(canvas)
         addSubview(chrome)
@@ -942,7 +947,9 @@ final class CaptureEditorCanvas: NSView {
         drawingStart = point
         drawingMoved = false
         drawingStrokes = session.strokes
-        let stroke = session.begin(at: point, tool: state.tool, ink: state.ink)
+        // T6b/S13: the editor's marks redact the way the drawing overlay's do
+        // — the state mirrors the one preference, so the minted mark stamps it.
+        let stroke = session.begin(at: point, tool: state.tool, ink: state.ink, redactionStyle: state.redactionStyle)
         spaces[stroke.id] = drawingSpace
         needsDisplay = true
     }

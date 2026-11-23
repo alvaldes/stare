@@ -26,6 +26,7 @@ user gets.
 - Settings: the pointer highlight and the bar are previewed in a fixed stage above the controls, so a change is visible while you make it
 - Drawing: `⌘Z` brings back everything `Escape` cleared, and `⇧⌘Z` clears it again
 - Drawing: every tool shows its own cursor
+- Drawing: a blur mark can pixelate instead — one Redaction choice in Settings → Tools, and everything the mark touches saves exactly what it shows
 - Pointer tool: drag a box to select everything under it, `⇧`-click to add or remove a mark, and move the whole selection as one undoable step
 - Toolbar: a `⠇⠇` grip moves the bar and right-click puts it back
 - Pointer Highlight: a fresh install starts on the rhombus with a dashed border, a fixed purple and 100 pt

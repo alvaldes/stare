@@ -208,6 +208,16 @@ final class EditorState: ObservableObject {
     /// Whiteboard pages indicator for the toolbar: nil hides the page controls.
     @Published var whiteboardPage: (current: Int, total: Int)? = nil
 
+    /// Mirror of what a blur mark produces over what it covers (T6b/S13): the
+    /// Settings pane writes the model, this state mirrors it, and every mark
+    /// the surface mints — the drawing overlay and the capture editor alike —
+    /// stamps its own redaction from here. Detached state (capture editor
+    /// with no model, selftest harness) keeps the shipped blur, today's
+    /// behaviour, in memory only — the `laserLifetime` precedent.
+    @Published var redactionStyle: RedactionStyle = .blur {
+        didSet { writeIfNotSyncing { $0.redactionStyle = redactionStyle } }
+    }
+
     /// Typed value behind the `overlayScope` string mirror; consumers that
     /// used to compare strings compare this instead.
     var overlayScopeValue: OverlayScope {
@@ -263,6 +273,7 @@ final class EditorState: ObservableObject {
             let border = MainActor.assumeIsolated { preferences.toolbarBorder }
             let toolsLayout = MainActor.assumeIsolated { preferences.toolbarTools }
             let whiteboard = MainActor.assumeIsolated { preferences.whiteboard }
+            let redactionStyle = MainActor.assumeIsolated { preferences.redactionStyle }
             pointerSize = CGFloat(style.size)
             pointerShape = style.preset == .squircle ? "squircle" : "circle"
             pointerGlow = style.glowIntensity > 0
@@ -286,6 +297,7 @@ final class EditorState: ObservableObject {
             boardPageBackground = whiteboard.background.rawValue
             boardScope = whiteboard.scope.rawValue
             boardShowBorder = whiteboard.showsBorder
+            self.redactionStyle = redactionStyle
             MainActor.assumeIsolated {
                 self.tool = preferences.tool
                 self.ink = preferences.ink
@@ -376,6 +388,9 @@ final class EditorState: ObservableObject {
                 $0.boardScope = defaults.scope.rawValue
                 $0.boardShowBorder = defaults.showsBorder
             }
+        }.store(in: &preferenceCancellables)
+        model.$redactionStyle.dropFirst().sink { [weak self] style in
+            self?.syncFromModel { $0.redactionStyle = style }
         }.store(in: &preferenceCancellables)
     }
 

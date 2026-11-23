@@ -37,6 +37,36 @@ public enum MarkRenderer {
     /// boundary never reads as an edge.
     private static let spotlightEaseSteps: [CGFloat] = [0.25, 0.5, 0.75]
 
+    // MARK: - The redaction patch (S13)
+
+    /// The one place the blur mark's effect is chosen. The overlay's live blur
+    /// preview (`OverlayView.drawBlur`) and the capture compositor's
+    /// `drawBlur` both crop the same source at the same pixel rect, and both
+    /// must answer "blur or pixelate" with the mark's own style — so the
+    /// decision lives here, in the file the overlay, the compositor and the
+    /// self test already share, and neither path can drift into a second
+    /// decision a mark that previews pixelated is saved pixelated (L9).
+    ///
+    /// `scale` is the effect scale (`BlurEffect.defaultRadius * scale` for the
+    /// blur; the pixelate derives its block from the rect itself, so it needs
+    /// no scale). The pixelate's grid offsets use the caller's `seed` — the
+    /// mark's own, never the public `PixelateEffect.defaultSeed`
+    /// (`R1-pixelate-predictable-offsets`).
+    public static func redactionPatch(
+        _ image: CGImage,
+        pixelRect: CGRect,
+        style: RedactionStyle,
+        seed: UInt64,
+        scale: CGFloat
+    ) -> CGImage? {
+        switch style {
+        case .blur:
+            return BlurEffect.crop(image, pixelRect: pixelRect, radius: BlurEffect.defaultRadius * scale)
+        case .randomizedPixelate:
+            return PixelateEffect.crop(image, pixelRect: pixelRect, seed: seed)
+        }
+    }
+
     public static func draw(strokes: [Stroke], in context: CGContext, canvas: CGRect? = nil, phase: Phase = .committed) {
         context.saveGState()
         context.setLineCap(.round)

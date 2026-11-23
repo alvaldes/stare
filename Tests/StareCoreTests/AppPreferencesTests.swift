@@ -389,6 +389,58 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertEqual(AppPreferences(store: store), prefs)
     }
 
+    // MARK: Redaction style (T6b/S13)
+
+    func testStandardCarriesTodaysBlurRedaction() {
+        XCTAssertEqual(AppPreferences.standard.redactionStyle, .blur)
+        XCTAssertEqual(AppPreferences(store: InMemoryPreferenceStore()).redactionStyle, .blur)
+    }
+
+    func testRoundTripsRedactionStyleThroughStore() {
+        let store = InMemoryPreferenceStore()
+        var saved = AppPreferences.standard
+        saved.redactionStyle = .randomizedPixelate
+
+        saved.save(to: store)
+        let loaded = AppPreferences(store: store)
+        XCTAssertEqual(loaded.redactionStyle, .randomizedPixelate)
+        XCTAssertEqual(loaded, saved)
+    }
+
+    /// The field rides in the one versioned blob (appended last in the
+    /// document's field order): it is encoded, decoded, and every blob field
+    /// still round trips unchanged. (This Foundation's JSONEncoder does not
+    /// preserve key order, so only presence and round trips are observable.)
+    func testTheRedactionFieldRidesInTheVersionedBlob() {
+        var saved = AppPreferences.standard
+        saved.redactionStyle = .randomizedPixelate
+        let blob = String(data: try! JSONEncoder().encode(saved), encoding: .utf8)!
+        XCTAssertTrue(blob.contains("\"redactionStyle\":\"randomizedPixelate\""))
+
+        let dom = try! JSONSerialization.jsonObject(with: blob.data(using: .utf8)!) as! [String: Any]
+        XCTAssertEqual(dom.count, 11, "the blob carries exactly the eleven fields, nothing else")
+        for key in ["pointer", "general", "toolShortcuts", "hotkeys", "tool", "ink", "capture", "whiteboard", "updates", "hasCompletedOnboarding", "redactionStyle"] {
+            XCTAssertTrue(dom.keys.contains(key), "\(key) still rides in the versioned blob")
+        }
+    }
+
+    /// A blob written before the field existed loads complete blur: today's
+    /// behaviour, leniently, without failing the whole document.
+    func testBlobPredatingTheRedactionFieldLoadsBlur() {
+        let store = InMemoryPreferenceStore()
+        store.set(Data(#"{"capture":{"fileNamePrefix":"Shots"}}"#.utf8), forKey: AppPreferences.storageKey)
+
+        XCTAssertEqual(AppPreferences(store: store).redactionStyle, .blur)
+        XCTAssertEqual(AppPreferences(store: store).capture.fileNamePrefix, "Shots")
+    }
+
+    func testUnknownRedactionRawValueFallsBackToBlur() {
+        let store = InMemoryPreferenceStore()
+        store.set(Data(#"{"redactionStyle":"mosaic"}"#.utf8), forKey: AppPreferences.storageKey)
+
+        XCTAssertEqual(AppPreferences(store: store).redactionStyle, .blur)
+    }
+
     // MARK: Onboarding flag (T5/S3)
 
     func testHasCompletedOnboardingDefaultsToFalse() {
