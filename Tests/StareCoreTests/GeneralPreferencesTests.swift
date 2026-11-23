@@ -341,6 +341,91 @@ final class GeneralPreferencesTests: XCTestCase {
         XCTAssertEqual(layout.moving(.tool(.select), to: 0), layout)
     }
 
+    // MARK: Exhaustive moving invariant
+
+    /// Exhaustive termination-and-duplication net (independent verifier):
+    /// over EVERY normalised bar whose items are drawn from the alphabet
+    /// [pen, eraser, arrow(held on the bar), separator] up to six items long,
+    /// with arrow hidden (in the pool) in the variant where it is not on the
+    /// bar, moving every distinct item to every index from -2 to count+2
+    /// must: stay a normalisation fixed point, keep the tool set and count,
+    /// keep the item count and the separator count, never strand a leading,
+    /// trailing or adjacent separator, and leave the pool untouched. The net
+    /// is cheap — a few thousand pure-array calls — so it can live in the
+    /// suite.
+    func testMovingIsInvariantOnEveryNormalisedBarOverThePenEraserArrowSeparatorAlphabet() {
+        let alphabet: [ToolbarLayoutItem] = [.tool(.pen), .tool(.eraser), .tool(.arrow), .separator]
+        // Every sequence over the alphabet, up to six items, normalised; the
+        // arrow-hidden variants come from the pool the normalisation passes.
+        var layouts: [ToolbarToolLayout] = []
+        var seen = Set<ToolbarToolKey>()
+        struct ToolbarToolKey: Hashable {
+            let items: [ToolbarLayoutItem]
+            let pool: [Tool]
+        }
+        func enumerate(_ prefix: [ToolbarLayoutItem], _ remaining: Int) {
+            if remaining == 0 { return }
+            for item in alphabet {
+                let candidate = prefix + [item]
+                // Two pool variants wherever the arrow is not on the bar, so
+                // its hidden form is exercised too; normalisation falls the
+                // arrow-on-bar variant back to the other one, and the set
+                // dedupes what normalisation collapses.
+                let hidden = ToolbarToolLayout(items: candidate, pool: [.arrow])
+                let shown = ToolbarToolLayout(items: candidate, pool: [])
+                for layout in [hidden, shown] where seen.insert(
+                    ToolbarToolKey(items: layout.items, pool: layout.pool)
+                ).inserted {
+                    layouts.append(layout)
+                }
+                enumerate(candidate, remaining - 1)
+            }
+        }
+        enumerate([], 6)
+        XCTAssertTrue(
+            layouts.contains(ToolbarToolLayout.standard),
+            "the refused sequences fall back to the shipped bar, which is a normalised bar of the alphabet too")
+
+        var calls = 0
+        for layout in layouts {
+            let separatorCount = layout.items.filter { $0.tool == nil }.count
+            for item in Set(layout.items) {
+                for index in -2...(layout.items.count + 2) {
+                    calls += 1
+                    let moved = layout.moving(item, to: index)
+                    let context = "moving \(item), to \(index) on \(layout.items)"
+                    XCTAssertEqual(
+                        moved, ToolbarToolLayout(items: moved.items, pool: moved.pool),
+                        "the result must be a normalisation fixed point — \(context)")
+                    XCTAssertEqual(
+                        Set(moved.visibleTools), Set(layout.visibleTools),
+                        "the tool set must be unchanged — \(context)")
+                    XCTAssertEqual(
+                        moved.visibleTools.count, layout.visibleTools.count,
+                        "the tool count must be unchanged — \(context)")
+                    XCTAssertEqual(
+                        moved.items.count, layout.items.count,
+                        "the item count must be unchanged — \(context)")
+                    XCTAssertEqual(
+                        moved.items.filter { $0.tool == nil }.count, separatorCount,
+                        "the separator count must be unchanged — \(context)")
+                    XCTAssertEqual(
+                        moved.pool, layout.pool,
+                        "the pool must be untouched — \(context)")
+                    for (index, item) in moved.items.enumerated() where item.tool == nil {
+                        XCTAssertTrue(
+                            index > 0 && index < moved.items.count - 1,
+                            "no leading or trailing separator — \(context): \(moved.items)")
+                        XCTAssertTrue(
+                            index == 0 || moved.items[index - 1].tool != nil,
+                            "no adjacent separators — \(context): \(moved.items)")
+                    }
+                }
+            }
+        }
+        XCTAssertGreaterThan(calls, 500, "the net must actually be exhaustive over the alphabet")
+    }
+
     // MARK: What cannot leave the bar (T3/S2)
 
     /// The bar keeps its first tool: the leading tool cannot leave, every
