@@ -1501,6 +1501,7 @@ private struct CapturePane: View {
                 VStack(spacing: SettingsMetrics.cardSpacing) {
                     fileNameCard
                     saveSizeCard
+                    backdropCard
                 }
             })
         }
@@ -1592,6 +1593,42 @@ private struct CapturePane: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    /// Save backdrop (T11/S18): optional padding, rounded corners and a soft
+    /// shadow around the capture, composed before any downscale. Folder saves
+    /// only — the clipboard always carries the capture exactly as it was.
+    /// Zero padding and radius, and the shadow off, save exactly as today.
+    private var backdropCard: some View {
+        SettingsCard(title: "Backdrop", symbol: "rectangle.on.rectangle") {
+            SettingRow(
+                title: "Padding",
+                detail: "A transparent margin around the capture, in pixels. 0 keeps the capture as is.",
+                content: TextField("", value: $model.capture.backdropPadding, format: .number)
+                    .frame(width: 140)
+                    .disabled(isClipboard)
+            )
+            SettingRow(
+                title: "Corner radius",
+                detail: "Rounds the capture's corners. 0 keeps them square.",
+                content: TextField("", value: $model.capture.backdropCornerRadius, format: .number)
+                    .frame(width: 140)
+                    .disabled(isClipboard)
+            )
+            SettingRow(
+                title: "Shadow",
+                detail: "Draws a fixed soft shadow behind the capture.",
+                content: Toggle("", isOn: $model.capture.backdropShadow)
+                    .labelsHidden()
+                    .disabled(isClipboard)
+            )
+            Text(
+                "The backdrop is composed before any downscale and its sizes are clamped. It applies to "
+                    + "folder saves only; the clipboard always carries the capture as is."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 

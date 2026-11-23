@@ -146,6 +146,27 @@ public struct CapturePreference: Codable, Equatable, Sendable {
         didSet { fileNameTemplate = Self.sanitisedTemplate(fileNameTemplate) }
     }
 
+    /// Save backdrop (T11/S18), one field per feature, all optional and
+    /// appended at the end of the document after the template — never
+    /// inserted, so an older blob decodes with them at their defaults. The
+    /// padding is a transparent margin in pixels; the corner radius rounds
+    /// the capture; the shadow is a fixed cheap shadow. Zero padding, zero
+    /// radius and no shadow together are today's behaviour, byte for byte.
+    /// Both sizes clamp so a silly preference can neither blank the capture
+    /// nor grow the canvas enormous; the radius is clamped again at compose
+    /// time by half of the capture.
+    public var backdropPadding: Int {
+        didSet { backdropPadding = CaptureBackdrop.clampedPadding(backdropPadding) }
+    }
+
+    /// The backdrop's corner radius in pixels, clamped on every path.
+    public var backdropCornerRadius: Int {
+        didSet { backdropCornerRadius = CaptureBackdrop.clampedCornerRadius(backdropCornerRadius) }
+    }
+
+    /// Whether the save carries the fixed shadow behind the capture.
+    public var backdropShadow: Bool
+
     /// The capture preferences a fresh install gets, matching today's
     /// clipboard behaviour.
     public static let standard = CapturePreference()
@@ -158,7 +179,10 @@ public struct CapturePreference: Codable, Equatable, Sendable {
         fileNamePrefix: String = defaultPrefix,
         downscaleMode: CaptureDownscale.Mode = .off,
         maxSaveWidth: Int = defaultMaxSaveWidth,
-        fileNameTemplate: String = defaultFileNameTemplate
+        fileNameTemplate: String = defaultFileNameTemplate,
+        backdropPadding: Int = 0,
+        backdropCornerRadius: Int = 0,
+        backdropShadow: Bool = false
     ) {
         self.format = format
         self.destination = destination.isUsablePath ? destination : .clipboard
@@ -166,6 +190,9 @@ public struct CapturePreference: Codable, Equatable, Sendable {
         self.downscaleMode = downscaleMode
         self.maxSaveWidth = Self.clampedSaveWidth(maxSaveWidth)
         self.fileNameTemplate = Self.sanitisedTemplate(fileNameTemplate)
+        self.backdropPadding = CaptureBackdrop.clampedPadding(backdropPadding)
+        self.backdropCornerRadius = CaptureBackdrop.clampedCornerRadius(backdropCornerRadius)
+        self.backdropShadow = backdropShadow
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -173,9 +200,12 @@ public struct CapturePreference: Codable, Equatable, Sendable {
         // The downscale settings sit at the end of the document (T7/S14), so
         // an older blob decodes with them at their defaults.
         case downscaleMode, maxSaveWidth
-        // The template sits after them (T10/S17) — fields are appended, never
-        // inserted, so an older blob decodes with it at its default.
+        // The template sits after them (T10/S17) — fields are appended,
+        // never inserted, so an older blob decodes with it at its default.
         case fileNameTemplate
+        // The backdrop sits after the template (T11/S18), appended all the
+        // same.
+        case backdropPadding, backdropCornerRadius, backdropShadow
     }
 
     /// Lenient decoding: an unknown format falls back to `.png`, an unusable
@@ -194,6 +224,11 @@ public struct CapturePreference: Codable, Equatable, Sendable {
         self.maxSaveWidth = Self.clampedSaveWidth(rawMaxSaveWidth ?? Self.defaultMaxSaveWidth)
         let rawTemplate = try? container.decode(String.self, forKey: .fileNameTemplate)
         self.fileNameTemplate = Self.sanitisedTemplate(rawTemplate)
+        let rawBackdropPadding = try? container.decode(Int.self, forKey: .backdropPadding)
+        self.backdropPadding = CaptureBackdrop.clampedPadding(rawBackdropPadding ?? 0)
+        let rawBackdropCornerRadius = try? container.decode(Int.self, forKey: .backdropCornerRadius)
+        self.backdropCornerRadius = CaptureBackdrop.clampedCornerRadius(rawBackdropCornerRadius ?? 0)
+        self.backdropShadow = (try? container.decode(Bool.self, forKey: .backdropShadow)) ?? false
     }
 
     /// Builds a capture file name: `<prefix>-<YYYY>-<MM>-<DD>-at-<HH>-<MM>-<SS>`

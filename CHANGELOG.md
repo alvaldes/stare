@@ -21,6 +21,7 @@ user gets.
 - Capture: `⌥S` captures just the front window, with your marks composited onto it
 - Capture: dragging an area is clamped to the display so it can never reach outside it, and holding `⇧` while dragging forces a square
 - Capture: name templates for folder saves — write file names from the tokens `{date}`, `{time}`, `{app}` and `{display}` (for example `{app}-{date}_{time}`); an empty template keeps the prefix name as today, and a template with an unknown token, unsafe characters, or an app or display name that isn't there falls back to it, so a template can rename a capture inside the destination folder but never move it out
+- Capture: a backdrop on folder saves, off by default — optional padding, rounded corners and a fixed soft shadow around the capture in Settings → Capture; the backdrop is composed before any downscale so the padding is never resampled on its own, sizes are clamped so a silly value can neither blank the capture nor grow the file enormous, and the clipboard always carries the capture exactly as it was
 - Settings: regrouped into Capture, Draw, Pointer, Board and System, with the bar, the overlay and the laser on panes of their own instead of inside General
 - Settings: the pointer highlight and the bar are previewed in a fixed stage above the controls, so a change is visible while you make it
 - Drawing: `⌘Z` brings back everything `Escape` cleared, and `⇧⌘Z` clears it again

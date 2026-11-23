@@ -6,7 +6,10 @@ import Foundation
 /// `CapturePreference.fileName(at:)` in the chosen format, optionally scaled
 /// down first per the persisted preference. Downscaling applies to the file
 /// write only — the pasteboard path (`CaptureFile.data` and the caller's own
-/// copy) never sees the preference and always carries the full capture.
+/// copy) never sees the preference and always carries the full capture. The
+/// optional save backdrop (T11/S18) is composed onto the image before any
+/// downscale, so the padding is never resampled on its own and the capture's
+/// corners do not go soft; the clipboard path is unaffected by both.
 ///
 /// `write` encodes the image exactly as before whenever no scaling applies,
 /// so a capture saved with the switch off is byte-for-byte identical to
@@ -36,7 +39,18 @@ public enum CaptureFile {
         guard case .folder(let path) = preference.destination,
             preference.destination.isUsablePath
         else { return nil }
-        let saved = scaled(image, preference: preference, scale: scale) ?? image
+        // Backdrop first, at full resolution: the padding is composed around
+        // the capture before anything resamples, so one downscale resamples
+        // capture and padding together and the padding never smears on its
+        // own. With the backdrop off this composes nothing and `padded` is
+        // the original image, so the default save stays byte for byte.
+        let padded = CaptureBackdrop.composed(
+            image,
+            padding: preference.backdropPadding,
+            cornerRadius: preference.backdropCornerRadius,
+            shadow: preference.backdropShadow
+        ) ?? image
+        let saved = scaled(padded, preference: preference, scale: scale) ?? padded
         guard let data = data(for: saved, format: preference.format) else { return nil }
         let folder = URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true)
         let name = preference.fileName(at: date, calendar: calendar, app: app, display: displayName)
