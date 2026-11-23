@@ -31,6 +31,7 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
 enum SettingsArea: String, CaseIterable, Identifiable {
     // Capture
     case capture
+    case history
     // Draw
     case overlay, tools, bar
     // Pointer
@@ -51,6 +52,7 @@ enum SettingsArea: String, CaseIterable, Identifiable {
         case .shortcuts: "Shortcuts"
         case .marker: "Pointer Highlight"
         case .capture: "Capture"
+        case .history: "History"
         case .whiteboard: "Whiteboard"
         case .permissions: "Permissions"
         case .about: "About"
@@ -66,6 +68,7 @@ enum SettingsArea: String, CaseIterable, Identifiable {
         case .shortcuts: "keyboard"
         case .marker: "cursorarrow.rays"
         case .capture: "camera.viewfinder"
+        case .history: "clock.arrow.circlepath"
         case .whiteboard: "rectangle.on.rectangle"
         case .permissions: "lock.shield"
         case .about: "info.circle"
@@ -75,6 +78,7 @@ enum SettingsArea: String, CaseIterable, Identifiable {
     var group: SettingsGroup {
         switch self {
         case .capture: .capture
+        case .history: .capture
         case .overlay, .tools, .bar: .draw
         case .marker: .pointer
         case .whiteboard: .board
@@ -296,6 +300,7 @@ struct SettingsView: View {
         case .shortcuts: ShortcutsPane(model: model, cardsWidth: width)
         case .marker: MarkerPane(model: model, cardsWidth: width)
         case .capture: CapturePane(model: model, cardsWidth: width)
+        case .history: HistoryPane()
         case .whiteboard: WhiteboardPane(model: model, cardsWidth: width)
         case .permissions: PermissionsPane(permission: permission)
         case .about: AboutPane()

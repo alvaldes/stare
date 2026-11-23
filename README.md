@@ -123,7 +123,7 @@ applies immediately. The sections:
 - **Tools** — the ink drawing starts with, a shortcut for each tool, and the palette's position reset.
 - **Shortcuts** — the four global shortcuts (`⌥⇧A`, `⌥⇧M`, `⌥⇧P`, `⌥⇧W`) with a key recorder and conflict checks.
 - **Pointer Highlight** — the style of the `⌥⇧M` highlight: five shapes (Ring, Squircle, Rhombus, Dot, Spotlight), size up to 240 pt, band width, border style (Solid or Dashed), opacity, glow, the click animation (Scale or Rotate), colour and idle fade, with a live preview drawn by the same renderer the overlay uses.
-- **Capture** — where captures go (the clipboard or a folder), the file format for folder saves, and the file-name prefix.
+- **Capture** — where captures go (the clipboard or a folder), the file format for folder saves, the file-name prefix, and the History pane: every capture the session delivered, newest first, each reopening in the editor by an Open click. The history is kept in memory only — nothing is saved to disk, and quitting Stare forgets it.
 - **Whiteboard** — the page colour a new board opens with — White, Black or System, which opens pages white in light mode and black in dark mode — how many pages it opens with, which displays the board covers (every one or only the active display), and whether its border is drawn.
 - **Permissions** — the live Screen Recording status, with a link to System Settings.
 - **About** — the version and one line about the app.

@@ -223,7 +223,19 @@ final class OverlayController {
     /// overlay is active and at least one display has a visible blur mark.
     private let liveFrames: LiveFrameSource
     private let cards = CaptureCardController()
-    private let editor = CaptureEditorController()
+    /// Assigned in init: the handoff closure captures the same instance, so
+    /// the editor is created exactly once per controller.
+    private let editor: CaptureEditorController
+    /// The editor handoff the capture card's click and the session history's
+    /// reopen share (T3): production is `CaptureEditorController.open`; tests
+    /// inject a witness so the routing is verifiable without opening a window.
+    private let openEditor: (CGImage, CapturePreference) -> Void
+    /// The session capture history (T3/S12): every delivered capture is
+    /// remembered here in memory only, and the History pane reopens entries
+    /// through the same editor handoff the card uses. The shared store is the
+    /// default so the pane can read what the overlay recorded (S4); detached
+    /// instances keep tests off it.
+    private let history: CaptureHistory
     private var cancellables: Set<AnyCancellable> = []
     private var keyMonitor: Any?
     private var pointerTimer: Timer?
@@ -238,12 +250,18 @@ final class OverlayController {
         captureService: ScreenCapturing = CaptureService(),
         liveFrames: LiveFrameSource = LiveFrameSource(),
         preferences: PreferencesModel? = nil,
-        sessionStore: BootSessionStore? = nil
+        sessionStore: BootSessionStore? = nil,
+        history: CaptureHistory = .shared,
+        editorHandoff: ((CGImage, CapturePreference) -> Void)? = nil
     ) {
         self.captureService = captureService
         self.liveFrames = liveFrames
         self.preferences = preferences
         self.sessionStore = sessionStore
+        self.history = history
+        let editor = CaptureEditorController()
+        self.editor = editor
+        self.openEditor = editorHandoff ?? { editor.open(image: $0, capture: $1) }
         self.state = EditorState(preferences: preferences)
         wireEditor()
         // Interest is asked from the canvases, so it is whatever the sessions
@@ -394,17 +412,29 @@ final class OverlayController {
         NSWorkspace.shared.notificationCenter.removeObserver(self)
     }
 
+    /// The one editor handoff (T3): the capture card's click and the session
+    /// history's reopen both land here. A mode still on screen gives way first
+    /// — an armed layer would sit above the editor eating every click — and
+    /// with no mode active both guards no-op. The composed image is opened as
+    /// it arrived: never recomposed over what the session holds now.
+    func openCaptureEditor(_ image: CGImage) {
+        if isBoardActive {
+            closeBoard(restoringFocus: false)
+        } else {
+            deactivate(restoringFocus: false)
+        }
+        openEditor(image, capturePreference())
+    }
+
     private func wireEditor() {
         // The editor is a normal window: opening it while a layer is still
-        // armed would leave it above, eating every click.
+        // armed would leave it above, eating every click. The card's click and
+        // the History pane's reopen share the handoff above.
         cards.onOpen = { [weak self] image in
-            guard let self else { return }
-            if self.isBoardActive {
-                self.closeBoard(restoringFocus: false)
-            } else {
-                self.deactivate(restoringFocus: false)
-            }
-            self.editor.open(image: image, capture: self.capturePreference())
+            self?.openCaptureEditor(image)
+        }
+        history.onReopen = { [weak self] entry in
+            self?.openCaptureEditor(entry.image)
         }
     }
 
@@ -938,6 +968,10 @@ final class OverlayController {
             canvas.view.showHint("Capture copied to the clipboard", seconds: 2.2)
             Diag.log("capture copied \(result.width)x\(result.height) marks=\(canvas.view.session.strokes.count)")
         }
+        // The session history (T3/S12): the composed capture as delivered —
+        // the image the card shows and would open in the editor — is what
+        // the History pane remembers and reopens.
+        history.record(result, at: date)
         cards.show(result, on: screen(for: displayID))
     }
 

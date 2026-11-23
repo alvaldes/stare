@@ -21,10 +21,11 @@ final class SettingsAreaTests: XCTestCase {
     }
 
     func testGroupsKeepTheSidebarOrderAndSize() {
-        // The published map: one capture pane, three drawing panes, the
-        // pointer, the board, and four system panes.
+        // The published map: two capture panes (Capture and the session
+        // history), three drawing panes, the pointer, the board, and four
+        // system panes.
         XCTAssertEqual(SettingsGroup.allCases.map(\.title), ["Capture", "Draw", "Pointer", "Board", "System"])
-        XCTAssertEqual(SettingsGroup.allCases.map { $0.areas.count }, [1, 3, 1, 1, 4])
+        XCTAssertEqual(SettingsGroup.allCases.map { $0.areas.count }, [2, 3, 1, 1, 4])
         XCTAssertEqual(
             SettingsGroup.allCases.flatMap(\.areas),
             SettingsArea.allCases,
@@ -48,5 +49,16 @@ final class SettingsAreaTests: XCTestCase {
 
         XCTAssertEqual(Set(titles).count, titles.count, "two panes share a title")
         XCTAssertEqual(Set(symbols).count, symbols.count, "two panes share an icon")
+    }
+
+    /// T3/S12: the History pane sits beside Capture, in the Capture group —
+    /// the object it belongs to.
+    func testTheHistoryPaneLivesInCaptureBesideCapture() {
+        XCTAssertEqual(SettingsArea.history.group, .capture)
+        XCTAssertEqual(
+            SettingsGroup.capture.areas,
+            [.capture, .history],
+            "History opens right after Capture in the sidebar"
+        )
     }
 }

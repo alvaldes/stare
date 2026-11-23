@@ -61,7 +61,7 @@ S23. Auditoría de blur, previa a S13: un área cubierta por blur no debe dejar 
 | T2a | Area drag: geometría pura, ⇧ cuadrado, clamp al display | S11, S21 | worker | 3437beb |
 | T2b-a | Area drag: base congelada al arrancar, con liberación en captura, clic perdido, Esc y deactivate | S11, S21 | worker | bccea8d |
 | T2b-b | Area drag: lupa sobre el frame congelado y rectángulo recordado con Return | S11, S21 | worker | cfc2dcc, c39de43 |
-| T3 | Historial de capturas en memoria, reabrir en el editor | S12, S21 | parent | — |
+| T3 | Historial de capturas en memoria, reabrir en el editor | S12, S21 | worker | pendiente de hash |
 | T4 | Pin de la imagen capturada desde la card, con atajo propio y lock | S6, S4, S21 | parent | — |
 | T5 | OCR y QR on-device con atajo global ⌥⇧O | S7, S9, S22 | parent | — |
 | T6 | Auditoría de blur como redacción, y pixelate junto a blur | S23, S13 | peer | — |
@@ -82,6 +82,14 @@ T2b-a necesita ojo humano: el congelado es píxeles y orientación, nada de eso 
 4. Terminar el arrastre: la imagen de la card coincide con el frame congelado, y el overlay vivo vuelve enseguida.
 5. `⇧S` en el whiteboard igual que antes (sin congelado), y desactivar a mitad de arrastre no deja frame viejo al reentrar.
 6. Sin permiso de Screen Recording el arrastre sigue funcionando en vivo, como hoy.
+
+## Checks manuales de T3
+
+1. Dos capturas (`S` y `⇧S`), abrir Settings → Capture → History: las dos miniaturas con fecha y dimensiones, la más nueva primero.
+2. Open en la primera: el editor abre sobre esa captura con sus marcas tal como se capturaron, herramientas y tintas iguales, y dibujar/recortar sigue funcionando.
+3. Capturar otra: el historial crece; Clear lo vacía; la siguiente captura lo repuebla.
+4. Cerrar Stare y reabrir: History vacío, y nada apareció en disco.
+5. Abrir desde Settings con una sesión de dibujo armada: el overlay se cierra primero, no queda una capa comiéndose los clicks del editor.
 
 ## Checks manuales de T2b-b
 
