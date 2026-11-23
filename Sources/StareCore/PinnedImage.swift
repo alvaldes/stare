@@ -94,21 +94,32 @@ public enum PinnedImageGeometry {
 }
 
 /// The click-through lock of one pinned image (T4/S6). Floating, the image
-/// receives clicks, drags and scroll. Locked, the whole window ignores mouse
-/// events so the user works in the app underneath; the unlock path is the
-/// lock toggle's global shortcut, because a click-through window cannot be
-/// hovered or clicked by definition.
+/// receives clicks, drags and scroll. Locked, the surface passes every
+/// mouse event through to the app underneath **except** the close and lock
+/// controls, which keep answering — the lock must be escapable with the
+/// pointer, so it never covers the ✕ or the 🔒. The same toggle unlocks.
 public enum PinnedImageLockState: Equatable, Sendable {
     case floating
     case locked
 
-    /// Whether the window's surface should answer the pointer right now.
-    public var acceptsMouseEvents: Bool {
-        self == .floating
-    }
-
     public var toggled: PinnedImageLockState {
         self == .floating ? .locked : .floating
+    }
+
+    /// Whether a mouse point must reach the window's surface (T4 closing
+    /// fix): floating, every point does. Locked, only the two controls do —
+    /// the lock never covers its own way out, so a click-through image can
+    /// always be unlocked and closed with the pointer, and every other point
+    /// falls through to the app underneath. The caller (the view's hit test)
+    /// turns a false answer into click passthrough; `bounds` is the view's
+    /// own top-down space, the one `PinnedImageControls.rect` speaks.
+    public func acceptsMouseEvents(at point: CGPoint, in bounds: CGRect) -> Bool {
+        switch self {
+        case .floating:
+            return true
+        case .locked:
+            return PinnedImageControls.rects(in: bounds).contains { $0.contains(point) }
+        }
     }
 }
 
@@ -164,18 +175,66 @@ public enum PinnedImageControls {
             )
         }
     }
+
+    /// Both controls' rects, the complete clickable area of the surface. The
+    /// locked state's hit test admits exactly these and nothing else.
+    public static func rects(in bounds: CGRect) -> [CGRect] {
+        Kind.allCases.map { rect(for: $0, in: bounds) }
+    }
 }
 
 /// The fixed bindings of the pinned image's own shortcuts (T4/S6). They are
 /// deliberately outside the persisted, remappable `HotkeyBindings` map: the
 /// four registered actions keep their Settings pane, and this feature decided
-/// against a new one. ⌥⇧I pins the latest capture; ⌥⇧L toggles the lock of
-/// the pinned image under the pointer. Neither collides with ⌥⇧A, ⌥⇧M, ⌥⇧P,
-/// ⌥⇧W, ⌥S, ⇧S, S or the ⌥⇧O reserved for OCR.
+/// against a new one. ⌥⇧I pins/dismisses per `PinnedImagePinRule`; ⌥⇧L
+/// toggles the lock of the pinned image under the pointer. Neither collides
+/// with ⌥⇧A, ⌥⇧M, ⌥⇧P, ⌥⇧W, ⌥S, ⇧S, S or the ⌥⇧O reserved for OCR.
 public enum PinnedImageHotkeyDefaults {
     public static let pin = HotkeyBinding(key: .i, modifiers: [.option, .shift])
     public static let pinDisplayName = "⌥⇧I"
 
     public static let lock = HotkeyBinding(key: .l, modifiers: [.option, .shift])
     public static let lockDisplayName = "⌥⇧L"
+}
+
+/// What ⌥⇧I does on a press (T4 closing fix): a keyboard user pressing the
+/// same key twice must never hold a stack they cannot take down. The rule
+/// is one key, one pin lifecycle — the first press pins the session's
+/// latest capture, the next press takes the frontmost pinned image down,
+/// exactly the open/close pairing every other surface key of this app has
+/// (⌥⇧A opens, Esc closes; ⌥⇧P toggles). Deliberately keeping two pins is
+/// still one click away, on the capture card's pin button.
+public enum PinnedImagePinAction: Equatable, Sendable {
+    case pin
+    case dismissTopmost
+    case nothingToPin
+}
+
+public enum PinnedImagePinRule {
+    /// The keyboard decision: pins on screen win (dismiss the frontmost,
+    /// locked or not — the keyboard reaches a click-through window where the
+    /// pointer cannot); a clear screen pins the latest capture; nothing
+    /// captured yet is a reportable no-op instead of a silent one.
+    public static func keyboardPin(hasPinnedImages: Bool, hasCaptures: Bool) -> PinnedImagePinAction {
+        if hasPinnedImages { return .dismissTopmost }
+        return hasCaptures ? .pin : .nothingToPin
+    }
+}
+
+/// What a pinned-image shortcut says when it cannot act (T4 closing fix):
+/// the same one-line pill vocabulary the capture and OCR paths already use.
+/// Nothing here opens a window — the coordinator reports, the app layer
+/// decides where the pill shows.
+public enum PinnedImageFeedback: Equatable, Sendable {
+    case noPinnedImageUnderPointer
+    case nothingCapturedYet
+
+    public var title: String {
+        switch self {
+        case .noPinnedImageUnderPointer:
+            "No pinned image under the pointer"
+        case .nothingCapturedYet:
+            "Nothing captured yet"
+        }
+    }
 }

@@ -88,7 +88,7 @@ reopen it any time from the menu bar with **Setup Guide…**.
 | `⌥⇧W` | Open the whiteboard |
 | `⌥⇧M` | Point at things with the pointer highlight |
 | `⌥⇧P` | Pin your marks so clicks pass through |
-| `⌥⇧I` | Pin the latest capture as a floating image (draggable, resizable, lockable) |
+| `⌥⇧I` | Pin the latest capture as a floating image (draggable, resizable, lockable) — press it again to take the pin down |
 | `⌥⇧O` | Recognise the text and QR code in an area you drag — on-device, straight to the clipboard |
 | `P` `H` `A` `L` `R` `O` | Pen, highlighter, arrow, line, rectangle, ellipse |
 | `T` `C` `B` `D` `F` `E` | Text, numbered step, blur, spotlight, laser, eraser |
@@ -110,15 +110,19 @@ reopen it any time from the menu bar with **Setup Guide…**.
 | Drawing | `D` arms the spotlight: drag a region and everything outside it dims — the region's ellipse stays clear, a soft rim fades from its edge into the dim, and the dim reaches the whole capture, so the shot shows exactly the area you emphasised. The spotlight is a mark like any other: undo, redo, the eraser, the pointer tool's move and the capture editor all treat it as one, it works on the whiteboard too, and it has no ink of its own — the number keys keep choosing inks while it is selected |
 | Whiteboard | `⌘←` `⌘→` change page (going past the last one adds a page) · `⌘B` flips the page between white and black · hold space and drag to pan (the pointer becomes a grabbing hand) · pinch, `⌘` + scroll or `⌘+`/`⌘−` zooms, `⌘0` resets pan and zoom |
 | Whiteboard | `S` captures the marks over the page colour, no Screen Recording needed · `Esc` closes the board and keeps the pages for the session |
-| Capture card | Hover keeps it on screen · click opens the editor · drag it into another app · the pin button in its corner floats the image as a borderless always-on-top window of its own: drag it anywhere, scroll to resize, ⌥-scroll to change its opacity, and each one closes on its own — the pinned images stay on screen no matter what you open or close in Stare, and they never leave your machine |
+| Capture card | Hover keeps it on screen · click opens the editor · drag it into another app · the pin button in its corner floats the image as a borderless always-on-top window of its own: drag it anywhere, scroll to resize, ⌥-scroll to change its opacity, and each one closes with its ✕ (or `⌥⇧I`) — the pinned images stay on screen no matter what you open or close in Stare, and they never leave your machine |
 | Recognise text | Drag the area and the text it holds — and a QR code, if that is what you framed — goes straight to the clipboard: recognition runs on-device with Vision, nothing is uploaded, and everything proceeds without opening a drawing session; a missing Screen Recording grant, a selection with nothing in it, or a failed read each say so on screen instead of ever touching your clipboard |
-| Pinned image | `⌥⇧L` toggles the click-through lock of the image under the pointer: locked, every click lands in the app underneath and the same key unlocks it again |
+| Pinned image | `⌥⇧L` toggles the click-through lock of the image under the pointer: locked, every click lands in the app underneath — except the ✕ and 🔒 in its corner, which stay clickable and drawn so the lock can always be left; the same key unlocks it again, and pressing `⌥⇧L` over no pinned image says so on screen |
 | Editor | Same tools and inks · `⌘Z` undo · `⇧⌘Z` redo · `Esc` cancels a crop, then closes · an applied crop stays editable: drag its edges to adjust it, and `⌘Z` returns the previous crop |
 
 All of these — the four global shortcuts and each tool's key — can be
 rebound in Settings. Three shortcuts are fixed: `⌥⇧I` pins the latest
-capture, `⌥⇧L` toggles its lock, and `⌥⇧O` recognises text and QR codes
-where you drag on-device.
+capture — and takes the frontmost pin down again, so the keyboard can never
+stack what it cannot dismiss; the card's pin button is the way to keep
+several — `⌥⇧L` toggles its lock, and `⌥⇧O` recognises text and QR codes
+where you drag on-device. A fixed shortcut that cannot act right now — a
+lock toggle over no pin, a pin with nothing captured yet — says so on
+screen instead of being a silent dead key.
 
 </details>
 

@@ -119,15 +119,65 @@ final class PinnedImageTests: XCTestCase {
 
     // MARK: - The lock state machine
 
-    func testLockTogglesAndDrivesClickThrough() {
+    func testLockTogglesBetweenFloatingAndLocked() {
         var lock = PinnedImageLockState.floating
-        XCTAssertTrue(lock.acceptsMouseEvents, "a fresh pinned image receives clicks")
         lock = lock.toggled
-        XCTAssertEqual(lock, .locked)
-        XCTAssertFalse(lock.acceptsMouseEvents, "locked means every click goes underneath")
+        XCTAssertEqual(lock, .locked, "⌥⇧L over the pin locks it")
         lock = lock.toggled
-        XCTAssertEqual(lock, .floating)
-        XCTAssertTrue(lock.acceptsMouseEvents)
+        XCTAssertEqual(lock, .floating, "the same toggle unlocks it")
+    }
+
+    // T4 closing fix: the click-through lock is per point, not a blanket
+    // switch — locked, the image body passes the click to the app underneath
+    // and the two controls keep answering, because a lock that covers the ✕
+    // is a trap the pointer cannot leave.
+    func testALockedSurfaceAnswersOnlyItsControlsAndNothingElse() {
+        let bounds = CGRect(x: 0, y: 0, width: 300, height: 220)
+        let close = PinnedImageControls.rect(for: .close, in: bounds)
+        let lock = PinnedImageControls.rect(for: .lock, in: bounds)
+        let bodyPoint = CGPoint(x: bounds.midX, y: bounds.midY)
+        let locked = PinnedImageLockState.locked
+
+        XCTAssertFalse(
+            locked.acceptsMouseEvents(at: bodyPoint, in: bounds),
+            "locked, the body passes the click through to the app underneath")
+        XCTAssertTrue(
+            locked.acceptsMouseEvents(at: CGPoint(x: close.midX, y: close.midY), in: bounds),
+            "the lock never covers the ✕: closing stays pointer-reachable")
+        XCTAssertTrue(
+            locked.acceptsMouseEvents(at: CGPoint(x: lock.midX, y: lock.midY), in: bounds),
+            "the lock never covers its own 🔒: unlocking stays pointer-reachable")
+        for point in [bodyPoint, CGPoint(x: close.midX, y: close.midY)] {
+            XCTAssertTrue(
+                PinnedImageLockState.floating.acceptsMouseEvents(at: point, in: bounds),
+                "floating, the whole surface answers")
+        }
+    }
+
+    // MARK: - The ⌥⇧I rule (T4 closing fix)
+
+    func testASecondKeyboardPinTakesTheTopmostPinDownInsteadOfPinningAnother() {
+        XCTAssertEqual(
+            PinnedImagePinRule.keyboardPin(hasPinnedImages: false, hasCaptures: true), .pin,
+            "a clear screen pins the session's latest capture")
+        XCTAssertEqual(
+            PinnedImagePinRule.keyboardPin(hasPinnedImages: true, hasCaptures: true), .dismissTopmost,
+            "the second press takes the frontmost pin down — never a stack")
+        XCTAssertEqual(
+            PinnedImagePinRule.keyboardPin(hasPinnedImages: true, hasCaptures: false), .dismissTopmost,
+            "the keyboard reaches through the click-through lock")
+        XCTAssertEqual(
+            PinnedImagePinRule.keyboardPin(hasPinnedImages: false, hasCaptures: false), .nothingToPin,
+            "nothing captured yet is reportable, never a silent key")
+    }
+
+    // MARK: - The no-op feedback (T4 closing fix)
+
+    func testThePinShortcutsSaySomethingWhenTheyCannotAct() {
+        XCTAssertEqual(
+            PinnedImageFeedback.noPinnedImageUnderPointer.title,
+            "No pinned image under the pointer")
+        XCTAssertEqual(PinnedImageFeedback.nothingCapturedYet.title, "Nothing captured yet")
     }
 
     // MARK: - Which window a lock toggle reaches

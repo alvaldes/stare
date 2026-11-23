@@ -95,8 +95,7 @@ final class PinnedImageWindowTests: XCTestCase {
 
         let point = CGPoint(x: window.frame.midX, y: window.frame.midY)
         coordinator.toggleLock(at: point)
-        XCTAssertTrue(window.ignoresMouseEvents, "locked, clicks go to the app underneath")
-        XCTAssertEqual(window.lockState, .locked)
+        XCTAssertEqual(window.lockState, .locked, "locked, the body passes clicks to the app underneath")
 
         coordinator.toggleLock(at: point)
         XCTAssertFalse(window.ignoresMouseEvents)
@@ -115,6 +114,116 @@ final class PinnedImageWindowTests: XCTestCase {
         coordinator.toggleLock(at: point)
         XCTAssertEqual(front.lockState, .locked, "the frontmost window under the point locks")
         XCTAssertEqual(back.lockState, .floating, "the window behind is untouched")
+    }
+
+    // MARK: - The ⌥⇧I toggle (T4 closing fix)
+
+    func testASecondKeyboardPinTakesTheTopmostPinnedImageDown() throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "the toggle needs a real display")
+        let image = try XCTUnwrap(solidImage(120, 90))
+        let history = CaptureHistory(capacity: 2)
+        history.record(image, at: Date())
+
+        coordinator.togglePin(from: history)
+        XCTAssertEqual(coordinator.windows.count, 1, "a clear screen pins the latest capture")
+
+        coordinator.togglePin(from: history)
+        XCTAssertEqual(coordinator.windows.count, 0, "the second press takes the pin down")
+
+        coordinator.togglePin(from: history)
+        XCTAssertEqual(coordinator.windows.count, 1, "the third press pins again")
+    }
+
+    func testTheKeyboardDismissReachesALockedPinnedImage() throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "the lock needs a real display")
+        let image = try XCTUnwrap(solidImage(120, 90))
+        let history = CaptureHistory(capacity: 2)
+        history.record(image, at: Date())
+        coordinator.togglePin(from: history)
+        let window = try XCTUnwrap(coordinator.windows.first)
+        window.toggleLock()
+        XCTAssertEqual(window.lockState, .locked)
+
+        coordinator.togglePin(from: history)
+        XCTAssertEqual(
+            coordinator.windows.count, 0,
+            "a click-through window cannot be reached by the pointer, so the keyboard must close it")
+    }
+
+    // MARK: - The lock never covers the way out (T4 closing fix)
+
+    func testALockedPinnedImageTakesTheCloseClickAndPassesTheBodyThrough() throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "the lock needs a real display")
+        let image = try XCTUnwrap(solidImage(120, 90))
+        coordinator.pin(image, on: NSScreen.screens.first)
+        let window = try XCTUnwrap(coordinator.windows.first)
+        let view = try XCTUnwrap(window.pinnedView)
+
+        window.toggleLock()
+        XCTAssertFalse(
+            window.ignoresMouseEvents,
+            "the lock is per point now, not a blanket switch that removes the window from the input path")
+
+        // Top-down control coordinates (the flipped surface's own space)
+        // mapped onto the window coordinates the events and hit tests speak.
+        func windowPoint(topDown rect: CGRect) -> CGPoint {
+            CGPoint(x: rect.midX, y: view.bounds.height - rect.midY)
+        }
+        let closePoint = windowPoint(topDown: PinnedImageControls.rect(for: .close, in: view.bounds))
+        let lockPoint = windowPoint(topDown: PinnedImageControls.rect(for: .lock, in: view.bounds))
+        let bodyPoint = CGPoint(x: view.bounds.midX, y: view.bounds.height - view.bounds.midY)
+
+        XCTAssertIdentical(view.hitTest(closePoint), view, "locked, the ✕ still takes the click")
+        XCTAssertIdentical(view.hitTest(lockPoint), view, "locked, the 🔒 still takes the click")
+        XCTAssertNil(view.hitTest(bodyPoint), "locked, the body passes the click to the app underneath")
+
+        // The routed click on the locked window's ✕ closes it for real.
+        view.mouseDown(with: mouseEvent(.leftMouseDown, at: closePoint, window: window))
+        XCTAssertEqual(coordinator.windows.count, 0, "the ✕ closes the locked pin — the reported trap")
+    }
+
+    func testALockedPinnedImageKeepsItsControlsDrawnWithoutHover() throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "the lock needs a real display")
+        let image = try XCTUnwrap(solidImage(120, 90))
+        coordinator.pin(image, on: NSScreen.screens.first)
+        let window = try XCTUnwrap(coordinator.windows.first)
+        let view = try XCTUnwrap(window.pinnedView)
+        XCTAssertFalse(view.showsIdleControls, "floating, the controls are a hover affordance")
+
+        window.toggleLock()
+        XCTAssertTrue(
+            view.showsIdleControls,
+            "a click-through surface cannot be hovered, so while locked the controls stay drawn")
+    }
+
+    // MARK: - The no-op feedback (T4 closing fix)
+
+    func testALockToggleOverNoPinnedImageIsSaidInsteadOfSwallowed() throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "the feedback needs a real display")
+        let image = try XCTUnwrap(solidImage(120, 90))
+        var reported: [PinnedImageFeedback] = []
+        coordinator.onFeedback = { reported.append($0) }
+
+        coordinator.pin(image, on: NSScreen.screens.first)
+        let frame = try XCTUnwrap(coordinator.windows.first).frame
+
+        coordinator.toggleLock(at: CGPoint(x: frame.maxX + 500, y: frame.midY))
+        XCTAssertEqual(
+            reported, [.noPinnedImageUnderPointer],
+            "⌥⇧L over nothing says so — never a dead key")
+
+        coordinator.toggleLock(at: CGPoint(x: frame.midX, y: frame.midY))
+        XCTAssertEqual(reported, [.noPinnedImageUnderPointer], "a hit stays quiet")
+    }
+
+    func testAPinWithoutACaptureSaysNothingCapturedYet() {
+        var reported: [PinnedImageFeedback] = []
+        coordinator.onFeedback = { reported.append($0) }
+        let history = CaptureHistory(capacity: 1)
+
+        coordinator.togglePin(from: history)
+        XCTAssertEqual(reported, [.nothingCapturedYet], "the empty-session press says why")
+        XCTAssertEqual(coordinator.windows.count, 0)
     }
 
     // MARK: - Scroll resize and opacity

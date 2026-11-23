@@ -137,6 +137,32 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         registerPinnedImageHotkeys()
         registerRecognitionHotkey()
+
+        // T4 closing fix: a pin shortcut that cannot act says so, the same
+        // way the capture paths already do with their hint pill. The
+        // coordinator only reports; the pill's placement is UI, so it is
+        // decided here — on the display the pointer is on.
+        PinnedImageCoordinator.shared.onFeedback = { [weak self] feedback in
+            self?.showPinnedImageFeedback(feedback)
+        }
+    }
+
+    /// The pinned-image shortcuts' visible refusal (T4 closing fix): the
+    /// same dark pill the OCR gesture reports through, centred on the
+    /// display the pointer is on. It closes itself after three and a half
+    /// seconds, exactly like that gesture's.
+    private func showPinnedImageFeedback(_ feedback: PinnedImageFeedback) {
+        // The hotkey path arrives on the main queue (`DispatchQueue.main.async`
+        // in `GlobalHotkey`) and the menu path is main by construction, so the
+        // hint window creation is main-thread by both routes.
+        MainActor.assumeIsolated {
+            let frame = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) }?.frame
+                ?? NSScreen.main?.frame
+            guard let frame else { return }
+            let hint = TextRecognitionHintWindow(screenFrame: frame, message: feedback.title)
+            hint.orderFrontRegardless()
+            Diag.log("pin image feedback shown \(feedback.title)")
+        }
     }
 
     /// Registers the OCR/QR gesture's one fixed shortcut (T5/S7). It sits
@@ -162,7 +188,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private func registerPinnedImageHotkeys() {
         pinnedImageHotkeys = [
             GlobalHotkey(binding: PinnedImageHotkeyDefaults.pin) {
-                PinnedImageCoordinator.shared.pinLatestCapture(from: CaptureHistory.shared)
+                PinnedImageCoordinator.shared.togglePin(from: CaptureHistory.shared)
             },
             GlobalHotkey(binding: PinnedImageHotkeyDefaults.lock) {
                 PinnedImageCoordinator.shared.toggleLock(at: NSEvent.mouseLocation)
@@ -309,10 +335,12 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     @objc private func clear() { onClear() }
     @objc private func togglePointer() { onPointerToggle() }
     @objc private func togglePin() { onPinToggle() }
-    /// T4/S6: pins the session's latest capture as a floating image. The menu
-    /// and the ⌥⇧I hotkey run the same path.
+    /// T4/S6: pins the session's latest capture as a floating image — and
+    /// takes the frontmost pin down again on the next press, so the
+    /// keyboard can never stack what it cannot dismiss. The menu and the
+    /// ⌥⇧I hotkey run the same path.
     @objc private func pinImage() {
-        PinnedImageCoordinator.shared.pinLatestCapture(from: CaptureHistory.shared)
+        PinnedImageCoordinator.shared.togglePin(from: CaptureHistory.shared)
     }
 
     /// T4/S6: toggles the click-through lock of the pinned image the pointer

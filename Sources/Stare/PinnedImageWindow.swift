@@ -50,12 +50,15 @@ final class PinnedImageWindow: NSPanel {
     /// test needs the same view a pin produces.
     var pinnedView: PinnedImageView? { contentView as? PinnedImageView }
 
-    /// Locks or unlocks: locked, the window ignores every mouse event —
-    /// pointer events land in the app underneath — and the same toggle
-    /// unlocks it again, because a click-through window cannot be clicked.
+    /// Locks or unlocks: locked, the surface passes every mouse event
+    /// through to the app underneath except the two controls, which keep
+    /// answering — a lock that covered the ✕ would be a trap the pointer
+    /// could not leave. The same toggle unlocks it again.
     func toggleLock() {
         lockState = lockState.toggled
-        ignoresMouseEvents = !lockState.acceptsMouseEvents
+        // Locked, a click-through surface cannot be hovered into showing
+        // its controls, so they stay drawn without hover until unlock.
+        pinnedView?.showsIdleControls = lockState == .locked
         pinnedView?.needsDisplay = true
         Diag.log("pin image lock \(lockState == .locked ? "on" : "off")")
     }
@@ -84,6 +87,13 @@ final class PinnedImageView: NSView {
 
     private let image: CGImage
     private var isHovered = false
+    /// Whether the two controls draw without hover (T4 closing fix): true
+    /// only while the window is locked — a click-through surface cannot be
+    /// hovered, so the ✕ and the 🔒 would be invisible exactly where the
+    /// user must still be able to click them.
+    var showsIdleControls = false {
+        didSet { needsDisplay = true }
+    }
 
     init(frame: NSRect, image: CGImage) {
         self.image = image
@@ -104,6 +114,30 @@ final class PinnedImageView: NSView {
     /// any part of the image drags the window (the path a custom borderless
     /// view has to open itself).
     override var mouseDownCanMoveWindow: Bool { true }
+
+    /// The lock's surface rule (T4 closing fix): locked, every point except
+    /// the two controls is declined — a declined hit test is what makes the
+    /// click fall through to the app underneath — while the ✕ and the 🔒
+    /// keep answering, so the lock stays escapable with the pointer. The
+    /// window itself never sets `ignoresMouseEvents`: the per-point decision
+    /// is made here, where the controls live.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // `point` arrives in the superview's (bottom-up) space; `convert`
+    // returns it in this view's own space, which is top-down — this view
+    // is flipped.
+        let topDown: NSPoint
+        if let superview {
+            topDown = convert(point, from: superview)
+        } else {
+            topDown = point
+        }
+        let window = self.window as? PinnedImageWindow
+        let lock = window?.lockState ?? .floating
+        guard lock.acceptsMouseEvents(at: topDown, in: CGRect(origin: .zero, size: bounds.size)) else {
+            return nil
+        }
+        return super.hitTest(point)
+    }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -183,7 +217,7 @@ final class PinnedImageView: NSView {
         context.draw(image, in: bounds)
         context.restoreGState()
 
-        guard isHovered else { return }
+        guard isHovered || showsIdleControls else { return }
         drawControl(.close, symbol: "xmark", in: context)
         drawControl(.lock, symbol: "lock.fill", in: context)
     }
@@ -222,6 +256,12 @@ final class PinnedImageCoordinator {
     /// keep this list to themselves.
     private(set) var windows: [PinnedImageWindow] = []
 
+    /// What the pin shortcuts say when they cannot act (T4 closing fix):
+    /// the coordinator reports, the app layer shows the pill on the display
+    /// under the pointer. Nil default, so detached test instances never
+    /// open a window of their own.
+    var onFeedback: ((PinnedImageFeedback) -> Void)?
+
     deinit {
         for window in windows { window.onClosed = nil }
     }
@@ -252,8 +292,10 @@ final class PinnedImageCoordinator {
     }
 
     /// The latest capture of the session, from the history the overlay
-    /// records into. Nothing delivered yet is a logged no-op: the shortcut
-    /// pressed before any capture changes nothing on screen.
+    /// records into. The always-pin primitive the overlay's card path and
+    /// `OverlayController.pinLatestCapture` use — the ⌥⇧I toggle is
+    /// `togglePin(from:)`. Nothing delivered yet is a logged no-op: the
+    /// shortcut pressed before any capture changes nothing on screen.
     func pinLatestCapture(from history: CaptureHistory) {
         guard let entry = history.entries.first else {
             Diag.log("pin image skipped: no capture in the session yet")
@@ -262,9 +304,31 @@ final class PinnedImageCoordinator {
         pin(entry.image, on: nil)
     }
 
+    /// The keyboard pin (⌥⇧I), per `PinnedImagePinRule` (T4 closing fix):
+    /// with pins on screen the press takes the frontmost one down — locked
+    /// or not, the keyboard reaches a click-through window where the pointer
+    /// cannot; only a clear screen pins the session's latest capture, and
+    /// nothing captured yet is a reportable no-op instead of a silent key.
+    /// The card's pin button (`pin`) is the deliberate multi-pin path.
+    func togglePin(from history: CaptureHistory) {
+        switch PinnedImagePinRule.keyboardPin(hasPinnedImages: !windows.isEmpty, hasCaptures: !history.entries.isEmpty) {
+        case .dismissTopmost:
+            let topmost = windows.last
+            Diag.log("pin image dismissed by the keyboard, \(windows.count) was floating")
+            topmost?.closeSelf()
+        case .pin:
+            pin(history.entries.first!.image, on: nil)
+        case .nothingToPin:
+            Diag.log("pin image skipped: no capture in the session yet")
+            onFeedback?(.nothingCapturedYet)
+        }
+    }
+
     /// Toggles the lock of the frontmost pinned image under the point
     /// (`PinnedImageFocus`): the one the user is looking at and working
-    /// underneath. Over no pinned image, nothing changes.
+    /// underneath. Over no pinned image, nothing changes — and it says so
+    /// through `onFeedback` (T4 closing fix): the silent dead key the report
+    /// named stays silent no more.
     func toggleLock(at point: CGPoint) {
         let index = PinnedImageFocus.topmostIndex(
             containing: point,
@@ -272,6 +336,7 @@ final class PinnedImageCoordinator {
         )
         guard let index else {
             Diag.log("pin image lock toggle skipped: no pinned image under the pointer")
+            onFeedback?(.noPinnedImageUnderPointer)
             return
         }
         let visible = windows.filter(\.isVisible)
