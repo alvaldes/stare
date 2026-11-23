@@ -7,7 +7,7 @@ final class GeneralPreferencesTests: XCTestCase {
 
     func testStandardMatchesTodayDefaults() {
         XCTAssertTrue(GeneralPreferences.standard.showArmedFrame)
-        XCTAssertEqual(GeneralPreferences.standard.scope, .all)
+        XCTAssertEqual(GeneralPreferences.standard.scope, .active)
         XCTAssertEqual(GeneralPreferences.standard.palettePlacement, .cursor)
         XCTAssertEqual(GeneralPreferences.standard.laserLifetime, .twoPointFive)
         // T9/S12: a fresh install keeps the bar exactly where it opens today —
@@ -61,7 +61,7 @@ final class GeneralPreferencesTests: XCTestCase {
         let general = try Self.decode(
             #"{"showArmedFrame":false,"scope":"galaxy","palettePlacement":"fixed","laserLifetime":3}"#
         )
-        XCTAssertEqual(general.scope, .all)
+        XCTAssertEqual(general.scope, .active, "an unknown scope falls back to the default, not to all displays")
         XCTAssertFalse(general.showArmedFrame)
         XCTAssertEqual(general.palettePlacement, .fixed)
         XCTAssertEqual(general.laserLifetime, .three)
@@ -619,7 +619,7 @@ final class GeneralPreferencesTests: XCTestCase {
         var general = PreferencesMigration.migratedGeneralPreferences(in: frameStore)
         XCTAssertNotNil(general)
         XCTAssertFalse(general!.showArmedFrame)
-        XCTAssertEqual(general?.scope, .all)
+        XCTAssertEqual(general?.scope, .active, "a legacy key leaves the current default, the active display")
         XCTAssertEqual(general?.palettePlacement, .cursor)
         XCTAssertEqual(general?.laserLifetime, .twoPointFive)
 

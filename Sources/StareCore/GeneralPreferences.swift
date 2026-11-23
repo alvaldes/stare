@@ -6,9 +6,11 @@ import CoreGraphics
 /// the strings today's picker has always used; decoding an unknown raw value
 /// falls back to the default instead of failing the document.
 public enum OverlayScope: String, Codable, CaseIterable, Sendable {
-    /// Draw on every display — today's default.
+    /// Draw on every display.
     case all
-    /// Draw only on the display the pointer is on when the session starts.
+    /// Draw only on the display the pointer is on when the session starts —
+    /// the default, so a second monitor the person is watching is never
+    /// covered by a sheet they did not ask for.
     case active
 
     /// English label shown in Settings, matching today's picker.
@@ -589,7 +591,7 @@ public struct GeneralPreferences: Codable, Equatable, Sendable {
     /// shipped default.
     public init(
         showArmedFrame: Bool = true,
-        scope: OverlayScope = .all,
+        scope: OverlayScope = .active,
         palettePlacement: PalettePlacement = .cursor,
         laserLifetime: LaserLifetime = .twoPointFive,
         toolbarOrientation: ToolbarOrientation = .horizontal,
@@ -619,7 +621,7 @@ public struct GeneralPreferences: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.showArmedFrame = (try? container.decode(Bool.self, forKey: .showArmedFrame)) ?? true
         let rawScope = try? container.decode(String.self, forKey: .scope)
-        self.scope = rawScope.flatMap(OverlayScope.init(rawValue:)) ?? .all
+        self.scope = rawScope.flatMap(OverlayScope.init(rawValue:)) ?? .active
         let rawPlacement = try? container.decode(String.self, forKey: .palettePlacement)
         self.palettePlacement = rawPlacement.flatMap(PalettePlacement.init(rawValue:)) ?? .cursor
         let rawLifetime = try? container.decode(Double.self, forKey: .laserLifetime)

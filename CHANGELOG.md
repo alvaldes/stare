@@ -6,6 +6,7 @@ user gets.
 
 ## Unreleased
 
+- Settings: "Draw on" defaults to the active display instead of every display, so a second monitor is never covered by a sheet nobody asked for
 - Capture: the `⇧S` area drag follows the pointer with a magnifier over the frozen frame, so the exact pixel edge you are choosing is visible, and it stays clear of the pixel it magnifies — near a display edge it flips to the other side; without Screen Recording the drag runs live as before and the magnifier stays away
 - Capture: the last `⇧S` area is remembered for the session — press `⇧S` again and it is already framed: `Return` captures it with no dragging, dragging replaces it, and leaving the overlay forgets it
 - Capture: the `⇧S` area drag freezes the screen the instant it starts — one Stare frame becomes the drag's base, so hover states and tooltips cannot vanish while you choose the area, existing blur marks blur the frozen content, and the captured pixels are exactly the frame you framed; `Esc` or a stray click brings the live screen back
