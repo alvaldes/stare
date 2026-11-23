@@ -54,6 +54,11 @@ S23. Auditoría de blur, previa a S13: un área cubierta por blur no debe dejar 
 
 S24. **Autorizaciones de superficie entre sesiones.** Para que ninguna decisión dependa de un mensaje que puede perderse, van escritas acá:
 - `Sources/Stare/OverlayView.swift`, `blurSource` y su hermana del whiteboard: **autorizadas** a la sesión hermana por el tiempo que dure T6b. Nada más de ese archivo.
+- **T6b, las dos líneas finales, autorizadas a la sesión hermana (esta rama no puede pegarlas: `redactionStyle` no existe acá, no compilaría):**
+  - `Sources/Stare/OverlayView.swift:590` — pasar `redactionStyle: state.redactionStyle` en el begin del mark-in-hand.
+  - `Sources/Stare/OverlayController.swift:407` — pasar `redactionStyle: state.redactionStyle` en `self.editor.open(image:capture:)`.
+  - Nada más de esos dos archivos. Sin la primera, una marca nueva en el overlay vivo sigue difuminando; sin la segunda, la ventana del editor se queda con el default.
+- `Sources/StareCore/Stroke.swift` / `PersistedStroke`: **sin colisión de nombres** — los campos de esta rama son `fill` y `arrowHead`, el suyo es `redactionStyle`, todos opcionales con decodificación ausente → comportamiento viejo. Lo que conflicta es el **orden** en `Stroke.init` y en el mapeo persistido: se re-aplica a mano, nunca se deja elegir a git.
 - `Sources/StareCore/MarkCompositor.swift`, la rama `.blur`: **autorizada** a la sesión hermana para T6b.
 - `Sources/StareCore/MarkRenderer.swift`: **liberado**; esta rama no tiene ediciones pendientes en él (lo que T8b necesite espera a T6b).
 - `Sources/Stare/OverlayController.swift`, la llamada a `CaptureFile.write` dentro de `deliver`: **autorizada** a la sesión hermana en su rama apilada, sólo esas líneas, porque los parámetros `app:`/`displayName:` existen únicamente ahí. `appName` debe ser nil cuando el proceso al frente es Stare: un archivo llamado "Stare" es una mentira silenciosa, y la regla de disposición de T10 lo convierte en el prefijo de siempre.
