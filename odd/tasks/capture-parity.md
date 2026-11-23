@@ -64,14 +64,14 @@ S23. Auditoría de blur, previa a S13: un área cubierta por blur no debe dejar 
 | T3 | Historial de capturas en memoria, reabrir en el editor | S12, S21 | worker | 8e5d205 |
 | T4 | Pin de la imagen capturada desde la card, con atajo propio y lock | S6, S4, S21 | worker | pendiente de hash |
 | T5 | OCR y QR on-device con atajo global ⌥⇧O | S7, S9, S22 | worker | c9c841e |
-| T6 | Auditoría de blur como redacción, y pixelate junto a blur | S23, S13 | peer | — |
+| T6 | Auditoría de blur como redacción, y pixelate junto a blur | S23, S13 | peer | T6a: auditoría hecha, S23 se sostiene (`capture-extras` L4); T6b pendiente |
 | T7 | Downscale al guardar, apagado por defecto | S14, S21 | worker | 9f053b1 |
 | T8a | Anotación: relleno de formas, puntas de flecha, estilo de texto recordado | S15, S21 | worker | 81a8d8d |
 | T8b | Anotación: spotlight persistente como marca | S15, S21 | parent | — |
-| T9 | Zoom y pan en el editor | S16, S21 | peer | — |
-| T10 | Plantillas de nombre por tokens | S17, S21 | peer | — |
+| T9 | Zoom y pan en el editor | S16, S21 | peer | 36a6a72 |
+| T10 | Plantillas de nombre por tokens | S17, S21 | peer | 4bc30d1 |
 | T11 | Backdrop barato: padding, esquinas, sombra | S18, S22 | peer | — |
-| T12 | Canvas componible: sumar captura o imagen pegada | S19, S21 | parent | — |
+| T12 | Canvas componible: sumar captura o imagen pegada | S19, S21 | peer | — |
 
 ## Checks manuales
 
