@@ -64,12 +64,12 @@ S23. Auditoría de blur, previa a S13: un área cubierta por blur no debe dejar 
 | T3 | Historial de capturas en memoria, reabrir en el editor | S12, S21 | parent | — |
 | T4 | Pin de la imagen capturada desde la card, con atajo propio y lock | S6, S4, S21 | parent | — |
 | T5 | OCR y QR on-device con atajo global ⌥⇧O | S7, S9, S22 | parent | — |
-| T6 | Auditoría de blur como redacción, y pixelate junto a blur | S23, S13 | parent | — |
+| T6 | Auditoría de blur como redacción, y pixelate junto a blur | S23, S13 | peer | — |
 | T7 | Downscale al guardar, apagado por defecto | S14, S21 | parent | — |
 | T8 | Profundidad de anotación: relleno, puntas, estilo de texto, spotlight | S15, S21 | parent | — |
-| T9 | Zoom y pan en el editor | S16, S21 | parent | — |
-| T10 | Plantillas de nombre por tokens | S17, S21 | parent | — |
-| T11 | Backdrop barato: padding, esquinas, sombra | S18, S22 | parent | — |
+| T9 | Zoom y pan en el editor | S16, S21 | peer | — |
+| T10 | Plantillas de nombre por tokens | S17, S21 | peer | — |
+| T11 | Backdrop barato: padding, esquinas, sombra | S18, S22 | peer | — |
 | T12 | Canvas componible: sumar captura o imagen pegada | S19, S21 | parent | — |
 
 ## Checks manuales
@@ -148,3 +148,9 @@ L14. Verificación independiente de T2b (`bccea8d`, `cfc2dcc`) encontró un **bl
 L15. Follow-up anotado, no hecho: el verificador dejó cinco probes para el estado de serialización de los asks (captura que devuelve nil, `clear()` a mitad de vuelo, arm/release repetido, re-armar tras fallo, camino del board). Hoy están cubiertos de forma parcial por los tests de congelado; si el estado de asks crece, adoptarlos primero.
 
 L16. Consolidación con la rama hermana: `main` avanzó a `2b9c66c` (bar, organiser, cursor, tests de render) y `feat/capture-parity` se rebaseó encima sin un solo conflicto. `GeneralPreferences` no cambió de forma del otro lado, así que mi default de tres líneas quedó intacto. Los dos helpers de confinamiento de ventanas de test se unificaron en `PrimaryScreenTestWindow.frame(for:)`: `NSWindow.confineToPrimaryScreen()` ahora delega ahí, y los dos tests de render del otro lado siguen verdes (4 + 7 casos). Un solo invariante, una sola implementación.
+
+L17. Reparto con la sesión hermana (a pedido del usuario: "coordina con el otro agente para que haga trabajo tuyo tambien y terminemos antes"). Criterio: propiedad por archivo, para que dos escritores nunca editen el mismo archivo a la vez.
+- **Sesión hermana** (rama desde `main`): T6 auditoría de blur + pixelate, T9 zoom del editor, T10 plantillas de nombre, T11 backdrop. Archivos suyos: `CaptureEditor.swift`, `BlurEffect.swift`, `MarkRenderer.swift`, `CapturePreference.swift`, `CaptureFile.swift`, archivos nuevos y sus tests.
+- **Esta rama**: T3 historial, T4 pin de imagen, T5 OCR, T7 downscale, T8 profundidad de anotación, T12 canvas componible. Archivos míos: `OverlayController`, `OverlayView`, `FrontWindowLocator`, `WindowCaptureTarget`, `CaptureCard` y los módulos de área/ventana de `StareCore`.
+- Compartidos: `SettingsView.swift` (5 líneas de registro, el pane va en archivo nuevo — S4) y `GeneralPreferences.swift` (mis tres líneas del default; quien agregue una preferencia la suma al final). Quien aterrice segundo re-aplica sus cinco líneas.
+- Reglas que se le pasaron: nada de suite completa, filtros de una clase, conteo real de casos (L11/L13), ventanas de test confinadas al primario, RED observado, docs con el código, sin push ni merge sin el humano.
