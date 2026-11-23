@@ -59,7 +59,8 @@ S23. Auditoría de blur, previa a S13: un área cubierta por blur no debe dejar 
 | T0 | Convención de panes de Settings nuevos y registro mínimo compartido | S4, S22 | parent | — |
 | T1 | Captura de ventana del frente con marcas compuestas | S10, S21 | parent | 1ee6393, ff41287, 989b795 |
 | T2a | Area drag: geometría pura, ⇧ cuadrado, clamp al display | S11, S21 | worker | 3437beb |
-| T2b | Area drag determinística: freeze, lupa, rect recordado | S11, S21 | parent | — |
+| T2b-a | Area drag: base congelada al arrancar, con liberación en captura, clic perdido, Esc y deactivate | S11, S21 | worker | bccea8d |
+| T2b-b | Area drag: lupa y rectángulo recordado | S11, S21 | parent | — |
 | T3 | Historial de capturas en memoria, reabrir en el editor | S12, S21 | parent | — |
 | T4 | Pin de la imagen capturada desde la card, con atajo propio y lock | S6, S4, S21 | parent | — |
 | T5 | OCR y QR on-device con atajo global ⌥⇧O | S7, S9, S22 | parent | — |
@@ -72,6 +73,17 @@ S23. Auditoría de blur, previa a S13: un área cubierta por blur no debe dejar 
 | T12 | Canvas componible: sumar captura o imagen pegada | S19, S21 | parent | — |
 
 ## Checks manuales
+
+T2b-a necesita ojo humano: el congelado es píxeles y orientación, nada de eso se prueba con bitmaps sintéticos.
+
+1. `⇧S` sobre una app con tooltip o estado de hover: la pantalla se congela al arrancar el arrastre y el tooltip se queda quieto mientras elegís.
+2. Una marca de blur dibujada antes de `⇧S` difumina el contenido congelado, no uno que se mueve a mitad del arrastre.
+3. `Esc` a mitad del arrastre: vuelve la pantalla viva exactamente, marcas intactas, nada capturado.
+4. Terminar el arrastre: la imagen de la card coincide con el frame congelado, y el overlay vivo vuelve enseguida.
+5. `⇧S` en el whiteboard igual que antes (sin congelado), y desactivar a mitad de arrastre no deja frame viejo al reentrar.
+6. Sin permiso de Screen Recording el arrastre sigue funcionando en vivo, como hoy.
+
+## Checks manuales de T1
 
 T1 necesita ojo humano: ningún test unitario puede probar píxeles reales de una ventana. **Los cinco puntos pasaron**: el usuario los probó y funcionando.
 
