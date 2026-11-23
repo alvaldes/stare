@@ -951,7 +951,18 @@ final class OverlayController {
         // One instant for the name and the pill, so they always agree.
         let date = Date()
         if case .folder = preference.destination, preference.destination.isUsablePath {
-            if let url = CaptureFile.write(result, preference: preference, date: date, scale: scale) {
+            // {app} must name what was captured, never Stare itself: during a capture from
+            // the whiteboard or straight after the overlay opens, Stare can be the
+            // frontmost application, and a file named after the tool is a silent lie.
+            let frontmost = NSWorkspace.shared.frontmostApplication
+            let appName: String? = frontmost?.processIdentifier == ProcessInfo.processInfo.processIdentifier
+                ? nil
+                : frontmost?.localizedName
+            let displayName: String? = screen(for: canvas.displayID)?.localizedName
+            if let url = CaptureFile.write(
+                result, preference: preference, date: date, scale: scale,
+                app: appName, displayName: displayName
+            ) {
                 canvas.view.showHint("Capture saved to \(url.lastPathComponent)", seconds: 3)
                 Diag.log("capture saved \(result.width)x\(result.height) marks=\(canvas.view.session.strokes.count) file=\(url.lastPathComponent)")
             } else {
