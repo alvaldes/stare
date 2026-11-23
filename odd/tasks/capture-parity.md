@@ -71,9 +71,11 @@ S23. Auditoría de blur, previa a S13: un área cubierta por blur no debe dejar 
 | T11 | Backdrop barato: padding, esquinas, sombra | S18, S22 | parent | — |
 | T12 | Canvas componible: sumar captura o imagen pegada | S19, S21 | parent | — |
 
-## Checks manuales pendientes
+## Checks manuales
 
-T1 necesita ojo humano: ningún test unitario puede probar píxeles reales de una ventana.
+T1 necesita ojo humano: ningún test unitario puede probar píxeles reales de una ventana. **Los cinco puntos pasaron**: el usuario los probó y funcionando.
+
+Quedan como referencia los que cubren el borde del feature:
 
 1. Abrir Stare con Screen Recording concedido, abrir una app (Safari, Terminal) y un par de ventanas de otras apps.
 2. `⌥⇧A`, dibujar una flecha que cruce el borde de la ventana del frente y un recuadro adentro.
@@ -110,3 +112,9 @@ L6. Corte de T1: núcleo puro (`1ee6393`) + integración en el overlay (`ff41287
 L7. Corte de T2: T2a (`3437beb`, delegada al worker por backstop de contexto) + T2b pendiente. Regla aceptada: primero ⇧ cuadrado y después clamp, así que un cuadrado arrastrado fuera del display queda no-cuadrado contra el borde — el gesto dice "hasta acá", y el clamp no inventa área que no existe. Si no gusta, la alternativa es clampear el punto final antes de cuadrar; decidirlo en T2b junto con el freeze.
 
 L8. Verificación independiente de T1 (`gentle-ai-verify`, item 3 por el refactor del camino compartido) encontró dos regresiones reales, ya corregidas en `989b795`: en el whiteboard `⌥S` caía en un handler no cableado y quedaba tragado (antes capturaba el board), y `⌥⇧S` cambiaba de área a ventana. El fix hace que `⌥S` intercepte sólo cuando el display puede atenderlo y excluye `⇧`. La misma verificación dejó 16 probes durables en `WindowCaptureBoundaryTests.swift` (bordes de geometría, origen negativo de un display arriba, marca real que sobrevive al crop en su offset). Suite: 569 tests, 0 fallas.
+
+L9. **Prioridad 1 (restricción de displays).** Textual: "los 5 checks los pruebo despues ahora es prioritario que las pruebas que estes haciendo donde muestras el whiteboard y demas solo lo muestres en el primary monitor porque estoy viendo algo en los otros monitores y no quiero que se interrumpa / esto es prioridad 1 para todo hasata que esto quede resuleto y despues reanuda". Causa encontrada: cuatro archivos de test abren ventanas reales (`orderFront` / `orderFrontRegardless`), y en este toolchain los filtros no restringen de forma confiable, así que una corrida común podía mostrarlas en cualquier display. Corregido en `c34b4d5`: todo pasa por `PrimaryScreenTestWindow.frame(for:)`, con dos tests de contrato que fijan el invariante; los boards se confinan antes del primer turno del runloop y la barra se re-pina después de cada mutación de estado. Sin assertions debilitadas y sin tests salteados. Riesgo residual declarado: `openBoard()` ordena un board por display y activa la app antes de que el test pueda moverlo, así que no puede probarse desde el código que no se componga un frame suelto en un monitor secundario.
+
+L10. Los cinco puntos manuales de T1 pasaron (usuario: "los 5 puntos probados y funcionando"). T1 cerrada por verificación humana sobre `989b795`.
+
+L11. Límite del enfoque "pinear ventanas": la preferencia de alcance del board resuelve `"active"` al display **donde está el puntero**, no al primario (`OverlayController.buildBoardCanvases`, `state.boardScope`), y `openBoard()` activa la app y ordena un board por display antes de que cualquier test pueda moverlo. Conclusión: sin un cambio de producto no se puede garantizar desde los tests que esos dos archivos no compongan un frame suelto en un monitor secundario. Regla operativa que rige la tanda mientras el usuario esté mirando los otros monitores: **nunca correr la suite completa ni `WhiteboardClearRoutingTests` ni `ToolbarPanelLiveResizeTests`**; la verificación se hace con filtros de una clase por invocación (la forma con `|` no matcheó nada una vez y no se usa), prefiriendo las clases que no abren ventanas. Todo lo que corra `swift test` completo —incluido cualquier worker— tiene que respetar esta regla.
