@@ -102,6 +102,16 @@ T2b-a necesita ojo humano: el congelado es píxeles y orientación, nada de eso 
 5. `⇧S` en el whiteboard igual que antes (sin congelado), y desactivar a mitad de arrastre no deja frame viejo al reentrar.
 6. Sin permiso de Screen Recording el arrastre sigue funcionando en vivo, como hoy.
 
+## Checks manuales de T6b (pixelate, rama hermana)
+
+Redacción, con las palabras exactas de la sesión hermana:
+
+> **Oculta lo que está debajo del bloque**: dibujá una marca de pixelate sobre un campo de contraseña o un párrafo y ningún glifo, palabra ni color de ese contenido se lee en ningún momento — mientras arrastrás, en el PNG guardado, ni después de abrir el editor y guardar a zoom 3×.
+>
+> **No oculta dónde está el bloque**: su posición, tamaño y contorno siguen visibles, porque una redacción in-place no puede esconder su propia silueta, y el README lo dice.
+
+Qué probar: `B` sobre texto legible → los bloques siguen al puntero y el texto no se lee ni con la marca en la mano → guardar a carpeta → abrir el PNG, mirarlo al 100% y al 400% en Preview → abrir el editor, zoom 3×, guardar de nuevo y comparar la región.
+
 ## Checks manuales de T8b
 
 1. `D` sobre una app: todo lo de afuera del área arrastrada se atenúa en todo el display, y el borde se lee suave, no como un corte duro.
