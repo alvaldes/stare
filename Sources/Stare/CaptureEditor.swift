@@ -625,6 +625,9 @@ final class CaptureEditorCanvas: NSView {
     private var drawingStart: CGPoint?
     private var drawingMoved = false
     private var drawingStrokes: [Stroke]?
+    /// The live gesture is an eraser drag: it removes marks instead of
+    /// starting one, so it commits nothing and journals nothing.
+    private var isErasing = false
 
     init(image: CGImage) {
         self.image = image
@@ -894,6 +897,41 @@ final class CaptureEditorCanvas: NSView {
         )
     }
 
+    // MARK: - Eraser
+
+    /// The eraser's screen radius, in screen points — the drawing overlay's
+    /// circle size, carried over: at any zoom the pointer erases what it
+    /// touches, a screen-sized circle.
+    private static let eraserRadius: CGFloat = 8
+
+    /// Erases the marks under the pointer. A mark never moves — it keeps the
+    /// space of the moment it was drawn (S7) — so the pointer's view point
+    /// converts through every evaluated mark's own mapping, and the circle's
+    /// radius scales with the same pixels-per-point ratio the mapping uses;
+    /// the erase lands where the marks render, hit-test and save, whatever
+    /// the zoom or pan was when they went down or stands now. All the actual
+    /// removal stays in `DrawingSession.erase` — the one erase path the
+    /// drawing overlay already drives — called once per distinct recorded
+    /// space so each of its hit tests runs inside the mapping the evaluated
+    /// marks live in, never a second erase path beside it.
+    private func erase(atView point: CGPoint) {
+        let current = activeSpace
+        let pixel = current.pixelPoint(fromView: point)
+        var removed: [UUID] = []
+        var evaluated: [EditorCropSpace] = []
+        for id in session.strokes.map(\.id) {
+            let markSpace = spaces[id] ?? current
+            guard !evaluated.contains(markSpace) else { continue }
+            evaluated.append(markSpace)
+            removed.append(contentsOf: session.erase(
+                at: markSpace.viewPoint(fromPixel: pixel),
+                radius: Self.eraserRadius * current.pixelsPerPoint / markSpace.pixelsPerPoint))
+        }
+        for id in removed { spaces.removeValue(forKey: id) }
+        if !removed.isEmpty { Diag.log("editor erase count=\(removed.count)") }
+        needsDisplay = true
+    }
+
     // MARK: - Mouse
 
     override func mouseDown(with event: NSEvent) {
@@ -944,6 +982,14 @@ final class CaptureEditorCanvas: NSView {
         guard let state else { return }
         let drawingSpace = displaySpace(armed: false)
         guard drawingSpace.display.contains(point) else { return }
+        // The eraser removes marks instead of starting one: the gesture
+        // routes straight to `session.erase` — the no-op invisible stroke
+        // `begin` used to mint for it was the eraser's editor defect.
+        isErasing = state.tool.isEraser
+        if isErasing {
+            erase(atView: point)
+            return
+        }
         drawingStart = point
         drawingMoved = false
         drawingStrokes = session.strokes
@@ -987,6 +1033,11 @@ final class CaptureEditorCanvas: NSView {
             return
         }
 
+        if isErasing {
+            erase(atView: point)
+            return
+        }
+
         session.extend(to: point)
         if point != drawingStart {
             drawingMoved = true
@@ -1003,6 +1054,15 @@ final class CaptureEditorCanvas: NSView {
         }
         if isCropping {
             endCropDrag()
+            return
+        }
+        // The eraser's drag ends where it began in the journal: erasing
+        // gained the document nothing undoable — `DrawingSession.undo` never
+        // restores erased marks (the eraser's rule) — so it takes no mark
+        // step, and the next ⌘Z reaches the previous real change directly.
+        if isErasing {
+            isErasing = false
+            needsDisplay = true
             return
         }
         let point = convert(event.locationInWindow, from: nil)
@@ -1166,6 +1226,7 @@ final class CaptureEditorCanvas: NSView {
         guard window == nil else { return }
         isSpacePanning = false
         isMiddlePanning = false
+        isErasing = false
         lastPanPoint = nil
         isZoomScrolling = false
         scrollZoomGesture = ScrollZoom.Gesture()
