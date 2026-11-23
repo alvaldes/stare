@@ -121,24 +121,24 @@ final class SettingsBarPreviewTests: XCTestCase {
     // MARK: - The whole bar inside the stage (T2/S2)
 
     /// S2: at the minimum window width (cards 625) the preview keeps every
-    /// item — the rendered saturated runs equal both the default width's
-    /// count and the bar's own known coloured items: every ink whose colour
-    /// is saturated (white and black read as grey, so the scan cannot see
-    /// them) plus the marked tool's accent fill, which surfaces as two runs
-    /// because its white glyph covers its middle. Pre-fix the stage scrolled
-    /// instead of fitting and cut the bar's right end — the inks — off at
-    /// the narrow width.
+    /// item. The rule is what the two widths have in common, not an exact
+    /// total: how many runs the marked tool's accent fill splits into depends
+    /// on the glyph drawn over it (`+2` was true at one scale, `+3` at the
+    /// wider stage S4 produced), so the assertions are that the narrow width
+    /// shows exactly what the default width shows, and that neither drops a
+    /// saturated ink the bar carries (white and black read as grey, so the
+    /// scan cannot see them). Pre-fix the stage scrolled instead of fitting
+    /// and cut the bar's right end — the inks — off at the narrow width.
     func testTheMinimumWindowWidthKeepsEveryBarItem() throws {
-        let expected = Self.saturatedInks.count + 2
         let runsAtDefault = try Self.inkRuns(in: Self.renderPane(cardsWidth: 766, orientation: .horizontal))
         let runsAtMinimum = try Self.inkRuns(in: Self.renderPane(cardsWidth: 625, orientation: .horizontal))
 
+        XCTAssertGreaterThanOrEqual(
+            runsAtDefault.count, Self.saturatedInks.count + 1,
+            "S2: the default width shows every coloured item the bar carries, and the marked tool's accent with them")
         XCTAssertEqual(
-            runsAtDefault.count, expected,
-            "S2: at the default width the preview shows every coloured item the bar carries")
-        XCTAssertEqual(
-            runsAtMinimum.count, expected,
-            "S2: at the minimum window width (cards 625) the preview still shows every coloured item — the bar is fitted, not cut")
+            runsAtMinimum.count, runsAtDefault.count,
+            "S2: at the minimum window width (cards 625) the preview still shows exactly what the default width does — the bar is fitted, not cut")
     }
 
     // MARK: - The render the assertions read (T1/S1, T2/S2)

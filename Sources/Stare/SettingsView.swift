@@ -668,11 +668,17 @@ struct BarPane: View {
             title: "Bar",
             subtitle: "The tools palette, where it docks, and what it carries."
         ) {
-            toolbarStage
+            // The pool is the other half of the bar (S1): it sits in the pinned
+            // region directly under the preview, so dragging between the two
+            // never needs a scroll. Placement — which is about where the bar
+            // docks, not what it carries — scrolls below them.
+            VStack(spacing: SettingsMetrics.cardSpacing) {
+                toolbarStage
+                poolCard
+            }
         } cards: {
             VStack(spacing: SettingsMetrics.cardSpacing) {
                 placementCard
-                poolCard
             }
             // The bar is the stage above; the cards beside it are ordinary
             // rows, so they take the same single-column cap as every other
@@ -773,9 +779,10 @@ struct BarPane: View {
     private var poolCard: some View {
         SettingsCard(title: "In the pool", symbol: "tray") {
             toolbarPoolRow
-            Text("Pool tools stay off the bar but keep their keyboard shortcuts. Drag a chip onto the bar, or drag a placed separator back onto any pool spot. The bar keeps its first tool — it cannot leave, and the preview dims it.")
+            Text("Pool tools keep their shortcuts while off the bar. Drag a chip onto the bar, or a placed separator back onto any pool spot. The bar's first tool cannot leave — the preview dims it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
