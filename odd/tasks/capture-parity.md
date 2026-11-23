@@ -76,13 +76,13 @@ S24. **Autorizaciones de superficie entre sesiones.** Para que ninguna decisión
 | T3 | Historial de capturas en memoria, reabrir en el editor | S12, S21 | worker | 8e5d205 |
 | T4 | Pin de la imagen capturada desde la card, con atajo propio y lock | S6, S4, S21 | worker | pendiente de hash |
 | T5 | OCR y QR on-device con atajo global ⌥⇧O | S7, S9, S22 | worker | c9c841e |
-| T6 | Auditoría de blur como redacción, y pixelate junto a blur | S23, S13 | peer | T6a: auditoría hecha, S23 se sostiene (`capture-extras` L4); T6b pendiente |
+| T6 | Auditoría de blur como redacción, y pixelate junto a blur | S23, S13 | peer | T6a: auditoría, S23 se sostiene (`capture-extras` L4) · T6b: 2020708 + d930ae4 |
 | T7 | Downscale al guardar, apagado por defecto | S14, S21 | worker | 9f053b1 |
 | T8a | Anotación: relleno de formas, puntas de flecha, estilo de texto recordado | S15, S21 | worker | 81a8d8d |
 | T8b | Anotación: spotlight persistente como marca | S15, S21 | worker | 0d74cbf |
-| T9 | Zoom y pan en el editor | S16, S21 | peer | 36a6a72 |
-| T10 | Plantillas de nombre por tokens | S17, S21 | peer | 4bc30d1 |
-| T11 | Backdrop barato: padding, esquinas, sombra | S18, S22 | peer | — |
+| T9 | Zoom y pan en el editor | S16, S21 | peer | 36a6a72, 90be703 |
+| T10 | Plantillas de nombre por tokens | S17, S21 | peer | 4bc30d1, 906fd02, 4a0a152 |
+| T11 | Backdrop barato: padding, esquinas, sombra | S18, S22 | peer | 2f17ebd |
 | T12 | Canvas componible: sumar captura o imagen pegada | S19, S21 | peer | — |
 
 ## Checks manuales
@@ -226,3 +226,12 @@ L18. Auditoría de S23 (sesión hermana, registro completo en `odd/tasks/capture
 L19. **Incidente de canal con la sesión hermana**: la autorización de `blurSource` se envió cuatro veces (correlaciones c21ad07, e8fcc54, ecaace7f, bbfa283) y las cuatro veces volvió a preguntar, incluso con la respuesta en la primera línea. Los envíos se aceptan ("accepted for delivery; not a delivery or read receipt") pero el contenido no llega. Mitigación adoptada: las decisiones de superficie se escriben en S24 de este documento, que es el artefacto que ambas sesiones leemos al rebasear, y el chat queda sólo para avisar que hay algo nuevo. Si vuelve a pasar con algo que bloquee, se escala al humano para que relaye.
 
 L20. **Defecto propio, registrado sin maquillaje**: el hunk de tres líneas que escribí para el `deliver` de `{app}`/`{display}` **no compilaba**. Dos errores de API: `NSRunningApplication.frontmostApplication` no existe en este SDK (es `NSWorkspace.shared.frontmostApplication`), y el display en alcance en el tail de `deliver` es `canvas.displayID`, no `displayID` (ese existe en otras dos funciones). La sesión hermana los corrigió al aplicar el hunk. Lección para la tanda: **código escrito en un mensaje por una sesión que no puede compilarlo es código no verificado**, exactamente el mismo modo de falla que la lupa espejada y el `CaptureFile` que hacía sombra — se ve bien y no lo está. Si vuelve a hacer falta autorizar código ajeno, va con un test o con la instrucción de compilarlo antes de darlo por bueno, no con "el código exacto es este".
+
+L21. **Libro de commits de la sesión hermana**, con tarea y `S#` en la misma línea (disciplina pedida tras tres reenvíos):
+- T6a (S23, evidencia): sin commit, registro en `capture-extras` L4.
+- T6b (S13): `2020708` (dispatch, semilla por marca, preferencia, persistencia) + `d930ae4` (los dos call sites que acuñan marcas).
+- T9 (S16): `36a6a72` + `90be703` (los dos avisos del review sobre gestos).
+- Defecto preexistente del eraser (sin `S#`): `99e0038` — el canvas del editor no enrutaba a `DrawingSession.erase`, así que los trazos de goma se commiteaban como no-ops invisibles.
+- T10 (S17): `4bc30d1` (tokens y writer) + `906fd02` (el call site del `deliver`, el que yo escribí mal) + `4a0a152` (el guard de app al frente, ahora puro y testeado).
+- T11 (S18): `2f17ebd`.
+- T12: pendiente, única tarea que le queda.
