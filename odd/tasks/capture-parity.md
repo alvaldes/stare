@@ -74,7 +74,7 @@ S24. **Autorizaciones de superficie entre sesiones.** Para que ninguna decisión
 | T6 | Auditoría de blur como redacción, y pixelate junto a blur | S23, S13 | peer | T6a: auditoría hecha, S23 se sostiene (`capture-extras` L4); T6b pendiente |
 | T7 | Downscale al guardar, apagado por defecto | S14, S21 | worker | 9f053b1 |
 | T8a | Anotación: relleno de formas, puntas de flecha, estilo de texto recordado | S15, S21 | worker | 81a8d8d |
-| T8b | Anotación: spotlight persistente como marca | S15, S21 | parent | — |
+| T8b | Anotación: spotlight persistente como marca | S15, S21 | worker | 0d74cbf |
 | T9 | Zoom y pan en el editor | S16, S21 | peer | 36a6a72 |
 | T10 | Plantillas de nombre por tokens | S17, S21 | peer | 4bc30d1 |
 | T11 | Backdrop barato: padding, esquinas, sombra | S18, S22 | peer | — |
@@ -90,6 +90,15 @@ T2b-a necesita ojo humano: el congelado es píxeles y orientación, nada de eso 
 4. Terminar el arrastre: la imagen de la card coincide con el frame congelado, y el overlay vivo vuelve enseguida.
 5. `⇧S` en el whiteboard igual que antes (sin congelado), y desactivar a mitad de arrastre no deja frame viejo al reentrar.
 6. Sin permiso de Screen Recording el arrastre sigue funcionando en vivo, como hoy.
+
+## Checks manuales de T8b
+
+1. `D` sobre una app: todo lo de afuera del área arrastrada se atenúa en todo el display, y el borde se lee suave, no como un corte duro.
+2. Captura (`S`, `⇧S` o `⌥S`) con el spotlight puesto: la imagen muestra exactamente la atenuación que veías.
+3. `⌘Z`/`⇧⌘Z`, el eraser y el puntero sobre un spotlight: se comporta como cualquier otra marca.
+4. Whiteboard: la atenuación cubre la página visible con pan y zoom.
+5. `⌥⇧M` (pointer highlight) sigue igual.
+6. Settings → atajos lista Spotlight con `D` y sobrevive a un reinicio.
 
 ## Checks manuales de T8a
 
