@@ -70,6 +70,60 @@ final class AreaCaptureLoupeViewTests: XCTestCase {
         view.mouseUp(with: mouseEvent(.leftMouseUp, at: to, window: window))
     }
 
+    private func render(_ view: NSView) throws -> NSBitmapImageRep {
+        let rep = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: Int(view.bounds.width), pixelsHigh: Int(view.bounds.height),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        view.cacheDisplay(in: view.bounds, to: rep)
+        return rep
+    }
+
+    // MARK: The remembered rectangle is visible and Return captures it
+
+    /// Symptom report: after a capture, the second ⇧S shows nothing framed and
+    /// Return does nothing. This arms the view with a remembered rect through
+    /// a real drag, then asserts the preloaded marquee is actually drawn (the
+    /// shroud covers everything but the remembered rect, and its border is
+    /// stroked) and that a real Return key event captures exactly that rect.
+    func testThePreloadedMarqueeIsDrawnAndReturnCapturesExactlyThatRect() throws {
+        let view = makeView()
+        let window = try hostWindow(view)
+        defer { window.orderOut(nil) }
+        var captures: [CGRect] = []
+        view.onCaptureRequest = { captures.append($0 ?? .zero) }
+
+        view.beginAreaSelection()
+        dragRect(view, from: CGPoint(x: 100, y: 100), to: CGPoint(x: 400, y: 300), window: window)
+        XCTAssertEqual(captures.count, 1)
+
+        // ⇧S again: the remembered area must be on screen already, no drag.
+        view.beginAreaSelection()
+        let rep = try render(view)
+
+        // Inside the remembered rect: clear — the shroud's even-odd hole.
+        let inside = try XCTUnwrap(rep.colorAt(x: 250, y: 200))
+        XCTAssertLessThan(inside.alphaComponent, 0.05,
+            "the preloaded marquee must be drawn: the shroud opens a hole over the remembered rect")
+
+        // Far outside it: the armed shroud (the same even-odd shroud a drag
+        // paints, since the preloaded rect exists).
+        let outside = try XCTUnwrap(rep.colorAt(x: 50, y: 550))
+        XCTAssertEqual(outside.alphaComponent, 0.32, accuracy: 0.08,
+            "the armed drag's shroud covers the view outside the remembered rect")
+
+        // The marquee's own border stroke on the rect's left edge.
+        let border = try XCTUnwrap(rep.colorAt(x: 100, y: 200))
+        XCTAssertGreaterThan(border.alphaComponent, 0.5,
+            "the preloaded marquee's border must be visible on screen")
+
+        // Return captures exactly the remembered rectangle.
+        view.keyDown(with: returnKey())
+        XCTAssertEqual(captures.count, 2, "Return confirms the preloaded marquee")
+        XCTAssertEqual(captures[1], CGRect(x: 100, y: 100, width: 300, height: 200),
+            "exactly the rectangle the user saw framed")
+    }
+
     /// A primary-screen-confined window hosting `view`, ordered front and
     /// ordered out again when the test ends — the pattern L9 fixed for the
     /// whole suite (never a secondary monitor).

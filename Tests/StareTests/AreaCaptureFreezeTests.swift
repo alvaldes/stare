@@ -21,6 +21,28 @@ final class AreaCaptureFreezeTests: XCTestCase {
         return context.makeImage()!
     }
 
+    /// A solid-colour frame: its pixels differ from everything else the view
+    /// paints (the drag chrome is neutral grey), so a rendered bitmap can say
+    /// whether the frozen content itself is on screen.
+    private func makeSolidImage(width: Int, height: Int, red: CGFloat, green: CGFloat, blue: CGFloat) -> CGImage {
+        let context = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(CGColor(srgbRed: red, green: green, blue: blue, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()!
+    }
+
+    private func render(_ view: NSView) throws -> NSBitmapImageRep {
+        let rep = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: Int(view.bounds.width), pixelsHigh: Int(view.bounds.height),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        view.cacheDisplay(in: view.bounds, to: rep)
+        return rep
+    }
+
     private func makeView() -> OverlayView {
         OverlayView(
             frame: CGRect(origin: .zero, size: size),
@@ -51,6 +73,48 @@ final class AreaCaptureFreezeTests: XCTestCase {
         window.contentView = view
         window.orderFrontRegardless()
         return window
+    }
+
+    // MARK: The frozen base is on screen
+
+    /// Symptom report: with a tooltip on screen, ⇧S + drag never looks frozen.
+    /// This renders the real `OverlayView` mid-drag with a frozen frame whose
+    /// pixels differ from everything else the view paints, and asserts pixels
+    /// inside the marquee and far away from it show the frozen content (away
+    /// from it under the drag's own shroud). `mouseEvent` in this class speaks
+    /// window coordinates: a window point (x, y) is the view point (x, 600−y),
+    /// so the drag window points (100,100)→(400,300) marquee the view rect
+    /// x 100…400, y 300…500.
+    func testTheFrozenFramePaintsUnderAndAwayFromTheMarquee() throws {
+        let view = makeView()
+        view.onAreaSelectionFrame = {}
+        let window = try hostWindow(view)
+        defer { window.orderOut(nil) }
+
+        let frozen = makeSolidImage(width: 1800, height: 1200, red: 0.1, green: 0.9, blue: 0.2)
+        view.beginAreaSelection()
+        view.landAreaFrame(frozen)
+        view.mouseDown(with: mouseEvent(.leftMouseDown, at: CGPoint(x: 100, y: 100), window: window))
+        view.mouseDragged(with: mouseEvent(.leftMouseDragged, at: CGPoint(x: 400, y: 300), window: window))
+
+        let rep = try render(view)
+
+        // Inside the marquee: pure frozen pixels.
+        let inside = try XCTUnwrap(rep.colorAt(x: 250, y: 400))
+        XCTAssertEqual(inside.alphaComponent, 1, accuracy: 0.05,
+            "the frozen base must paint inside the marquee")
+        XCTAssertGreaterThan(inside.greenComponent, 0.5,
+            "the frozen frame's own pixels must be on screen inside the marquee")
+
+        // Far from the marquee: the drag's shroud (α 0.32) over the frozen base
+        // — still opaque, still the frozen frame's hue.
+        let outside = try XCTUnwrap(rep.colorAt(x: 50, y: 50))
+        XCTAssertEqual(outside.alphaComponent, 1, accuracy: 0.05,
+            "the frozen base must paint across the whole view, not only inside the drag")
+        XCTAssertGreaterThan(outside.greenComponent, 0.3,
+            "the frozen frame must remain visible away from the marquee, under the shroud")
+        XCTAssertGreaterThan(outside.greenComponent, outside.redComponent)
+        XCTAssertGreaterThan(outside.greenComponent, outside.blueComponent)
     }
 
     // MARK: Lifecycle
