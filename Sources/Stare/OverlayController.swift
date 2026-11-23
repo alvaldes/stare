@@ -223,6 +223,12 @@ final class OverlayController {
     /// overlay is active and at least one display has a visible blur mark.
     private let liveFrames: LiveFrameSource
     private let cards = CaptureCardController()
+    /// The pinned capture images (T4/S6): the shared coordinator every entry
+    /// point floats into — the card's pin button and the global shortcuts.
+    /// Deliberately outside the canvas lifecycle: a pinned image is not part
+    /// of a drawing session, so neither `activate` nor `deactivate` touches
+    /// it, and windows here outlive both.
+    let pinnedImages = PinnedImageCoordinator.shared
     /// Assigned in init: the handoff closure captures the same instance, so
     /// the editor is created exactly once per controller.
     private let editor: CaptureEditorController
@@ -436,7 +442,27 @@ final class OverlayController {
         history.onReopen = { [weak self] entry in
             self?.openCaptureEditor(entry.image)
         }
+        // The card's pin button (T4/S6): floats the image on the screen the
+        // card itself lives on, through the shared coordinator the global
+        // shortcut and the menu item also use.
+        cards.onPin = { [weak self] image, screen in
+            self?.pinImage(image, on: screen)
+        }
     }
+
+    /// The card path's pin: floats one capture near the card it came from.
+    func pinImage(_ image: CGImage, on screen: NSScreen?) {
+        pinnedImages.pin(image, on: screen)
+    }
+
+    /// The global shortcut's pin (⌥⇧I): floats the session's latest capture
+    /// where the user is. Nothing captured yet is a logged no-op.
+    func pinLatestCapture() {
+        pinnedImages.pinLatestCapture(from: history)
+    }
+
+    /// Read by tests: how many pinned images the controller currently has.
+    var pinnedImageCount: Int { pinnedImages.windows.count }
 
     /// Read by the self test: the display a capture would target while a
     /// mode is active, and the board a fresh whiteboard opened with.

@@ -88,6 +88,7 @@ reopen it any time from the menu bar with **Setup Guide…**.
 | `⌥⇧W` | Open the whiteboard |
 | `⌥⇧M` | Point at things with the pointer highlight |
 | `⌥⇧P` | Pin your marks so clicks pass through |
+| `⌥⇧I` | Pin the latest capture as a floating image (draggable, resizable, lockable) |
 | `P` `H` `A` `L` `R` `O` | Pen, highlighter, arrow, line, rectangle, ellipse |
 | `T` `C` `F` `B` `E` | Text, numbered step, laser, blur, eraser |
 | `1`–`8` | Red, orange, yellow, green, blue, purple, white, black |
@@ -105,11 +106,13 @@ reopen it any time from the menu bar with **Setup Guide…**.
 | Drawing | `Esc` clears the marks, and `⌘Z` brings back everything it cleared |
 | Whiteboard | `⌘←` `⌘→` change page (going past the last one adds a page) · `⌘B` flips the page between white and black · hold space and drag to pan (the pointer becomes a grabbing hand) · pinch, `⌘` + scroll or `⌘+`/`⌘−` zooms, `⌘0` resets pan and zoom |
 | Whiteboard | `S` captures the marks over the page colour, no Screen Recording needed · `Esc` closes the board and keeps the pages for the session |
-| Capture card | Hover keeps it on screen · click opens the editor · drag it into another app |
+| Capture card | Hover keeps it on screen · click opens the editor · drag it into another app · the pin button in its corner floats the image as a borderless always-on-top window of its own: drag it anywhere, scroll to resize, ⌥-scroll to change its opacity, and each one closes on its own — the pinned images stay on screen no matter what you open or close in Stare, and they never leave your machine |
+| Pinned image | `⌥⇧L` toggles the click-through lock of the image under the pointer: locked, every click lands in the app underneath and the same key unlocks it again |
 | Editor | Same tools and inks · `⌘Z` undo · `⇧⌘Z` redo · `Esc` cancels a crop, then closes · an applied crop stays editable: drag its edges to adjust it, and `⌘Z` returns the previous crop |
 
 All of these — the four global shortcuts and each tool's key — can be
-rebound in Settings.
+rebound in Settings. Two shortcuts are fixed: `⌥⇧I` pins the latest
+capture, `⌥⇧L` toggles its lock.
 
 </details>
 

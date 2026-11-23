@@ -1,4 +1,5 @@
 import AppKit
+import StareCore
 
 /// Menu bar entry point. Stare has no Dock icon and no main window, so the menu
 /// carries only the actions that are not preferences; everything configurable
@@ -27,6 +28,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let onResetBoardPan: () -> Void
     private let pointerItem = NSMenuItem(title: "Pointer Highlight  ⌥⇧M", action: nil, keyEquivalent: "")
     private let pinItem = NSMenuItem(title: "Pin Drawing  ⌥⇧P", action: nil, keyEquivalent: "")
+    // The pinned image (T4/S6): floats the session's latest capture as a
+    // borderless always-on-top window. Its own action, never the drawing pin.
+    private let pinImageItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    /// The two fixed global registrations of the pinned image (T4/S6), kept
+    /// here so they live and die with the status item: ⌥⇧I pins the latest
+    /// capture, ⌥⇧L toggles the lock of the pinned image under the pointer.
+    private var pinnedImageHotkeys: [GlobalHotkey] = []
     // Whiteboard page actions (T12/S9): their shortcuts exist in the board view
     // itself; the menu items carry the same keys and are enabled only when the
     // action can apply.
@@ -84,6 +92,15 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         pinItem.target = self
         menu.addItem(pinItem)
 
+        pinImageItem.title = "Pin Image  \(PinnedImageHotkeyDefaults.pinDisplayName)"
+        pinImageItem.action = #selector(pinImage)
+        pinImageItem.target = self
+        menu.addItem(pinImageItem)
+        menu.addItem(menuItem(
+            title: "Toggle Image Lock  \(PinnedImageHotkeyDefaults.lockDisplayName)",
+            action: #selector(toggleImageLock)
+        ))
+
         menu.addItem(menuItem(title: "Whiteboard  \(HotkeyDefaults.whiteboardDisplayName)", action: #selector(toggleBoard)))
 
         // Page actions (T12/S9): the equivalent draws the same shortcut the
@@ -103,6 +120,27 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         menu.addItem(menuItem(title: "Quit Stare", action: #selector(quit), keyEquivalent: "q"))
         menu.delegate = self
         statusItem.menu = menu
+
+        registerPinnedImageHotkeys()
+    }
+
+    /// Registers the pinned image's two fixed shortcuts (T4/S6). They sit
+    /// outside the remappable four-action map by decision — no new Settings
+    /// pane — so they register directly, exactly the way the pre-Settings
+    /// hotkeys did. A refused registration is logged and leaves the app
+    /// without that shortcut instead of failing anything else.
+    private func registerPinnedImageHotkeys() {
+        pinnedImageHotkeys = [
+            GlobalHotkey(binding: PinnedImageHotkeyDefaults.pin) {
+                PinnedImageCoordinator.shared.pinLatestCapture(from: CaptureHistory.shared)
+            },
+            GlobalHotkey(binding: PinnedImageHotkeyDefaults.lock) {
+                PinnedImageCoordinator.shared.toggleLock(at: NSEvent.mouseLocation)
+            },
+        ].compactMap { $0 }
+        Diag.log(
+            "pin image hotkeys armed \(PinnedImageHotkeyDefaults.pinDisplayName) \(PinnedImageHotkeyDefaults.lockDisplayName) count=\(pinnedImageHotkeys.count)"
+        )
     }
 
     /// The pin is toggled by a global hotkey too, so the checkmark is read when
@@ -114,8 +152,11 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     /// The page actions only make sense while the board is open, and only
     /// where they can apply: delete is refused on the last remaining page and
     /// a move is refused at the ends, so those cases stay disabled.
+    /// The pin action only makes sense with something captured this session.
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem {
+        case pinImageItem:
+            return !CaptureHistory.shared.entries.isEmpty
         case deletePageItem:
             return isBoardOpen() && (boardPageState()?.total ?? 1) > 1
         case movePageLeftItem:
@@ -238,6 +279,17 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     @objc private func clear() { onClear() }
     @objc private func togglePointer() { onPointerToggle() }
     @objc private func togglePin() { onPinToggle() }
+    /// T4/S6: pins the session's latest capture as a floating image. The menu
+    /// and the ⌥⇧I hotkey run the same path.
+    @objc private func pinImage() {
+        PinnedImageCoordinator.shared.pinLatestCapture(from: CaptureHistory.shared)
+    }
+
+    /// T4/S6: toggles the click-through lock of the pinned image the pointer
+    /// is over — the one the user is looking at and working underneath.
+    @objc private func toggleImageLock() {
+        PinnedImageCoordinator.shared.toggleLock(at: NSEvent.mouseLocation)
+    }
     @objc private func toggleBoard() { onBoardToggle() }
     @objc private func openSettings() { onOpenSettings() }
     @objc private func openOnboarding() { onOpenOnboarding() }

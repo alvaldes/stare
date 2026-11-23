@@ -61,8 +61,8 @@ S23. Auditoría de blur, previa a S13: un área cubierta por blur no debe dejar 
 | T2a | Area drag: geometría pura, ⇧ cuadrado, clamp al display | S11, S21 | worker | 3437beb |
 | T2b-a | Area drag: base congelada al arrancar, con liberación en captura, clic perdido, Esc y deactivate | S11, S21 | worker | bccea8d |
 | T2b-b | Area drag: lupa sobre el frame congelado y rectángulo recordado con Return | S11, S21 | worker | cfc2dcc, c39de43 |
-| T3 | Historial de capturas en memoria, reabrir en el editor | S12, S21 | worker | pendiente de hash |
-| T4 | Pin de la imagen capturada desde la card, con atajo propio y lock | S6, S4, S21 | parent | — |
+| T3 | Historial de capturas en memoria, reabrir en el editor | S12, S21 | worker | 8e5d205 |
+| T4 | Pin de la imagen capturada desde la card, con atajo propio y lock | S6, S4, S21 | worker | pendiente de hash |
 | T5 | OCR y QR on-device con atajo global ⌥⇧O | S7, S9, S22 | parent | — |
 | T6 | Auditoría de blur como redacción, y pixelate junto a blur | S23, S13 | peer | — |
 | T7 | Downscale al guardar, apagado por defecto | S14, S21 | parent | — |
@@ -82,6 +82,17 @@ T2b-a necesita ojo humano: el congelado es píxeles y orientación, nada de eso 
 4. Terminar el arrastre: la imagen de la card coincide con el frame congelado, y el overlay vivo vuelve enseguida.
 5. `⇧S` en el whiteboard igual que antes (sin congelado), y desactivar a mitad de arrastre no deja frame viejo al reentrar.
 6. Sin permiso de Screen Recording el arrastre sigue funcionando en vivo, como hoy.
+
+## Checks manuales de T4
+
+1. Captura y `⌥⇧I`: la última captura flota sobre otras apps, centrada en el display donde estás, y Stare sigue funcionando abajo.
+2. Arrastrarla por la superficie: se mueve, y durante el arrastre ningún click cae en la app de abajo.
+3. Scroll sobre ella: crece o decrece manteniendo el aspecto, nunca se va de pantalla; `⌥`+scroll la desvanece.
+4. Hover: aparecen ✕ y 🔒 arriba a la derecha. 🔒 (o `⌥⇧L` con el puntero encima) hace que clicks y arrastres pasen a la app de abajo; `⌥⇧L` otra vez la desbloquea.
+5. El botón de pin de la card flota esa captura; un click en cualquier otro lado sigue abriendo el editor y el arrastre sigue arrastrando la card.
+6. Dos pines coexisten y cada uno cierra con su ✕; `⌥⇧A`, dibujar y `Esc` no los tocan; cerrar Stare limpia pines e historial sin escribir nada a disco.
+7. Barra de menú: "Pin Image ⌥⇧I" (deshabilitado antes de la primera captura) y "Toggle Image Lock ⌥⇧L".
+8. `⌥⇧P` sigue pineando **las marcas**, exactamente como antes.
 
 ## Checks manuales de T3
 
