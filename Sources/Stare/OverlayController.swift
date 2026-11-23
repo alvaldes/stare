@@ -205,7 +205,7 @@ final class OverlayController {
     /// The editor handoff the capture card's click and the session history's
     /// reopen share (T3): production is `CaptureEditorController.open`; tests
     /// inject a witness so the routing is verifiable without opening a window.
-    private let openEditor: (CGImage, CapturePreference) -> Void
+    private let openEditor: (CGImage, CapturePreference, RedactionStyle) -> Void
     /// The session capture history (T3/S12): every delivered capture is
     /// remembered here in memory only, and the History pane reopens entries
     /// through the same editor handoff the card uses. The shared store is the
@@ -237,7 +237,9 @@ final class OverlayController {
         self.history = history
         let editor = CaptureEditorController()
         self.editor = editor
-        self.openEditor = editorHandoff ?? { editor.open(image: $0, capture: $1) }
+        self.openEditor = editorHandoff.map { handoff in
+            { image, capture, _ in handoff(image, capture) }
+        } ?? { editor.open(image: $0, capture: $1, redactionStyle: $2) }
         self.state = EditorState(preferences: preferences)
         wireEditor()
         // Interest is asked from the canvases, so it is whatever the sessions
@@ -399,7 +401,7 @@ final class OverlayController {
         } else {
             deactivate(restoringFocus: false)
         }
-        openEditor(image, capturePreference())
+        openEditor(image, capturePreference(), state.redactionStyle)
     }
 
     private func wireEditor() {

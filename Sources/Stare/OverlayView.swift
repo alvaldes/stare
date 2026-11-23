@@ -795,12 +795,15 @@ class OverlayView: NSView {
             finishPendingTextEditing()
         }
 
+        // The redaction the user chose rides the mark from birth (T6b), so a
+        // mark drawn here previews and saves with the same primitive.
         let placed = session.begin(
             at: point,
             tool: state.tool,
             ink: state.ink,
             fill: state.shapesFilled,
-            arrowHead: state.arrowHeadStyle
+            arrowHead: state.arrowHeadStyle,
+            redactionStyle: state.redactionStyle
         )
         if state.tool.isTransient { startLaserTimer() }
         noteBlurInterestChanged()
