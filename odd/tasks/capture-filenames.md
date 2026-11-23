@@ -22,7 +22,7 @@ writer that branch introduced (`Sources/StareCore/CaptureFile.swift`). Branch `f
 | ID | Specs | Task | Route | Commit |
 | --- | --- | --- | --- | --- |
 | T10 | S17 | Filename templates by token over the folder destination; the current prefix keeps working | worker | 4bc30d1 |
-| T11 | S18 | Optional backdrop on save: padding, rounded corners, shadow — padding before any downscale | worker | |
+| T11 | S18 | Optional backdrop on save: padding, rounded corners, shadow — padding before any downscale | worker | 2f17ebd |
 
 **Ordering that is not negotiable, from the peer's handoff.** `CaptureFile.write` is the single writer for the
 folder path and takes `preference`, `date`, `scale`. A filename template lives inside it; the backdrop has to
@@ -51,3 +51,11 @@ mine on this branch for the Capture pane; if the peer needs a row later they tel
   supplies them lives in `OverlayController.deliver`, the peer's file. Asked them to add it; until then
   those two tokens fall back to the prefix name by design. The Settings preview shows sample values, which
   becomes exactly true once that line lands.
+- **L4** (evidence, T11): `CaptureBackdrop` composes at full resolution before `scaled()` — padding, rounded
+  corners and a fixed-style shadow, each optional and off by default; the capture itself is blitted 1:1 at an
+  integer offset, so the backdrop never resamples the pixels it is wrapping, and the padding is never
+  resampled on its own. Clamps: padding 0–128, radius 0–64 and again at compose to at most half the shortest
+  side, so a silly preference cannot blank the image; worst-case growth is bounded. 19 tests, with the
+  backdrop-off save pinned byte-identical before and after. The shadow's *look* is the manual check: it is
+  geometry and interior equality in tests, and CoreGraphics-rendered to the eye in a real save — including
+  the JPEG-with-transparent-margin corner case the worker flagged and did not test.
