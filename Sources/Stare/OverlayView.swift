@@ -67,6 +67,67 @@ class OverlayView: NSView {
     /// its pages stay authoritative. Nil in the plain overlay.
     var boardSink: ((DrawingSession) -> Void)?
 
+    // MARK: Area capture freeze (S11, T2b slice A)
+
+    /// The frozen-frame lifecycle of the area drag (S11/T2b slice A). Pure
+    /// lifecycle in StareCore; this view holds the image and paints it as the
+    /// drag's base. The whiteboard is out of the freeze's scope: its canvases
+    /// get no `onAreaSelectionFrame`, so a board drag stays `pending` and
+    /// paints nothing, exactly as before the freeze existed.
+    private(set) var areaFrame = AreaCaptureFrameState()
+    /// The frozen frame itself. Only read through `frozenAreaBase`, which
+    /// gates on the lifecycle, so a stale image can never paint.
+    private var areaFrameImage: CGImage?
+    /// Asks the controller to capture this display once for the drag's base.
+    /// Nil where there is nothing to freeze (the whiteboard).
+    var onAreaSelectionFrame: (() -> Void)?
+
+    /// The drag's frozen base while one is frozen, nil otherwise. Also the
+    /// base an area capture composes over, so the captured pixels are exactly
+    /// the frame the user framed, even if the screen changed mid-drag.
+    var frozenAreaBase: CGImage? {
+        guard areaFrame.phase == .frozen else { return nil }
+        return areaFrameImage
+    }
+
+    /// The area drag started: request the one frame the drag will run on.
+    /// Called from `beginAreaSelection` (the `⇧S` path).
+    func beginAreaFrameFreeze() {
+        areaFrame.begin()
+        areaFrameImage = nil
+        onAreaSelectionFrame?()
+    }
+
+    /// The requested frame landed (or failed). Called on the main thread by
+    /// the controller after the capture returns; a frame for a drag that is
+    /// no longer pending is stale and dropped by the lifecycle.
+    func landAreaFrame(_ image: CGImage?) {
+        guard areaFrame.phase == .pending else { return }
+        guard let image else {
+            // The capture failed (no Screen Recording, unavailable display):
+            // release the pending state and let the drag run live, as before
+            // the freeze existed — never waiting on a base that will not come.
+            releaseAreaFrame()
+            return
+        }
+        areaFrameImage = image
+        areaFrame.land()
+        needsDisplay = true
+        // Existing blur marks must re-source from the frozen base at once, so
+        // what they blur is what the user is framing.
+        invalidateLiveBlurMarks()
+    }
+
+    /// Releases the frozen base: on capture, on a stray click, on `Esc` (the
+    /// drag cancel), on leaving the overlay (`clear`) and on deactivation
+    /// (deactivate → clearAll → clear). The overlay goes back to exactly what
+    /// it was.
+    func releaseAreaFrame() {
+        guard areaFrame.release() || areaFrameImage != nil else { return }
+        areaFrameImage = nil
+        needsDisplay = true
+    }
+
     /// The page this display's edits belong to in the global history: nil on
     /// the plain overlay, which has no pages. The whiteboard's current page
     /// index rides on the clear and batch-move entries (T4/S5, T6b/S8), so
@@ -358,6 +419,7 @@ class OverlayView: NSView {
         clearSelection()
         finishTextEditing(commit: false)
         stopLaserTimer()
+        releaseAreaFrame()
         noteBlurInterestChanged()
         noteSessionChanged()
         needsDisplay = true
@@ -696,10 +758,16 @@ class OverlayView: NSView {
             selectionRect = nil
             needsDisplay = true
             if let rect, AreaSelectionGeometry.isCaptureWorthy(rect) {
+                // The capture runs first, while the frozen base still holds:
+                // it composes over the frame the user framed, not over live
+                // pixels the screen may have changed to mid-drag.
                 onCaptureRequest?(rect)
             } else {
                 Diag.log("capture area too small, ignored")
             }
+            // Released on capture and on a stray click alike: the frozen base
+            // never outlives the drag.
+            releaseAreaFrame()
             return
         }
 
@@ -742,11 +810,16 @@ class OverlayView: NSView {
 
     // MARK: - Area selection
 
-    private func beginAreaSelection() {
+    /// Internal for the tests: the `⇧S` entry point itself is what a test
+    /// drives, so the freeze arms through the real path, not a parallel one.
+    func beginAreaSelection() {
         finishPendingTextEditing()
         isSelectingArea = true
         selectionOrigin = nil
         selectionRect = nil
+        // S11/T2b slice A: the drag runs on one frame taken now, so what the
+        // user is framing cannot change under them while they choose.
+        beginAreaFrameFreeze()
         needsDisplay = true
         Diag.log("area selection started")
     }
@@ -755,6 +828,7 @@ class OverlayView: NSView {
         isSelectingArea = false
         selectionOrigin = nil
         selectionRect = nil
+        releaseAreaFrame()
         needsDisplay = true
         Diag.log("area selection cancelled")
     }
@@ -1473,6 +1547,7 @@ class OverlayView: NSView {
             return
         }
 
+        drawFrozenAreaBase(in: context)
         drawBackground(in: context, dirty: dirtyRect)
         drawMarks(in: context, dirty: dirtyRect)
 
@@ -1489,6 +1564,21 @@ class OverlayView: NSView {
     /// whiteboard paints the current page's background and its dot grid here —
     /// both only inside the dirty rect, so a per-frame paint stays cheap.
     func drawBackground(in context: CGContext, dirty dirtyRect: NSRect) {}
+
+    /// The area drag's frozen base (S11/T2b slice A): one Stare capture of the
+    /// display, painted under the marks for the duration of the drag, so what
+    /// the user frames cannot change under them. Nil on every path that is
+    /// not a frozen area drag, where this draws nothing at all.
+    private func drawFrozenAreaBase(in context: CGContext) {
+        guard let image = frozenAreaBase, bounds.width > 0, bounds.height > 0 else { return }
+        // Bottom-left pixel origin under a top-left view origin: flip before
+        // drawing, the same way `drawBlur` lands its source frame.
+        context.saveGState()
+        context.translateBy(x: 0, y: bounds.height)
+        context.scaleBy(x: 1, y: -1)
+        context.draw(image, in: CGRect(origin: .zero, size: bounds.size))
+        context.restoreGState()
+    }
 
     /// Every mark on the layer, in page space, translated by the pan offset.
     /// `dirtyRect` is in view space; the context is shifted so page-space
@@ -1653,12 +1743,18 @@ class OverlayView: NSView {
         }
     }
 
-    /// The image a blur mark diffuses, with its pixels per view point. The
-    /// drawing overlay reads the display's latest live frame — the real screen
-    /// pixels under the transparent layer (T5/S3). The whiteboard overrides
-    /// this: its blur diffs the board's own content (S1). Nil draws the
-    /// neutral fallback patch (no frame yet, or Screen Recording denied).
+    /// The image a blur mark diffuses, with its pixels per view point. While
+    /// an area drag is frozen (S11/T2b slice A), the mark reads the frozen
+    /// frame: the content the user is framing, not the screen as it changes
+    /// mid-drag. Otherwise the drawing overlay reads the display's latest
+    /// live frame — the real screen content under the transparent layer
+    /// (T5/S3). The whiteboard overrides this: its blur diffs the board's own
+    /// content (S1). Nil draws the neutral fallback patch (no frame yet, or
+    /// Screen Recording denied).
     func blurSource(for stroke: Stroke) -> (image: CGImage, pixelsPerPoint: CGFloat)? {
+        if let frozen = frozenAreaBase {
+            return (frozen, CGFloat(frozen.width) / max(bounds.width, 1))
+        }
         guard let frame = liveFrameSource?.frame(for: displayID), bounds.width > 0 else { return nil }
         return (frame, CGFloat(frame.width) / max(bounds.width, 1))
     }

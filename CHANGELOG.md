@@ -6,6 +6,7 @@ user gets.
 
 ## Unreleased
 
+- Capture: the `⇧S` area drag freezes the screen the instant it starts — one Stare frame becomes the drag's base, so hover states and tooltips cannot vanish while you choose the area, existing blur marks blur the frozen content, and the captured pixels are exactly the frame you framed; `Esc` or a stray click brings the live screen back
 - Capture: `⌥S` captures just the front window, with your marks composited onto it
 - Capture: dragging an area is clamped to the display so it can never reach outside it, and holding `⇧` while dragging forces a square
 - Settings: regrouped into Capture, Draw, Pointer, Board and System, with the bar, the overlay and the laser on panes of their own instead of inside General

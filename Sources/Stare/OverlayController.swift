@@ -740,7 +740,12 @@ final class OverlayController {
         }
 
         guard let canvas = canvases[displayID] else { return }
-        guard let composed = composedOverlayMarks(canvas, displayID: displayID) else { return }
+        // An area capture composes over the frame the drag froze (S11/T2b
+        // slice A): the captured pixels are exactly what the user framed,
+        // even if the screen changed while the drag ran. Whole-display and
+        // window captures never see a frozen base.
+        let frozenBase = area != nil ? canvas.view.frozenAreaBase : nil
+        guard let composed = composedOverlayMarks(canvas, displayID: displayID, frozenBase: frozenBase) else { return }
         deliver(composed, area: area, canvas: canvas, displayID: displayID)
     }
 
@@ -778,12 +783,33 @@ final class OverlayController {
         deliver(result, area: nil, canvas: canvas, displayID: target.displayID)
     }
 
+    /// Captures one full frame of the display for a running area drag and
+    /// hands it to that canvas's view (S11/T2b slice A). Off the main thread,
+    /// so the drag's first updates never wait for the capture; a frame that
+    /// lands after the drag ended is stale and dropped by the view's
+    /// lifecycle. The same own-windows-excluded one-shot capture every other
+    /// capture path uses, so the frozen base is Stare's capture of the
+    /// display, never the overlay's own pixels.
+    private func captureAreaFreezeFrame(displayID: CGDirectDisplayID) {
+        guard let canvas = canvases[displayID] else { return }
+        let captureService = self.captureService
+        Task.detached(priority: .userInitiated) {
+            let image = try? captureService.captureDisplay(displayID)
+            DispatchQueue.main.async {
+                canvas.view.landAreaFrame(image)
+            }
+        }
+    }
+
     /// The permission gate, the display's pixels and the marks composited on top:
     /// shared by the whole-display, area and window captures, so all three can
-    /// only differ in what they crop afterwards. Nil after saying why.
+    /// only differ in what they crop afterwards. Nil after saying why. An area
+    /// capture passes the drag's frozen base, so the composed pixels are the
+    /// frame the user framed; every other caller captures fresh.
     private func composedOverlayMarks(
         _ canvas: DisplayCanvas,
-        displayID: CGDirectDisplayID
+        displayID: CGDirectDisplayID,
+        frozenBase: CGImage? = nil
     ) -> CGImage? {
         // Never interrupt a session with a system prompt: the permission is asked
         // for when the app starts, and here we only say what is missing.
@@ -794,7 +820,7 @@ final class OverlayController {
         }
 
         do {
-            let base = try captureService.captureDisplay(displayID)
+            let base = try frozenBase ?? captureService.captureDisplay(displayID)
             let scale = CGFloat(base.width) / max(canvas.panel.frame.width, 1)
 
             guard let composed = MarkCompositor.composite(
@@ -1061,6 +1087,14 @@ final class OverlayController {
             canvas.view.displayID = displayID
             canvas.view.liveFrameSource = liveFrames
             canvas.view.onBlurMarksChanged = { [weak self] in self?.liveFrames.wake() }
+            // The area drag's frozen frame (S11/T2b slice A): the drag asks
+            // for one capture of this display the instant it starts. Board
+            // canvases never get this wiring — the freeze is out of the
+            // whiteboard's scope (S11), so a board drag stays pending and
+            // paints nothing, exactly as before.
+            canvas.view.onAreaSelectionFrame = { [weak self] in
+                self?.captureAreaFreezeFrame(displayID: displayID)
+            }
             canvases[displayID] = canvas
         }
     }
