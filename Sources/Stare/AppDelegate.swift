@@ -29,6 +29,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor private lazy var screenRecording = ScreenRecordingPermission(
         client: SystemScreenRecordingClient(captureService: captureService)
     )
+    /// The OCR/QR gesture (T5/S7): ⌥⇧O, its own selection surface, on-device
+    /// Vision, clipboard copy. Works with no drawing session; the recogniser
+    /// reuses the capture service's permission preflight so the gesture never
+    /// prompts mid-way.
+    @MainActor private lazy var recognitionFlow = TextRecognitionFlow(
+        client: TextRecognitionClient(captureService: captureService)
+    )
     @MainActor private lazy var onboarding = OnboardingWindowController(
         permission: screenRecording,
         onDismissOverlay: { [weak self] in
@@ -75,6 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onBoardToggle: { [weak self] in self?.overlay.toggleBoard() },
             onOpenSettings: { [weak self] in self?.settings.show() },
             onOpenOnboarding: { [weak self] in self?.onboarding.show() },
+            onRecognizeText: { [weak self] in self?.recognitionFlow.begin() },
             isPinned: { [weak self] in self?.overlay.isPinned ?? false },
             // Whiteboard page actions (T12/S9): the enablement queries and the
             // actions all route through the controller to the display under

@@ -12,6 +12,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let onPinToggle: () -> Void
     private let onBoardToggle: () -> Void
     private let onOpenSettings: () -> Void
+    /// The fixed ⌥⇧O gesture (T5/S7): drag an area, recognise its text and
+    /// QR payload on device, copy the result. No Settings pane, like the
+    /// pinned image's fixed shortcuts.
+    private let onRecognizeText: () -> Void
     /// Reopens the setup guide at any time; it must not reset the first-run
     /// flag, which the caller guarantees (S3).
     private let onOpenOnboarding: () -> Void
@@ -35,6 +39,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     /// here so they live and die with the status item: ⌥⇧I pins the latest
     /// capture, ⌥⇧L toggles the lock of the pinned image under the pointer.
     private var pinnedImageHotkeys: [GlobalHotkey] = []
+    /// The one fixed global registration of the OCR/QR gesture (T5/S7):
+    /// ⌥⇧O opens its own selection surface, never the drawing overlay.
+    private var recognitionHotkey: GlobalHotkey?
     // Whiteboard page actions (T12/S9): their shortcuts exist in the board view
     // itself; the menu items carry the same keys and are enabled only when the
     // action can apply.
@@ -51,6 +58,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         onBoardToggle: @escaping () -> Void,
         onOpenSettings: @escaping () -> Void,
         onOpenOnboarding: @escaping () -> Void,
+        onRecognizeText: @escaping () -> Void = {},
         isPinned: @escaping () -> Bool,
         isBoardOpen: @escaping () -> Bool = { false },
         boardPageState: @escaping () -> (current: Int, total: Int)? = { nil },
@@ -66,6 +74,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         self.onBoardToggle = onBoardToggle
         self.onOpenSettings = onOpenSettings
         self.onOpenOnboarding = onOpenOnboarding
+        self.onRecognizeText = onRecognizeText
         self.isPinned = isPinned
         self.isBoardOpen = isBoardOpen
         self.boardPageState = boardPageState
@@ -101,6 +110,11 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             action: #selector(toggleImageLock)
         ))
 
+        menu.addItem(menuItem(
+            title: "Recognise Text  \(TextRecognitionHotkeyDefaults.displayName)",
+            action: #selector(recogniseText)
+        ))
+
         menu.addItem(menuItem(title: "Whiteboard  \(HotkeyDefaults.whiteboardDisplayName)", action: #selector(toggleBoard)))
 
         // Page actions (T12/S9): the equivalent draws the same shortcut the
@@ -122,6 +136,22 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         statusItem.menu = menu
 
         registerPinnedImageHotkeys()
+        registerRecognitionHotkey()
+    }
+
+    /// Registers the OCR/QR gesture's one fixed shortcut (T5/S7). It sits
+    /// outside the remappable four-action map by decision — no new Settings
+    /// pane — registering directly through `GlobalHotkey`, exactly the way
+    /// the pinned image's fixed shortcuts do. ⌥⇧O was reserved for this
+    /// feature by contract (`PinnedImageHotkeyDefaults`) and is pinned free
+    /// against every other shortcut in the collision test. A refused
+    /// registration is logged and leaves the app without that shortcut
+    /// instead of failing anything else.
+    private func registerRecognitionHotkey() {
+        recognitionHotkey = GlobalHotkey(binding: TextRecognitionHotkeyDefaults.binding) { [weak self] in
+            self?.onRecognizeText()
+        }
+        Diag.log("text recognition hotkey armed count=\(recognitionHotkey == nil ? 0 : 1)")
     }
 
     /// Registers the pinned image's two fixed shortcuts (T4/S6). They sit
@@ -289,6 +319,11 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     /// is over — the one the user is looking at and working underneath.
     @objc private func toggleImageLock() {
         PinnedImageCoordinator.shared.toggleLock(at: NSEvent.mouseLocation)
+    }
+
+    /// T5/S7: the menu entry runs the same gesture the ⌥⇧O hotkey does.
+    @objc private func recogniseText() {
+        onRecognizeText()
     }
     @objc private func toggleBoard() { onBoardToggle() }
     @objc private func openSettings() { onOpenSettings() }

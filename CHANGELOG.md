@@ -6,6 +6,8 @@ user gets.
 
 ## Unreleased
 
+- Capture: new `⌥⇧O` — drag an area anywhere (no drawing session needed) and the text it holds, plus a QR code if that is what you framed, lands on the clipboard as plain text; recognition runs on-device with Vision and nothing is uploaded, and the same gesture works from the menu bar's "Recognise Text"
+- Capture: the OCR gesture answers every dead end plainly instead of clobbering your clipboard: without Screen Recording it points at System Settings (never a prompt mid-gesture), an empty selection or a failed read shows "No text found" / "Text recognition failed", and `Esc` cancels the drag with everything left as it was
 - Capture: pin an image with its own action, distinct from pinning your marks — the capture card's pin button (and `⌥⇧I` for the latest capture) floats the captured picture as a borderless always-on-top window: drag it anywhere, scroll to resize, ⌥-scroll to change its opacity, and `⌥⇧L` toggles a lock that makes it click-through so you can work underneath it; several pinned images coexist, each closes on its own, and they stay on screen no matter what you open or close in Stare — all in memory, nothing written to disk
 - Capture: the session's captures stay reachable in Settings → Capture → History — reopen any of the last captures of this session in the editor with one click, even after its card has faded away; the history lives in memory and clears when Stare quits
 - Settings: "Draw on" defaults to the active display instead of every display, so a second monitor is never covered by a sheet nobody asked for
