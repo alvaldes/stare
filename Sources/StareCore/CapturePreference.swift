@@ -126,24 +126,46 @@ public struct CapturePreference: Codable, Equatable, Sendable {
     /// The maximum width a fresh install gets for `.maxWidth` saves.
     public static let defaultMaxSaveWidth = 1600
 
+    /// The file-name template a fresh install gets: empty, today's behaviour.
+    public static let defaultFileNameTemplate = ""
+
+    /// The only words a `{…}` token may carry in a template (T10/S17). Any
+    /// other word — or any brace left dangling, empty or nested — makes the
+    /// whole template fall back to today's prefix-based name.
+    static let templateTokens: Set<String> = ["date", "time", "app", "display"]
+
+    /// Token-driven name template for folder saves (T10/S17), off by default:
+    /// an empty template is today's behaviour, byte for byte. Literal text
+    /// keeps the same safe character set as the prefix, and every `{date}`,
+    /// `{time}`, `{app}` and `{display}` token is substituted; anything a
+    /// template cannot honour — an unknown token, malformed braces, an unsafe
+    /// literal, or a token whose value is unavailable — degrades to today's
+    /// name instead of writing one nobody asked for. The extension is
+    /// appended after rendering, so a template never names the extension.
+    public var fileNameTemplate: String {
+        didSet { fileNameTemplate = Self.sanitisedTemplate(fileNameTemplate) }
+    }
+
     /// The capture preferences a fresh install gets, matching today's
     /// clipboard behaviour.
     public static let standard = CapturePreference()
 
-    /// Creates capture preferences, sanitising the prefix and degrading an
-    /// unusable folder destination to the clipboard.
+    /// Creates capture preferences, sanitising the prefix and the template
+    /// and degrading an unusable folder destination to the clipboard.
     public init(
         format: CaptureFormat = .png,
         destination: CaptureDestination = .clipboard,
         fileNamePrefix: String = defaultPrefix,
         downscaleMode: CaptureDownscale.Mode = .off,
-        maxSaveWidth: Int = defaultMaxSaveWidth
+        maxSaveWidth: Int = defaultMaxSaveWidth,
+        fileNameTemplate: String = defaultFileNameTemplate
     ) {
         self.format = format
         self.destination = destination.isUsablePath ? destination : .clipboard
         self.fileNamePrefix = Self.sanitisedPrefix(fileNamePrefix)
         self.downscaleMode = downscaleMode
         self.maxSaveWidth = Self.clampedSaveWidth(maxSaveWidth)
+        self.fileNameTemplate = Self.sanitisedTemplate(fileNameTemplate)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -151,6 +173,9 @@ public struct CapturePreference: Codable, Equatable, Sendable {
         // The downscale settings sit at the end of the document (T7/S14), so
         // an older blob decodes with them at their defaults.
         case downscaleMode, maxSaveWidth
+        // The template sits after them (T10/S17) — fields are appended, never
+        // inserted, so an older blob decodes with it at its default.
+        case fileNameTemplate
     }
 
     /// Lenient decoding: an unknown format falls back to `.png`, an unusable
@@ -167,23 +192,137 @@ public struct CapturePreference: Codable, Equatable, Sendable {
             (try? container.decode(CaptureDownscale.Mode.self, forKey: .downscaleMode)) ?? .off
         let rawMaxSaveWidth = try? container.decode(Int.self, forKey: .maxSaveWidth)
         self.maxSaveWidth = Self.clampedSaveWidth(rawMaxSaveWidth ?? Self.defaultMaxSaveWidth)
+        let rawTemplate = try? container.decode(String.self, forKey: .fileNameTemplate)
+        self.fileNameTemplate = Self.sanitisedTemplate(rawTemplate)
     }
 
-    /// Builds a capture file name: `<prefix>-<YYYY>-<MM>-<DD>-at-<HH>-<MM>-<SS>
-    /// .<ext>`, for example `Stare-2026-11-21-at-14-05-33.png`.
+    /// Builds a capture file name: `<prefix>-<YYYY>-<MM>-<DD>-at-<HH>-<MM>-<SS>`
+    /// `.<ext>`, for example `Stare-2026-11-21-at-14-05-33.png` — or, when a
+    /// template is set (T10/S17), the template with its tokens substituted.
     ///
-    /// Invariant: no character needing escaping can appear. The prefix is
-    /// sanitised to the safe character set, the date components are digits
-    /// and hyphens, and the extension is alphabetic — so the name is stable,
-    /// filesystem-safe, and second resolution plus the date make collisions
-    /// within one capture workflow practically impossible.
-    public func fileName(at date: Date, calendar: Calendar = .current) -> String {
+    /// - Parameters:
+    ///   - app: the frontmost app's name when the caller knows it; `nil`
+    ///     means unavailable, which refuses `{app}` and produces today's
+    ///     name instead of a name with a hole in it.
+    ///   - display: the capture's display name when the caller knows it;
+    ///     `nil` refuses `{display}` exactly as `app` does.
+    ///
+    /// Invariant: no character needing escaping can appear, and the name is
+    /// always one component of the destination folder. Substitute values keep
+    /// only the safe character set (so no path separator survives) and the
+    /// extension is always appended, so the rendered name is never exactly
+    /// `.` or `..` — a template can rename the capture inside the folder but
+    /// cannot move it out of it. The same date, app, display, template and
+    /// format always produce the same name.
+    public func fileName(
+        at date: Date,
+        calendar: Calendar = .current,
+        app: String? = nil,
+        display: String? = nil
+    ) -> String {
+        guard !fileNameTemplate.isEmpty,
+            let rendered = Self.renderedTemplate(
+                fileNameTemplate, date: date, calendar: calendar, app: app, display: display
+            )
+        else { return legacyFileName(at: date, calendar: calendar) }
+        return "\(rendered).\(format.fileExtension)"
+    }
+
+    /// Today's name, unchanged since before templates existed.
+    private func legacyFileName(at date: Date, calendar: Calendar) -> String {
         let components = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
         func pad(_ value: Int?) -> String { String(format: "%02d", value ?? 0) }
         let year = String(format: "%04d", components.year ?? 0)
         return "\(fileNamePrefix)-\(year)-\(pad(components.month))-\(pad(components.day))"
             + "-at-\(pad(components.hour))-\(pad(components.minute))-\(pad(components.second))"
             + ".\(format.fileExtension)"
+    }
+
+    /// The template with every `{token}` substituted, or nil when the
+    /// template cannot be honoured: an unknown or malformed token, or a token
+    /// whose value is missing, refuses the whole template.
+    private static func renderedTemplate(
+        _ template: String,
+        date: Date,
+        calendar: Calendar,
+        app: String?,
+        display: String?
+    ) -> String? {
+        var rendered = ""
+        var index = template.startIndex
+        while index < template.endIndex {
+            let character = template[index]
+            if character == "{" {
+                guard let close = template[index...].firstIndex(of: "}") else { return nil }
+                switch String(template[template.index(after: index)..<close]) {
+                case "date":
+                    let components = calendar.dateComponents([.year, .month, .day], from: date)
+                    func pad(_ value: Int?) -> String { String(format: "%02d", value ?? 0) }
+                    let year = String(format: "%04d", components.year ?? 0)
+                    rendered += "\(year)-\(pad(components.month))-\(pad(components.day))"
+                case "time":
+                    let components = calendar.dateComponents([.hour, .minute, .second], from: date)
+                    func pad(_ value: Int?) -> String { String(format: "%02d", value ?? 0) }
+                    rendered += "\(pad(components.hour))-\(pad(components.minute))-\(pad(components.second))"
+                case "app":
+                    guard let value = sanitisedTokenValue(app) else { return nil }
+                    rendered += value
+                case "display":
+                    guard let value = sanitisedTokenValue(display) else { return nil }
+                    rendered += value
+                default:
+                    return nil
+                }
+                index = template.index(after: close)
+            } else {
+                if character == "}" || !isSafeLiteral(character) { return nil }
+                rendered.append(character)
+                index = template.index(after: index)
+            }
+        }
+        return rendered
+    }
+
+    /// A template is stored verbatim only when every literal character is in
+    /// the safe character set and every brace group is a known token — not
+    /// empty, not nested, not dangling; anything else stores as `""`,
+    /// today's behaviour.
+    private static func sanitisedTemplate(_ template: String?) -> String {
+        guard let raw = template else { return "" }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        var index = trimmed.startIndex
+        while index < trimmed.endIndex {
+            let character = trimmed[index]
+            if character == "{" {
+                guard let close = trimmed[index...].firstIndex(of: "}"),
+                    close > trimmed.index(after: index),
+                    // No nested opening brace inside the token.
+                    trimmed[trimmed.index(after: index)..<close].allSatisfy({ $0 != "{" }),
+                    templateTokens.contains(String(trimmed[trimmed.index(after: index)..<close]))
+                else { return "" }
+                index = trimmed.index(after: close)
+            } else {
+                if character == "}" || !isSafeLiteral(character) { return "" }
+                index = trimmed.index(after: index)
+            }
+        }
+        return trimmed
+    }
+
+    /// A template's literal character is safe when it is exactly one scalar
+    /// from the prefix's safe set — a multi-scalar grapheme is never safe.
+    private static func isSafeLiteral(_ character: Character) -> Bool {
+        character.unicodeScalars.count == 1 && safePrefixCharacters.contains(character.unicodeScalars.first!)
+    }
+
+    /// A token's substitute value keeps only the safe character set and must
+    /// be non-empty: anything unsafe is dropped character by character, and
+    /// an empty result means the value is unavailable, refusing the template.
+    private static func sanitisedTokenValue(_ value: String?) -> String? {
+        guard let value, !value.isEmpty else { return nil }
+        let safe = String(value.unicodeScalars.filter { safePrefixCharacters.contains($0) })
+        return safe.isEmpty ? nil : safe
     }
 
     /// The given prefix when it is entirely safe, otherwise `defaultPrefix`.

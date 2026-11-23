@@ -19,12 +19,19 @@ public enum CaptureFile {
     /// - Parameter scale: pixels per point of the source canvas, when the
     ///   caller can vouch for it; nil leaves a `.oneX` request unscaled
     ///   (nothing is guessed) while `.maxWidth` still applies.
+    /// - Parameter app: the frontmost app's name for the `{app}` name token
+    ///   (T10/S17), when the caller knows it; nil leaves the token
+    ///   unavailable and the template refused.
+    /// - Parameter displayName: the capture's display name for the
+    ///   `{display}` name token, with the same nil contract as `app`.
     public static func write(
         _ image: CGImage,
         preference: CapturePreference,
         date: Date,
         calendar: Calendar = .current,
-        scale: CGFloat? = nil
+        scale: CGFloat? = nil,
+        app: String? = nil,
+        displayName: String? = nil
     ) -> URL? {
         guard case .folder(let path) = preference.destination,
             preference.destination.isUsablePath
@@ -32,7 +39,8 @@ public enum CaptureFile {
         let saved = scaled(image, preference: preference, scale: scale) ?? image
         guard let data = data(for: saved, format: preference.format) else { return nil }
         let folder = URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true)
-        let url = folder.appendingPathComponent(preference.fileName(at: date, calendar: calendar))
+        let name = preference.fileName(at: date, calendar: calendar, app: app, display: displayName)
+        let url = folder.appendingPathComponent(name)
         do {
             try data.write(to: url)
             return url

@@ -1603,6 +1603,12 @@ private struct CapturePane: View {
                 content: TextField("", text: $model.capture.fileNamePrefix)
                     .frame(width: 180)
             )
+            SettingRow(
+                title: "Name template",
+                detail: "Folder saves: build the name from tokens — {date} · {time} · {app} · {display} — plus letters, numbers, hyphen, underscore and dot; the preview shows a sample app and display. An unknown token, an unsafe character, or an app or display name that isn't there falls back to the prefix name, and .png or .jpg is added automatically.",
+                content: TextField("", text: $model.capture.fileNameTemplate)
+                    .frame(width: 180)
+            )
             HStack(spacing: 6) {
                 Text("Files are named like")
                     .font(.caption)
@@ -1660,7 +1666,8 @@ private struct CapturePane: View {
     }
 
     /// One sample name at a fixed instant, so the row does not tick every
-    /// second with the clock.
+    /// second with the clock. The template's app and display tokens are shown
+    /// with sample values, since neither exists before a capture is taken.
     private var exampleName: String {
         var components = DateComponents()
         components.year = 2026
@@ -1670,7 +1677,7 @@ private struct CapturePane: View {
         components.minute = 5
         components.second = 33
         let sample = Calendar.current.date(from: components) ?? Date()
-        return model.capture.fileName(at: sample)
+        return model.capture.fileName(at: sample, app: "Safari", display: "Built-in")
     }
 }
 
