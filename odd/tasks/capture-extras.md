@@ -34,7 +34,7 @@ lines below are quoted from it verbatim, because that file is not on this branch
 | ID | Specs | Task | Route | Commit |
 | --- | --- | --- | --- | --- |
 | T6a | S23 | Audit blur as redaction: measure what survives a blur mark, and whether the original is reconstructible | worker | 8fea337 (record) |
-| T6b | S13 | Pixelate as the second redaction option next to blur (contingent on T6a) | worker | |
+| T6b | S13 | Pixelate as the second redaction option next to blur (contingent on T6a) | worker | — (primitive only: see L7) |
 | T9 | S16 | Editor zoom and pan, tool keys unchanged | worker | 36a6a72 |
 | T10 | S17 | Filename templates by token over the folder destination; the current prefix keeps working | worker | |
 | T11 | S18 | Optional backdrop on save: padding, rounded corners, shadow | worker | |
@@ -74,3 +74,14 @@ and the `AreaCapture*`/`AreaSelection*`/`FrontWindow*`/`WindowCaptureGeometry` f
 - **L6** (slice note): T6a + T9 are 1104 authored lines over three commits, past the ~400-line slice. T6a is
   a record, T9 is one unit (pure viewport, editor composition, tests, docs). Delivery shape when publishing:
   this branch as one PR per task once the peer's T7 unblocks the save path, never T6b + T10 + T11 together.
+- **L7** (evidence, T6b step 1): `PixelateEffect` in StareCore, a sibling of `BlurEffect` with the same contract
+  (pixel rect in, image of that size out, nil on empty). Randomized per-block sampling: each block's colour is
+  the mean of a half-block window placed at a per-cell offset from SplitMix64 keyed on (seed, column, row), so
+  the grid an inversion needs is never published; block size is derived from the mark with an 8 px floor, and
+  the type's doc comment quotes the audit's radius-to-glyph measurement so nobody shrinks it unknowingly. 11
+  tests, including text thinner than a block losing its strokes and the seed making runs byte-identical.
+  Nothing user-visible: no mark variant, no compositor branch, no preview, no docs line yet — those are the
+  wiring step, and they are blocked on the peer's `OverlayView.swift` preview dispatch (preview and saved
+  capture must agree) and on `MarkCompositor.swift`, which I told the peer I intend to touch for T6b only.
+  A real bug the tests caught: the first implementation read source rows top-down while `pixelRect` is
+  bottom-left, which would have returned a vertically mirrored image.
