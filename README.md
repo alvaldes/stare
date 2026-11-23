@@ -100,7 +100,8 @@ reopen it any time from the menu bar with **Setup Guide…**.
 
 | Where | Keys |
 | --- | --- |
-| Drawing | Hold `⇧` for a straight line with the pen or highlighter, or a square or circle with the rectangle or ellipse · with the pointer tool, drag a box to select everything under it and hold `⇧` to add to the selection · hold `⇧` while dragging a capture area (`⇧S`) to force a square · the `⇧S` area drag freezes the screen the moment it starts — the frame you see while choosing is the frame that gets captured — and `Esc` cancels the drag and brings the live screen back |
+| Drawing | Hold `⇧` for a straight line with the pen or highlighter, or a square or circle with the rectangle or ellipse · with the pointer tool, drag a box to select everything under it and hold `⇧` to add to the selection · hold `⇧` while dragging a capture area (`⇧S`) to force a square · the `⇧S` area drag freezes the screen the moment it starts — the frame you see while choosing is the frame that gets captured, a magnifier follows the pointer over the frozen frame so the exact pixel edge is visible (without Screen Recording the drag runs live and the magnifier stays away) — and `Esc` cancels the drag and brings the live screen back |
+| Drawing | The `⇧S` area capture remembers the last rectangle for the session: press `⇧S` again and the old area is already framed — `Return` captures it as is, dragging chooses a new one — and leaving the overlay forgets it |
 | Drawing | `Esc` clears the marks, and `⌘Z` brings back everything it cleared |
 | Whiteboard | `⌘←` `⌘→` change page (going past the last one adds a page) · `⌘B` flips the page between white and black · hold space and drag to pan (the pointer becomes a grabbing hand) · pinch, `⌘` + scroll or `⌘+`/`⌘−` zooms, `⌘0` resets pan and zoom |
 | Whiteboard | `S` captures the marks over the page colour, no Screen Recording needed · `Esc` closes the board and keeps the pages for the session |

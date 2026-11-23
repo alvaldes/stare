@@ -128,6 +128,26 @@ class OverlayView: NSView {
         needsDisplay = true
     }
 
+    // MARK: Area capture memory and loupe (S11, T2b slice B)
+
+    /// The last confirmed area of this canvas, session-scoped: the next `⇧S`
+    /// pre-loads it as the starting marquee, a plain `Return` confirms and
+    /// captures it with no drag, and starting a drag replaces it. Cleared when
+    /// the overlay deactivates (`clear`). Nothing persists to disk, nothing in
+    /// Settings.
+    private var areaMemory = AreaCaptureMemory()
+
+    /// The pointer while the area drag runs, so the loupe can follow it. Set
+    /// on the drag's mouse down and on every drag move; nil the moment the
+    /// drag ends, so the loupe never outlives it.
+    private var areaLoupePoint: CGPoint?
+
+    /// Whether this canvas is an area-capture display. The controller wires
+    /// `onAreaSelectionFrame` on display canvases only — board canvases never
+    /// get it (the freeze's own scope rule) — and a board drag must gain
+    /// neither the loupe nor the remembered rectangle (S11).
+    var isAreaCaptureCanvas: Bool { onAreaSelectionFrame != nil }
+
     /// The page this display's edits belong to in the global history: nil on
     /// the plain overlay, which has no pages. The whiteboard's current page
     /// index rides on the clear and batch-move entries (T4/S5, T6b/S8), so
@@ -420,6 +440,8 @@ class OverlayView: NSView {
         finishTextEditing(commit: false)
         stopLaserTimer()
         releaseAreaFrame()
+        areaMemory.clear()
+        areaLoupePoint = nil
         noteBlurInterestChanged()
         noteSessionChanged()
         needsDisplay = true
@@ -629,6 +651,7 @@ class OverlayView: NSView {
         if isSelectingArea {
             selectionOrigin = viewPoint
             selectionRect = CGRect(origin: viewPoint, size: .zero)
+            areaLoupePoint = viewPoint
             needsDisplay = true
             return
         }
@@ -687,6 +710,7 @@ class OverlayView: NSView {
                 square: event.modifierFlags.contains(.shift),
                 bounds: bounds
             )
+            areaLoupePoint = point
             needsDisplay = true
             return
         }
@@ -756,12 +780,16 @@ class OverlayView: NSView {
             isSelectingArea = false
             selectionOrigin = nil
             selectionRect = nil
+            areaLoupePoint = nil
             needsDisplay = true
             if let rect, AreaSelectionGeometry.isCaptureWorthy(rect) {
                 // The capture runs first, while the frozen base still holds:
                 // it composes over the frame the user framed, not over live
                 // pixels the screen may have changed to mid-drag.
                 onCaptureRequest?(rect)
+                // S11/T2b slice B: the confirmed area becomes the next `⇧S`'s
+                // starting marquee — on area-capture canvases only.
+                if isAreaCaptureCanvas { areaMemory.confirm(rect) }
             } else {
                 Diag.log("capture area too small, ignored")
             }
@@ -816,21 +844,43 @@ class OverlayView: NSView {
         finishPendingTextEditing()
         isSelectingArea = true
         selectionOrigin = nil
-        selectionRect = nil
+        // S11/T2b slice B: the last confirmed area pre-loads as the starting
+        // marquee — a plain `Return` captures it with no drag, and starting a
+        // drag replaces it. The whiteboard never pre-loads.
+        selectionRect = isAreaCaptureCanvas ? areaMemory.preload : nil
+        areaLoupePoint = nil
         // S11/T2b slice A: the drag runs on one frame taken now, so what the
         // user is framing cannot change under them while they choose.
         beginAreaFrameFreeze()
         needsDisplay = true
-        Diag.log("area selection started")
+        Diag.log("area selection started preload=\(selectionRect != nil)")
     }
 
     private func cancelAreaSelection() {
         isSelectingArea = false
         selectionOrigin = nil
         selectionRect = nil
+        areaLoupePoint = nil
         releaseAreaFrame()
         needsDisplay = true
         Diag.log("area selection cancelled")
+    }
+
+    /// `Return` on the pre-loaded marquee (S11/T2b slice B): the remembered
+    /// rectangle is captured exactly like a finished drag — over the frozen
+    /// base, then released — and stays remembered for the next `⇧S`.
+    private func confirmPreloadedArea(_ rect: CGRect) {
+        isSelectingArea = false
+        selectionOrigin = nil
+        selectionRect = nil
+        areaLoupePoint = nil
+        needsDisplay = true
+        onCaptureRequest?(rect)
+        if isAreaCaptureCanvas {
+            areaMemory.confirm(rect)
+        }
+        releaseAreaFrame()
+        Diag.log("area selection confirmed by return \(rect)")
     }
 
     // MARK: - Editing marks (T11/S6)
@@ -1129,6 +1179,64 @@ class OverlayView: NSView {
         context.strokePath()
     }
 
+    /// The area drag's magnifier (S11/T2b slice B): a loupe over the frozen
+    /// frame following the pointer, with a crosshair through the pixel being
+    /// chosen. It reads the frozen frame only — without Screen Recording there
+    /// is no frozen frame, so there is nothing truthful to magnify and the
+    /// loupe stays absent, leaving the drag live exactly as before the freeze.
+    /// Board canvases never freeze either, so a board drag never grows one.
+    /// View chrome only: the capture composes from the frozen base and the
+    /// marks, so the loupe can never enter the captured image.
+    private func drawAreaLoupe(in context: CGContext) {
+        guard isSelectingArea, let point = areaLoupePoint, let base = frozenAreaBase else { return }
+        let pixelsPerPoint = CGFloat(base.width) / max(bounds.width, 1)
+        guard let plan = AreaCaptureLoupe.plan(
+            at: point,
+            bounds: bounds,
+            framePixelSize: CGSize(width: base.width, height: base.height),
+            pixelsPerPoint: pixelsPerPoint
+        ), let crop = base.cropping(to: plan.source) else { return }
+
+        // The magnified source, clipped to the loupe: near an edge the source
+        // stops at the frame's edge and the rest of the loupe stays empty
+        // instead of stretching the pixels.
+        context.saveGState()
+        context.addPath(CGPath(
+            roundedRect: plan.frame,
+            cornerWidth: 8,
+            cornerHeight: 8,
+            transform: nil
+        ))
+        context.clip()
+        context.translateBy(x: plan.destination.minX, y: plan.destination.maxY)
+        context.scaleBy(x: 1, y: -1)
+        context.draw(crop, in: CGRect(origin: .zero, size: plan.destination.size))
+        context.restoreGState()
+
+        // Chrome: a bordered ring and the crosshair through the pointer's
+        // pixel, dark-under/bright-on-top so it reads on light and dark
+        // content — the same trick the drawn cursors use.
+        let ring = CGPath(
+            roundedRect: plan.frame.insetBy(dx: 1.5, dy: 1.5),
+            cornerWidth: 7,
+            cornerHeight: 7,
+            transform: nil
+        )
+        context.saveGState()
+        for (colour, width) in [(CGColor(gray: 0, alpha: 0.85), CGFloat(3)), (CGColor(gray: 1, alpha: 0.95), CGFloat(1))] {
+            context.setStrokeColor(colour)
+            context.setLineWidth(width)
+            context.addPath(ring)
+            context.strokePath()
+            context.move(to: CGPoint(x: plan.frame.minX, y: plan.crosshair.y))
+            context.addLine(to: CGPoint(x: plan.frame.maxX, y: plan.crosshair.y))
+            context.move(to: CGPoint(x: plan.crosshair.x, y: plan.frame.minY))
+            context.addLine(to: CGPoint(x: plan.crosshair.x, y: plan.frame.maxY))
+            context.strokePath()
+        }
+        context.restoreGState()
+    }
+
     // MARK: - Eraser
 
     private func erase(at point: CGPoint) {
@@ -1331,6 +1439,21 @@ class OverlayView: NSView {
             // can be drawn right away. Leaving drawing mode stays on ⌥⇧A and
             // the Done button, never on Escape.
             onClearMarks?()
+            return
+        }
+
+        // Return on the pre-loaded area marquee (S11/T2b slice B): the last
+        // confirmed area is captured again, no drag needed. Before this,
+        // Return fell through to `super.keyDown` untouched — the field editor
+        // owns Return while text editing (and arming an area drag finishes
+        // text editing first), so nothing else loses it. Without a remembered
+        // rectangle, mid-drag, and on the whiteboard (which never pre-loads),
+        // Return keeps today's fall-through.
+        if event.keyCode == 36, isSelectingArea, selectionOrigin == nil,
+            isAreaCaptureCanvas, let rect = selectionRect,
+            AreaSelectionGeometry.isCaptureWorthy(rect)
+        {
+            confirmPreloadedArea(rect)
             return
         }
 
@@ -1557,6 +1680,7 @@ class OverlayView: NSView {
         drawSelection(in: context)
         drawMarquee(in: context)
         drawSelectedMarkChrome(in: context)
+        drawAreaLoupe(in: context)
         drawHint()
     }
 
