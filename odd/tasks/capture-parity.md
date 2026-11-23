@@ -65,7 +65,7 @@ S23. Auditoría de blur, previa a S13: un área cubierta por blur no debe dejar 
 | T4 | Pin de la imagen capturada desde la card, con atajo propio y lock | S6, S4, S21 | worker | pendiente de hash |
 | T5 | OCR y QR on-device con atajo global ⌥⇧O | S7, S9, S22 | worker | c9c841e |
 | T6 | Auditoría de blur como redacción, y pixelate junto a blur | S23, S13 | peer | — |
-| T7 | Downscale al guardar, apagado por defecto | S14, S21 | parent | — |
+| T7 | Downscale al guardar, apagado por defecto | S14, S21 | worker | 9f053b1 |
 | T8 | Profundidad de anotación: relleno, puntas, estilo de texto, spotlight | S15, S21 | parent | — |
 | T9 | Zoom y pan en el editor | S16, S21 | peer | — |
 | T10 | Plantillas de nombre por tokens | S17, S21 | peer | — |
@@ -82,6 +82,13 @@ T2b-a necesita ojo humano: el congelado es píxeles y orientación, nada de eso 
 4. Terminar el arrastre: la imagen de la card coincide con el frame congelado, y el overlay vivo vuelve enseguida.
 5. `⇧S` en el whiteboard igual que antes (sin congelado), y desactivar a mitad de arrastre no deja frame viejo al reentrar.
 6. Sin permiso de Screen Recording el arrastre sigue funcionando en vivo, como hoy.
+
+## Checks manuales de T7
+
+1. En un display Retina, con destino carpeta y "To 1×": el archivo guardado mide la mitad de píxeles que la captura.
+2. Apagado: el archivo guardado es **idéntico** al de hoy (mismo tamaño de archivo y de píxeles).
+3. Con destino portapapeles: la captura pegada **nunca** viene reducida, aunque el switch esté encendido.
+4. "Max width" más chico que la captura: reduce; más grande: no la toca.
 
 ## Checks manuales de T5
 
