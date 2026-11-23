@@ -60,7 +60,7 @@ S23. Auditoría de blur, previa a S13: un área cubierta por blur no debe dejar 
 | T1 | Captura de ventana del frente con marcas compuestas | S10, S21 | parent | 1ee6393, ff41287, 989b795 |
 | T2a | Area drag: geometría pura, ⇧ cuadrado, clamp al display | S11, S21 | worker | 3437beb |
 | T2b-a | Area drag: base congelada al arrancar, con liberación en captura, clic perdido, Esc y deactivate | S11, S21 | worker | bccea8d |
-| T2b-b | Area drag: lupa sobre el frame congelado y rectángulo recordado con Return | S11, S21 | worker | cfc2dcc |
+| T2b-b | Area drag: lupa sobre el frame congelado y rectángulo recordado con Return | S11, S21 | worker | cfc2dcc, c39de43 |
 | T3 | Historial de capturas en memoria, reabrir en el editor | S12, S21 | parent | — |
 | T4 | Pin de la imagen capturada desde la card, con atajo propio y lock | S6, S4, S21 | parent | — |
 | T5 | OCR y QR on-device con atajo global ⌥⇧O | S7, S9, S22 | parent | — |
@@ -142,3 +142,7 @@ L11. Límite del enfoque "pinear ventanas": la preferencia de alcance del board 
 L12. T2 cerrada: T2a (`3437beb`), T2b-a (`bccea8d`, base congelada) y T2b-b (`cfc2dcc`, lupa 4× + rectángulo recordado con `Return`). La lupa lee el frame congelado a propósito: sobre píxeles vivos mentiría sobre el borde que estás eligiendo; sin permiso de Screen Recording no hay lupa y el arrastre sigue en vivo. `Return` sólo se toma cuando hay un rectángulo precargado, y el whiteboard no recibe ninguna de las dos cosas.
 
 L13. Trampa de verificación encontrada dos veces: `swift test --filter <Clase>` puede imprimir `Executed 0 tests` y aun así correr los casos en esa misma invocación. La lectura fiable es contar `Test Case '...' passed` y restar las cinco líneas de `Test Suite '...' passed` por corrida. `Executed 0 tests` no prueba ni que el filtro no matcheó ni que la corrida pasó. Con la suite completa prohibida por L11, el filtro por clase es la única verificación disponible, así que este conteo importa.
+
+L14. Verificación independiente de T2b (`bccea8d`, `cfc2dcc`) encontró un **bloqueante real**: la lupa cropeaba su rect fuente con convención bottom-left mientras `CGImage.cropping(to:)` cuenta filas desde arriba, así que magnificaba una banda espejada verticalmente para cualquier puntero fuera del centro exacto del display. Los tests existentes no podían verlo porque todos usaban `y = 350` en un display de 700 (el único caso donde el espejo es invisible). Corregido en `c39de43` con dos tests de bandas que leen el píxel bajo el puntero, más tokens en `AreaCaptureFrameState` para que un frame del arrastre anterior no pueda ser la base del siguiente tras `Esc` + re-armar. Re-verificado: los siete conteos coinciden (13/11/9/8/6/7/2, cero fallas) y el veredicto fue seguro para el pase manual. Lección para la tanda: un test que sólo usa el caso identidad (centro, cero modulado) no prueba orientación.
+
+L15. Follow-up anotado, no hecho: el verificador dejó cinco probes para el estado de serialización de los asks (captura que devuelve nil, `clear()` a mitad de vuelo, arm/release repetido, re-armar tras fallo, camino del board). Hoy están cubiertos de forma parcial por los tests de congelado; si el estado de asks crece, adoptarlos primero.
