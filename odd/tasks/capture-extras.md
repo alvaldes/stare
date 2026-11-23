@@ -85,3 +85,15 @@ and the `AreaCapture*`/`AreaSelection*`/`FrontWindow*`/`WindowCaptureGeometry` f
   capture must agree) and on `MarkCompositor.swift`, which I told the peer I intend to touch for T6b only.
   A real bug the tests caught: the first implementation read source rows top-down while `pixelRect` is
   bottom-left, which would have returned a vertically mirrored image.
+- **L8** (handoff from the peer): T6b step 2 is serialised behind their T8 (annotation depth), which
+  touches `MarkRenderer.swift`, `MarkCompositor.swift` and OverlayView's mark drawing. Until their T8 commit
+  lands, those two files are theirs; `BlurEffect.swift` and `PixelateEffect.swift` stay mine. When it lands I
+  rebase, and then I own `OverlayView.blurSource` for the length of T6b and nothing else in that file. Their
+  addition to the design: the pixelate block derives from the mark rect the way the blur radius derives from
+  the backing scale — consistency between preview and capture, not a knob.
+- **L9** (decision, mine, the claim the peer will put in front of the human): a redacted screenshot shows the
+  rectangle the redaction covers and nothing of what was under it — no glyph, no word, no colour of the
+  original content inside the block — and it refuses to show the original content in the saved PNG, in the
+  live preview, and after the editor's zoom, because preview and save go through one dispatch. What it does
+  not hide, and says so in the README, is the *presence, position and size* of a redacted block: the audit
+  measured that a silhouette always leaks, with any in-place primitive.
