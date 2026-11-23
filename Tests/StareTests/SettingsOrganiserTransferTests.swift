@@ -86,7 +86,7 @@ final class SettingsOrganiserTransferTests: XCTestCase {
             pool: [.laser]
         )
 
-        pane.handlePoolEndDrop(payload: .tool(.eraser))
+        pane.handlePoolEndDrop(payload: .item(.tool(.eraser)))
 
         XCTAssertEqual(
             model.toolbarTools,
@@ -107,7 +107,7 @@ final class SettingsOrganiserTransferTests: XCTestCase {
         )
 
         // The eraser lands on the blur chip's before-half.
-        pane.handlePoolDrop(target: .tool(.blur), edge: .before, payload: .tool(.eraser))
+        pane.handlePoolDrop(target: .tool(.blur), edge: .before, payload: .item(.tool(.eraser)))
 
         XCTAssertEqual(
             model.toolbarTools,
@@ -119,7 +119,7 @@ final class SettingsOrganiserTransferTests: XCTestCase {
             items: [.tool(.pen), .tool(.eraser)],
             pool: [.laser, .blur]
         )
-        later.handlePoolDrop(target: .tool(.blur), edge: .after, payload: .tool(.eraser))
+        later.handlePoolDrop(target: .tool(.blur), edge: .after, payload: .item(.tool(.eraser)))
         XCTAssertEqual(
             laterModel.toolbarTools,
             expect(items: [.tool(.pen)], pool: [.laser, .blur, .eraser]))
@@ -134,7 +134,7 @@ final class SettingsOrganiserTransferTests: XCTestCase {
             pool: [.laser]
         )
 
-        pane.handlePoolEndDrop(payload: .separator)
+        pane.handlePoolEndDrop(payload: .item(.separator))
 
         XCTAssertEqual(
             model.toolbarTools,
@@ -151,13 +151,13 @@ final class SettingsOrganiserTransferTests: XCTestCase {
         )
         let draft = model.toolbarTools
 
-        pane.handlePoolEndDrop(payload: .tool(.pen))
+        pane.handlePoolEndDrop(payload: .item(.tool(.pen)))
 
         XCTAssertEqual(model.toolbarTools, draft, "the draft is unchanged")
     }
 
-    /// A separator dropped onto a pool chip changes nothing: separators do
-    /// not stack in the pool.
+    /// A drag of a separator that is not on the bar changes nothing on a
+    /// pool chip: nothing can be removed that was never placed.
     func testASeparatorDropOnAPoolChipChangesNothing() {
         let (pane, model) = makePane(
             items: [.tool(.pen)],
@@ -165,7 +165,7 @@ final class SettingsOrganiserTransferTests: XCTestCase {
         )
         let draft = model.toolbarTools
 
-        pane.handlePoolDrop(target: .tool(.eraser), edge: .before, payload: .separator)
+        pane.handlePoolDrop(target: .tool(.eraser), edge: .before, payload: .item(.separator))
 
         XCTAssertEqual(model.toolbarTools, draft)
     }
@@ -182,7 +182,7 @@ final class SettingsOrganiserTransferTests: XCTestCase {
         )
 
         // The laser lands on the eraser's after-half.
-        pane.handleBarDrop(target: .tool(.eraser), edge: .after, payload: .tool(.laser))
+        pane.handleBarDrop(target: .tool(.eraser), edge: .after, payload: .item(.tool(.laser)))
 
         XCTAssertEqual(
             model.toolbarTools,
@@ -203,7 +203,7 @@ final class SettingsOrganiserTransferTests: XCTestCase {
 
         // The laser lands on the pen's after-half — the separator's own
         // before-side.
-        pane.handleBarDrop(target: .tool(.pen), edge: .after, payload: .tool(.laser))
+        pane.handleBarDrop(target: .tool(.pen), edge: .after, payload: .item(.tool(.laser)))
 
         XCTAssertEqual(
             model.toolbarTools,
@@ -223,7 +223,7 @@ final class SettingsOrganiserTransferTests: XCTestCase {
         )
 
         // The select chip lands on the laser chip's before-half.
-        pane.handlePoolDrop(target: .tool(.laser), edge: .before, payload: .tool(.select))
+        pane.handlePoolDrop(target: .tool(.laser), edge: .before, payload: .item(.tool(.select)))
 
         XCTAssertEqual(
             model.toolbarTools,
@@ -242,7 +242,7 @@ final class SettingsOrganiserTransferTests: XCTestCase {
         )
         let draft = model.toolbarTools
 
-        pane.handlePoolEndDrop(payload: .tool(.pen))
+        pane.handlePoolEndDrop(payload: .item(.tool(.pen)))
 
         XCTAssertEqual(
             model.toolbarTools, draft,
@@ -257,12 +257,12 @@ final class SettingsOrganiserTransferTests: XCTestCase {
         )
         let draft = model.toolbarTools
 
-        pane.handlePoolDrop(target: .tool(.laser), edge: .before, payload: .tool(.pen))
+        pane.handlePoolDrop(target: .tool(.laser), edge: .before, payload: .item(.tool(.pen)))
         XCTAssertEqual(
             model.toolbarTools, draft,
             "the bar's first tool cannot leave through a pool chip either")
 
-        pane.handlePoolDrop(target: .tool(.blur), edge: .after, payload: .tool(.pen))
+        pane.handlePoolDrop(target: .tool(.blur), edge: .after, payload: .item(.tool(.pen)))
         XCTAssertEqual(model.toolbarTools, draft)
     }
 
@@ -279,7 +279,7 @@ final class SettingsOrganiserTransferTests: XCTestCase {
             pool: [.laser]
         )
 
-        pane.handlePoolDrop(target: .tool(.laser), edge: .before, payload: .separator)
+        pane.handlePoolDrop(target: .tool(.laser), edge: .before, payload: .item(.separator))
 
         XCTAssertEqual(
             model.toolbarTools,
@@ -290,11 +290,86 @@ final class SettingsOrganiserTransferTests: XCTestCase {
             items: [.tool(.pen), .separator, .tool(.eraser)],
             pool: [.laser]
         )
-        later.handlePoolDrop(target: .tool(.laser), edge: .after, payload: .separator)
+        later.handlePoolDrop(target: .tool(.laser), edge: .after, payload: .item(.separator))
         XCTAssertEqual(
             laterModel.toolbarTools,
             expect(items: [.tool(.pen), .tool(.eraser)], pool: [.laser]),
             "either half of the chip takes the separator off")
+    }
+
+    // MARK: - The pool's separator chip is a source, not a placed separator
+
+    /// The verifier's regression: the pool's Separator source chip and a placed
+    /// separator on the bar used to share one drag identifier
+    /// (`ToolbarLayoutItem.separator.identifier`), and the T4 removal in
+    /// `handlePoolDrop` decides provenance with `items.contains` — so dragging
+    /// the source chip onto a pool chip deleted the placed one. The two drags
+    /// are now distinguishable on the wire: the chip drags
+    /// `ToolbarDragPayload.addSeparator`, whose token names no
+    /// `ToolbarLayoutItem` — so no stored document can ever mistake it for an
+    /// item — while a placed separator's own drag still carries
+    /// `.item(.separator)` and still comes off (T4/S3, pinned above).
+    func testDroppingThePoolsSeparatorChipOnAPoolChipLeavesThePlacedSeparatorAlone() {
+        // The wire is the fix: the source chip's payload decodes only as
+        // "add a separator", never as the placed item's identifier.
+        XCTAssertEqual(ToolbarDragPayload.addSeparator.wire, ToolbarDragPayload.addSeparatorToken)
+        XCTAssertNotEqual(
+            ToolbarDragPayload.addSeparator.wire, ToolbarLayoutItem.separator.identifier,
+            "the source chip must not drag the identifier a placed separator drags")
+        XCTAssertNil(
+            ToolbarLayoutItem(identifier: ToolbarDragPayload.addSeparator.wire),
+            "the source token must decode to no ToolbarLayoutItem, so the stored format never sees it")
+
+        let (pane, model) = makePane(
+            items: [.tool(.pen), .separator, .tool(.eraser)],
+            pool: [.laser]
+        )
+        let draft = model.toolbarTools
+
+        // The draggable payload of the pool's separator SOURCE chip — not a
+        // drag of the placed separator itself.
+        pane.handlePoolDrop(target: .tool(.laser), edge: .before, payload: .addSeparator)
+
+        XCTAssertEqual(
+            model.toolbarTools, draft,
+            "dropping the source chip on a pool chip must leave the placed separator on the bar")
+    }
+
+    /// The same ambiguity on the pool's dashed end zone — with an empty pool
+    /// the row is exactly [Separator chip][Drop to pool], so this is the one
+    /// pool target a source-chip drag can reach.
+    func testDroppingThePoolsSeparatorChipOnThePoolEndZoneLeavesThePlacedSeparatorAlone() {
+        let (pane, model) = makePane(
+            items: [.tool(.pen), .separator, .tool(.eraser)],
+            pool: []
+        )
+        let draft = model.toolbarTools
+
+        pane.handlePoolEndDrop(payload: .addSeparator)
+
+        XCTAssertEqual(
+            model.toolbarTools, draft,
+            "dropping the source chip on the dashed end zone must leave the placed separator on the bar")
+    }
+
+    /// The other half of the disambiguation (S3): the source chip dropped on
+    /// the bar still inserts a divider at the dropped spot — one drop adds
+    /// one. Before the fix the shared identifier made the bar see a placed
+    /// separator's drag instead.
+    func testDroppingThePoolsSeparatorChipOnTheBarStillInsertsADivider() {
+        let (pane, model) = makePane(
+            items: [.tool(.pen), .tool(.eraser)],
+            pool: []
+        )
+
+        pane.handleBarDrop(target: .tool(.pen), edge: .after, payload: .addSeparator)
+
+        XCTAssertEqual(
+            model.toolbarTools,
+            expect(
+                items: [.tool(.pen), .separator, .tool(.eraser)],
+                pool: offBar(items: [.tool(.pen), .tool(.eraser)])),
+            "the source chip joined the bar as a divider at the dropped spot")
     }
 
     // MARK: - Reordering in place, across a placed separator (T5/S5)
@@ -310,7 +385,7 @@ final class SettingsOrganiserTransferTests: XCTestCase {
             pool: []
         )
 
-        pane.handleBarDrop(target: .tool(.eraser), edge: .after, payload: .tool(.pen))
+        pane.handleBarDrop(target: .tool(.eraser), edge: .after, payload: .item(.tool(.pen)))
 
         XCTAssertEqual(
             model.toolbarTools,
@@ -332,14 +407,14 @@ final class SettingsOrganiserTransferTests: XCTestCase {
 
         // Pool → bar: the pool loses the laser and the bar gains it in the
         // same write, so the stage re-lays itself from the change.
-        pane.handleBarDrop(target: .tool(.pen), edge: .after, payload: .tool(.laser))
+        pane.handleBarDrop(target: .tool(.pen), edge: .after, payload: .item(.tool(.laser)))
         XCTAssertEqual(
             model.toolbarTools,
             expect(items: [.tool(.pen), .tool(.laser), .tool(.eraser)], pool: []))
 
         // Bar → pool on the same draft: the pool gains the eraser and the bar
         // loses it in the same write, so the pool re-lays itself too.
-        pane.handlePoolEndDrop(payload: .tool(.eraser))
+        pane.handlePoolEndDrop(payload: .item(.tool(.eraser)))
         XCTAssertEqual(
             model.toolbarTools,
             expect(

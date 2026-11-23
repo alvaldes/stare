@@ -469,10 +469,11 @@ struct BarPane: View {
 
     /// The drop delegate the pool's end zone uses: a tool lands at the end
     /// of the pool, and a placed separator comes back off the bar — the one
-    /// way out for a placed separator. The pool never stores separators as
-    /// pool items.
+    /// way out for a placed separator. The pool's Separator source chip is
+    /// refused by the handler (a separator is never a pool item). The pool
+    /// never stores separators as pool items.
     private struct ToolbarPoolEndDropDelegate: DropDelegate {
-        let onDrop: @MainActor (ToolbarLayoutItem) -> Void
+        let onDrop: @MainActor (ToolbarDragPayload) -> Void
 
         func dropUpdated(info: DropInfo) -> DropProposal? {
             DropProposal(operation: .move)
@@ -483,7 +484,7 @@ struct BarPane: View {
             // The shared main-actor hop (S5, verifier finding): the
             // completion of `loadObject` is off the main thread and this
             // drop's handler mutates the `@MainActor` `PreferencesModel`.
-            ToolbarOrganiserHooks.deliverPayload(of: provider) { payload in
+            ToolbarOrganiserHooks.deliverDragPayload(of: provider) { payload in
                 onDrop(payload)
             }
             return true
@@ -533,7 +534,7 @@ struct BarPane: View {
                 .fill(Color.secondary.opacity(0.10))
         )
         .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .onDrag { NSItemProvider(object: ToolbarLayoutItem.tool(tool).identifier as NSString) }
+        .onDrag { ToolbarDragPayload.item(.tool(tool)).provider }
         .background(
             GeometryReader { geo in
                 Color.clear.preference(key: ToolbarPoolChipSizeKey.self, value: [tool: geo.size])
@@ -544,14 +545,19 @@ struct BarPane: View {
             size: poolSizes[tool] ?? CGSize(width: 80, height: 26),
             axisVertical: false,
             onDrop: { target, edge, payload in
-                handlePoolDrop(target: target, edge: edge, payload: payload)
+                handlePoolDrop(target: target, edge: edge, payload: .item(payload))
             }
         ))
         .help(Text(verbatim: "Drag \(tool.displayName) onto the bar"))
     }
 
     /// The separator chip: always available to drag onto the bar; it never
-    /// takes drops, because separators do not stack in the pool.
+    /// takes drops, because separators do not stack in the pool. Its drag
+    /// carries the source payload ("add a separator"), not the identifier a
+    /// placed separator's own drag carries — the verifier's regression had
+    /// both drags sharing one identifier, so a pool target could not tell
+    /// them apart and a source-chip drop onto the pool deleted the placed
+    /// separator.
     private var toolbarPoolSeparatorChip: some View {
         HStack(spacing: 6) {
             Image(systemName: "line.3.horizontal")
@@ -567,7 +573,7 @@ struct BarPane: View {
                 .fill(Color.secondary.opacity(0.10))
         )
         .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .onDrag { NSItemProvider(object: ToolbarLayoutItem.separator.identifier as NSString) }
+        .onDrag { ToolbarDragPayload.addSeparator.provider }
         .help(Text(verbatim: "Drag a separator onto the bar"))
     }
 
@@ -596,22 +602,30 @@ struct BarPane: View {
 
     /// Handles a drop on the bar: a payload already on the bar reorders in
     /// place, a payload from the pool is inserted — a tool comes out of the
-    /// pool at that very spot, a separator joins the bar. The destination
-    /// slot is the target item's position plus the drop's side.
+    /// pool at that very spot, a separator joins the bar. The pool's
+    /// Separator source chip is "add a separator", not a placed one (S3):
+    /// one drop adds one divider at that very spot, exactly as the chip's
+    /// help promises. The destination slot is the target item's position
+    /// plus the drop's side.
     /// Internal (T4/S4) so the tests drive the real handler on a real model.
-    func handleBarDrop(target: ToolbarLayoutItem, edge: ToolbarOrganiserHooks.Edge, payload: ToolbarLayoutItem) {
+    func handleBarDrop(target: ToolbarLayoutItem, edge: ToolbarOrganiserHooks.Edge, payload: ToolbarDragPayload) {
         let layout = model.toolbarTools
         guard let targetIndex = layout.items.firstIndex(of: target) else { return }
         let slot = targetIndex + (edge == .after ? 1 : 0)
-        if layout.items.contains(payload) {
-            // The move index is the insert position in the list as it would
-            // be without the item, so a slot the payload itself sits before
-            // closes up by one.
-            guard let currentIndex = layout.items.firstIndex(of: payload) else { return }
-            let adjusted = currentIndex < slot ? slot - 1 : slot
-            model.toolbarTools = layout.moving(payload, to: adjusted)
-        } else {
-            model.toolbarTools = layout.inserting(payload, at: slot)
+        switch payload {
+        case .addSeparator:
+            model.toolbarTools = layout.inserting(.separator, at: slot)
+        case .item(let item):
+            if layout.items.contains(item) {
+                // The move index is the insert position in the list as it would
+                // be without the item, so a slot the payload itself sits before
+                // closes up by one.
+                guard let currentIndex = layout.items.firstIndex(of: item) else { return }
+                let adjusted = currentIndex < slot ? slot - 1 : slot
+                model.toolbarTools = layout.moving(item, to: adjusted)
+            } else {
+                model.toolbarTools = layout.inserting(item, at: slot)
+            }
         }
     }
 
@@ -619,18 +633,24 @@ struct BarPane: View {
     /// reorders, a payload on the bar enters the pool at that very spot, and
     /// a placed separator comes off the bar (T4/S3) — the pool never stores
     /// separators as pool items, so the drop's side lands it nowhere but
-    /// off the bar. The bar's first tool cannot leave (T3/S2): the drag-out
+    /// off the bar. The pool's Separator source chip is refused: its drag
+    /// carries "add a separator" (never a placed one — the source chip's
+    /// wire names no `ToolbarLayoutItem`), so the chip dropped anywhere in
+    /// the pool changes nothing; this is the verifier's regression, where
+    /// the shared identifier made the same drop delete the placed
+    /// separator. The bar's first tool cannot leave (T3/S2): the drag-out
     /// refuses on either half of a chip and the draft stays as it was.
     /// Internal (T4/S4) so the tests drive the real handler on a real model.
-    func handlePoolDrop(target: ToolbarLayoutItem, edge: ToolbarOrganiserHooks.Edge, payload: ToolbarLayoutItem) {
+    func handlePoolDrop(target: ToolbarLayoutItem, edge: ToolbarOrganiserHooks.Edge, payload: ToolbarDragPayload) {
+        guard case .item(let item) = payload else { return }
         let layout = model.toolbarTools
-        if case .separator = payload {
-            guard layout.items.contains(payload) else { return }
+        if case .separator = item {
+            guard layout.items.contains(item) else { return }
             model.toolbarTools = layout.removing(.separator)
             return
         }
-        guard case .tool(let tool) = payload, case .tool(let targetTool) = target else { return }
-        guard layout.canLeave(payload) else { return }
+        guard case .tool(let tool) = item, case .tool(let targetTool) = target else { return }
+        guard layout.canLeave(item) else { return }
         guard let targetIndex = layout.pool.firstIndex(of: targetTool) else { return }
         let slot = targetIndex + (edge == .after ? 1 : 0)
         if layout.pool.contains(tool) {
@@ -644,19 +664,23 @@ struct BarPane: View {
 
     /// Handles a drop on the pool's end zone: a bar tool lands at the end of
     /// the pool and a pool tool moves there, a placed separator comes off
-    /// the bar, and the bar's first tool cannot leave (T3/S2) — the drag-out
-    /// refuses and the draft stays as it was. Internal (T4/S4) so the tests
-    /// drive the real handler on a real model.
-    func handlePoolEndDrop(payload: ToolbarLayoutItem) {
+    /// the bar, and the pool's Separator source chip is refused — it is
+    /// "add a separator", never a pool item (its wire names no
+    /// `ToolbarLayoutItem`), so the drop changes nothing. The bar's first
+    /// tool cannot leave (T3/S2) — the drag-out refuses and the draft stays
+    /// as it was. Internal (T4/S4) so the tests drive the real handler on a
+    /// real model.
+    func handlePoolEndDrop(payload: ToolbarDragPayload) {
+        guard case .item(let item) = payload else { return }
         let layout = model.toolbarTools
-        guard layout.canLeave(payload) else { return }
-        if case .tool(let tool) = payload {
-            if layout.items.contains(payload) {
+        guard layout.canLeave(item) else { return }
+        if case .tool(let tool) = item {
+            if layout.items.contains(item) {
                 model.toolbarTools = layout.removing(.tool(tool))
             } else if layout.pool.contains(tool) {
                 model.toolbarTools = layout.movingInPool(tool, to: layout.pool.count)
             }
-        } else if layout.items.contains(payload) {
+        } else if layout.items.contains(item) {
             model.toolbarTools = layout.removing(.separator)
         }
     }
@@ -704,9 +728,12 @@ struct BarPane: View {
                 onUndo: {}, onRedo: {}, onClear: {}, onDone: {},
                 toolItems: model.toolbarTools.items,
                 organiser: ToolbarOrganiserHooks(
-                    dragProvider: { NSItemProvider(object: $0.identifier as NSString) },
+                    dragProvider: { ToolbarDragPayload.item($0).provider },
                     drop: { target, edge, payload in
-                        handleBarDrop(target: target, edge: edge, payload: payload)
+                        handleBarDrop(target: target, edge: edge, payload: .item(payload))
+                    },
+                    sourceDrop: { target, edge in
+                        handleBarDrop(target: target, edge: edge, payload: .addSeparator)
                     },
                     fixed: { item in !model.toolbarTools.canLeave(item) }
                 )

@@ -3,6 +3,55 @@ import SwiftUI
 import StareCore
 import UniformTypeIdentifiers
 
+/// The organiser's drag wire payload: a placed draft item, or the pool's
+/// Separator source chip. Only the drag's wire format is internal — nothing
+/// here is persisted; the stored format (`ToolbarLayoutItem`, the layout
+/// draft, UserDefaults) keeps naming placed separators exactly as it always
+/// did. The distinction exists because the pool's Separator chip and a
+/// placed separator used to share `ToolbarLayoutItem.separator.identifier`,
+/// so a pool target could not tell "add a separator" from "take the placed
+/// one off the bar" — and a source-chip drop onto the pool deleted the
+/// placed one (the verifier's regression).
+enum ToolbarDragPayload: Equatable {
+    /// A drag of a draft item: a placed bar item, or a pool tool.
+    case item(ToolbarLayoutItem)
+    /// The pool's Separator chip: "add a separator to the bar". The chip is
+    /// a source, never a drag of a placed separator.
+    case addSeparator
+
+    /// The token the source chip drags. Deliberately not decodable as any
+    /// `ToolbarLayoutItem` (no `tool:` prefix, not the `separator` token):
+    /// the pool's targets must be able to tell the source chip apart from a
+    /// drag of a placed separator, and no stored document can ever mistake
+    /// the token for an item.
+    static let addSeparatorToken = "add-separator"
+
+    /// The wire string the drag carries: the item's stable identifier
+    /// (`ToolbarLayoutItem.identifier`) or the source chip's token.
+    var wire: String {
+        switch self {
+        case .item(let item): item.identifier
+        case .addSeparator: Self.addSeparatorToken
+        }
+    }
+
+    /// The payload a wire string names; anything unrecognised drops.
+    init?(wire: String) {
+        if wire == Self.addSeparatorToken {
+            self = .addSeparator
+        } else if let item = ToolbarLayoutItem(identifier: wire) {
+            self = .item(item)
+        } else {
+            return nil
+        }
+    }
+
+    /// The provider a drag of this payload carries: plain text, the format
+    /// both the drag source and every drop target read without a custom
+    /// UTType.
+    var provider: NSItemProvider { NSItemProvider(object: wire as NSString) }
+}
+
 /// An action that lives in the palette itself, so the editor needs no second bar.
 /// `isSelected` marks it as the palette's one armed item (S6), in the same
 /// accent style the tool buttons mark theirs — the crop uses this, copy and
@@ -205,8 +254,9 @@ struct ToolbarOrganiserHooks {
     /// The side of the target item a drop landed on.
     enum Edge { case before, after }
 
-    /// Builds the drag payload for `item`: its stable identifier as plain
-    /// text (`ToolbarLayoutItem.identifier`). The payload names the item, never a
+    /// Builds the drag payload for `item`: its payload's wire string as
+    /// plain text — the stable identifier (`ToolbarLayoutItem.identifier`)
+    /// a placed item's drag carries. The payload names the item, never a
     /// slot, so both zones of the organiser decode the same wire format and
     /// a drag can start in the pool and land on the bar or the other way
     /// round, and it stays meaningful however the draft changes while the
@@ -219,10 +269,29 @@ struct ToolbarOrganiserHooks {
     /// main actor before it delivers anything, so the handlers here can
     /// mutate the `@MainActor` `PreferencesModel` without a second hop.
     var drop: @MainActor (ToolbarLayoutItem, Edge, ToolbarLayoutItem) -> Void
+    /// Handles the pool's Separator source chip dropped on the bar (S3):
+    /// one drop adds one divider at the dropped spot. Only the bar's slots
+    /// route it — the pool's targets refuse the source payload (a separator
+    /// is never a pool item), so a source chip can only ever join the bar.
+    var sourceDrop: @MainActor (ToolbarLayoutItem, Edge) -> Void
     /// Which items cannot leave the bar (T3/S2): the pool refuses their
     /// drag-out and the preview marks them fixed. Nil — the default, on
     /// every surface but the organiser — means everything placed can leave.
     var fixed: ((ToolbarLayoutItem) -> Bool)?
+
+    /// The item-only view of the shared payload hop: decodes the wire and
+    /// delivers every payload that names a `ToolbarLayoutItem`. The tests
+    /// pin the hop through this seam with item payloads; the delegates
+    /// themselves use `deliverDragPayload`, because the pool's Separator
+    /// source chip drags a wire string that names no item.
+    static func deliverPayload(
+        of provider: NSItemProvider,
+        onMain deliver: @escaping @MainActor (ToolbarLayoutItem) -> Void
+    ) {
+        deliverDragPayload(of: provider) { payload in
+            if case .item(let item) = payload { deliver(item) }
+        }
+    }
 
     /// The single payload hop (S5, verifier finding): the completion of
     /// `NSItemProvider.loadObject` is NOT the main thread — pinned by
@@ -231,15 +300,15 @@ struct ToolbarOrganiserHooks {
     /// `PreferencesModel`. Applying a drop straight from the completion ran
     /// the read-modify-write off main, where two quick drops could read the
     /// same draft and lose one, and `persist()` hit UserDefaults off main.
-    /// The completion therefore only decodes the payload; the item is
-    /// delivered on the main actor, always, so the applications serialize
-    /// and both land.
-    static func deliverPayload(
+    /// The completion therefore only decodes the payload; it is delivered
+    /// on the main actor, always, so the applications serialize and both
+    /// land.
+    static func deliverDragPayload(
         of provider: NSItemProvider,
-        onMain deliver: @escaping @MainActor (ToolbarLayoutItem) -> Void
+        onMain deliver: @escaping @MainActor (ToolbarDragPayload) -> Void
     ) {
         provider.loadObject(ofClass: NSString.self) { object, _ in
-            guard let raw = object as? String, let payload = ToolbarLayoutItem(identifier: raw) else { return }
+            guard let raw = object as? String, let payload = ToolbarDragPayload(wire: raw) else { return }
             Task { @MainActor in deliver(payload) }
         }
     }
@@ -266,6 +335,13 @@ struct ToolbarSlotDropDelegate: DropDelegate {
     let size: CGSize
     let axisVertical: Bool
     let onDrop: @MainActor (ToolbarLayoutItem, ToolbarOrganiserHooks.Edge, ToolbarLayoutItem) -> Void
+    /// The route for the pool's Separator source chip ("add a separator"),
+    /// whose wire string names no `ToolbarLayoutItem`. The bar's slots
+    /// install it; the pool's targets leave it nil — a separator is never a
+    /// pool item, so a source drop there changes nothing. Defaulted, so the
+    /// plain item-payload delegates (and the tests that pin their hop) need
+    /// not mention it.
+    var onSourceDrop: (@MainActor (ToolbarLayoutItem, ToolbarOrganiserHooks.Edge) -> Void)? = nil
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
         DropProposal(operation: .move)
@@ -286,8 +362,17 @@ struct ToolbarSlotDropDelegate: DropDelegate {
     /// SwiftUI, so this seam is how the tests fire a real drop's payload path
     /// from a background queue.
     func dropPayload(from provider: NSItemProvider, edge: ToolbarOrganiserHooks.Edge) {
-        ToolbarOrganiserHooks.deliverPayload(of: provider) { payload in
-            self.onDrop(self.target, edge, payload)
+        ToolbarOrganiserHooks.deliverDragPayload(of: provider) { payload in
+            switch payload {
+            case .item(let item):
+                self.onDrop(self.target, edge, item)
+            case .addSeparator:
+                // The pool's Separator source chip: only the bar's slots
+                // install `onSourceDrop`, so a source drop joins the bar as
+                // a divider (S3) and a drop on any pool target — which
+                // leaves it nil — changes nothing.
+                self.onSourceDrop?(self.target, edge)
+            }
         }
     }
 }
@@ -500,7 +585,8 @@ struct ToolbarView: View {
                         target: item,
                         size: itemSizes[item] ?? Self.fallbackItemSize(item),
                         axisVertical: isVertical,
-                        onDrop: { target, edge, payload in organiser.drop(target, edge, payload) }
+                        onDrop: { target, edge, payload in organiser.drop(target, edge, payload) },
+                        onSourceDrop: { target, edge in organiser.sourceDrop(target, edge) }
                     ))
             } else {
                 view
@@ -514,7 +600,8 @@ struct ToolbarView: View {
                         target: item,
                         size: itemSizes[item] ?? Self.fallbackItemSize(item),
                         axisVertical: isVertical,
-                        onDrop: { target, edge, payload in organiser.drop(target, edge, payload) }
+                        onDrop: { target, edge, payload in organiser.drop(target, edge, payload) },
+                        onSourceDrop: { target, edge in organiser.sourceDrop(target, edge) }
                     ))
             }
         } else {
