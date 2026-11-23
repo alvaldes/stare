@@ -21,7 +21,7 @@ writer that branch introduced (`Sources/StareCore/CaptureFile.swift`). Branch `f
 
 | ID | Specs | Task | Route | Commit |
 | --- | --- | --- | --- | --- |
-| T10 | S17 | Filename templates by token over the folder destination; the current prefix keeps working | worker | |
+| T10 | S17 | Filename templates by token over the folder destination; the current prefix keeps working | worker | 4bc30d1 |
 | T11 | S18 | Optional backdrop on save: padding, rounded corners, shadow — padding before any downscale | worker | |
 
 **Ordering that is not negotiable, from the peer's handoff.** `CaptureFile.write` is the single writer for the
@@ -40,3 +40,14 @@ mine on this branch for the Capture pane; if the peer needs a row later they tel
   into `feat/capture-extras`. A cherry-pick applies (only CHANGELOG and README conflict), but it would put a
   copy of their feature in my branch and confuse both reviews; stacked, the rebase onto `main` is mechanical
   the day their branch lands.
+- **L3** (evidence, T10): tokens are `{date}`, `{time}`, `{app}`, `{display}`; fields appended after
+  `maxSaveWidth` and decoded leniently; the naming lives in `CaptureFile.write`, which gained trailing
+  optional `app:`/`displayName:`; the prefix sanitiser is reused. An unknown token, malformed braces, an
+  unsafe literal or an unavailable value all fall back to today's prefix name, so a half-wired template
+  cannot emit a broken path, and a substituted value cannot traverse (the separator filters through the
+  safe set; the extension is always appended). 17 tests, the PRESERVE pin run before and after the change.
+  4bc30d1.
+  **Known gap**: `{app}` and `{display}` are refused at the real call site because the one line that
+  supplies them lives in `OverlayController.deliver`, the peer's file. Asked them to add it; until then
+  those two tokens fall back to the prefix name by design. The Settings preview shows sample values, which
+  becomes exactly true once that line lands.
