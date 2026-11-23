@@ -66,7 +66,8 @@ S23. Auditoría de blur, previa a S13: un área cubierta por blur no debe dejar 
 | T5 | OCR y QR on-device con atajo global ⌥⇧O | S7, S9, S22 | worker | c9c841e |
 | T6 | Auditoría de blur como redacción, y pixelate junto a blur | S23, S13 | peer | — |
 | T7 | Downscale al guardar, apagado por defecto | S14, S21 | worker | 9f053b1 |
-| T8 | Profundidad de anotación: relleno, puntas, estilo de texto, spotlight | S15, S21 | parent | — |
+| T8a | Anotación: relleno de formas, puntas de flecha, estilo de texto recordado | S15, S21 | worker | 81a8d8d |
+| T8b | Anotación: spotlight persistente como marca | S15, S21 | parent | — |
 | T9 | Zoom y pan en el editor | S16, S21 | peer | — |
 | T10 | Plantillas de nombre por tokens | S17, S21 | peer | — |
 | T11 | Backdrop barato: padding, esquinas, sombra | S18, S22 | peer | — |
@@ -82,6 +83,14 @@ T2b-a necesita ojo humano: el congelado es píxeles y orientación, nada de eso 
 4. Terminar el arrastre: la imagen de la card coincide con el frame congelado, y el overlay vivo vuelve enseguida.
 5. `⇧S` en el whiteboard igual que antes (sin congelado), y desactivar a mitad de arrastre no deja frame viejo al reentrar.
 6. Sin permiso de Screen Recording el arrastre sigue funcionando en vivo, como hoy.
+
+## Checks manuales de T8a
+
+1. Dibujá un rectángulo, apretá `9`, dibujá otro y capturá: el segundo sale **relleno** con el contorno visible, el primero intacto.
+2. `0` cicla la punta de flecha; capturá y compará las dos.
+3. Dibujá un texto, cambiá el tamaño, terminá. Otro texto: abre con el tamaño y la tinta del anterior. `Esc` limpia y olvida el estilo.
+4. `⌘Z`/`⇧⌘Z` sobre una forma rellena: el relleno viaja con la marca.
+5. Abrí un dibujo anterior a este cambio: sin relleno y con punta abierta, exactamente como antes.
 
 ## Checks manuales de T7
 
