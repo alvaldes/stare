@@ -171,4 +171,68 @@ final class CapturePreferenceTests: XCTestCase {
         let data = try JSONEncoder().encode(CapturePreference.standard)
         XCTAssertEqual(try JSONDecoder().decode(CapturePreference.self, from: data), CapturePreference.standard)
     }
+
+    // MARK: Downscaling on save (T7/S14) — off by default
+
+    func testStandardSavesExactlyAsCaptured() {
+        // Off by default: every capture is saved exactly as today.
+        XCTAssertEqual(CapturePreference.standard.downscaleMode, .off)
+        XCTAssertEqual(CapturePreference.standard.maxSaveWidth, CapturePreference.defaultMaxSaveWidth)
+    }
+
+    func testMaxSaveWidthNeverDegradesToNothing() {
+        var preference = CapturePreference.standard
+        preference.maxSaveWidth = 800
+        XCTAssertEqual(preference.maxSaveWidth, 800)
+        preference.maxSaveWidth = 0
+        XCTAssertEqual(preference.maxSaveWidth, 1)
+        preference.maxSaveWidth = -50
+        XCTAssertEqual(preference.maxSaveWidth, 1)
+    }
+
+    func testDownscaleSettingsRoundTripThroughJSON() throws {
+        var saved = CapturePreference.standard
+        saved.downscaleMode = .maxWidth
+        saved.maxSaveWidth = 1200
+        let data = try JSONEncoder().encode(saved)
+        XCTAssertEqual(try JSONDecoder().decode(CapturePreference.self, from: data), saved)
+
+        saved.downscaleMode = .oneX
+        saved.maxSaveWidth = CapturePreference.defaultMaxSaveWidth
+        let oneXData = try JSONEncoder().encode(saved)
+        XCTAssertEqual(try JSONDecoder().decode(CapturePreference.self, from: oneXData), saved)
+    }
+
+    func testBlobWithoutDownscaleFieldsKeepsSavingExactlyAsToday() throws {
+        // A document written before downscaling existed decodes with the
+        // switch off and the default width, and every other field intact.
+        let decoded = try decode(
+            #"{"format":"jpeg","destination":{"folder":"/tmp/shots"},"fileNamePrefix":"Shots"}"#
+        )
+        XCTAssertEqual(decoded.format, .jpeg)
+        XCTAssertEqual(decoded.destination, .folder(path: "/tmp/shots"))
+        XCTAssertEqual(decoded.fileNamePrefix, "Shots")
+        XCTAssertEqual(decoded.downscaleMode, .off)
+        XCTAssertEqual(decoded.maxSaveWidth, CapturePreference.defaultMaxSaveWidth)
+    }
+
+    func testUnknownDownscaleModeInBlobFallsBackToOffAndKeepsTheRest() throws {
+        let decoded = try decode(
+            #"{"format":"png","destination":{"clipboard":true},"fileNamePrefix":"Shots","downscaleMode":"squish"}"#
+        )
+        XCTAssertEqual(decoded.downscaleMode, .off)
+        XCTAssertEqual(decoded.fileNamePrefix, "Shots")
+    }
+
+    func testGarbageMaxSaveWidthInBlobNeverStoresAZero() throws {
+        let decoded = try decode(
+            #"{"format":"png","destination":{"clipboard":true},"fileNamePrefix":"Shots","maxSaveWidth":0}"#
+        )
+        XCTAssertEqual(decoded.maxSaveWidth, 1)
+        let wrongType = try decode(
+            #"{"format":"png","destination":{"clipboard":true},"fileNamePrefix":"Shots","maxSaveWidth":"wide"}"#
+        )
+        XCTAssertEqual(wrongType.maxSaveWidth, CapturePreference.defaultMaxSaveWidth)
+        XCTAssertEqual(wrongType.downscaleMode, .off)
+    }
 }

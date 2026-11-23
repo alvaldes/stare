@@ -2,36 +2,6 @@ import AppKit
 import Combine
 import StareCore
 
-/// The folder destination's writer (T11/S6), shared by the overlay's capture
-/// tail and the selftest harness: the capture goes into the chosen folder,
-/// named by `CapturePreference.fileName(at:)` in the chosen format.
-enum CaptureFile {
-    /// Writes `image` into the preference's folder destination. Returns the
-    /// written URL, or nil when the destination is not a usable folder or
-    /// the write failed — the caller decides the fallback.
-    static func write(_ image: CGImage, preference: CapturePreference, date: Date, calendar: Calendar = .current) -> URL? {
-        guard case .folder(let path) = preference.destination,
-            preference.destination.isUsablePath,
-            let data = data(for: image, format: preference.format)
-        else { return nil }
-        let folder = URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true)
-        let url = folder.appendingPathComponent(preference.fileName(at: date, calendar: calendar))
-        do {
-            try data.write(to: url)
-            return url
-        } catch {
-            Diag.log("capture file write failed: \(error)")
-            return nil
-        }
-    }
-
-    /// One representation call, shared by writing and the save panel.
-    static func data(for image: CGImage, format: CaptureFormat) -> Data? {
-        let type: NSBitmapImageRep.FileType = format == .png ? .png : .jpeg
-        return NSBitmapImageRep(cgImage: image).representation(using: type, properties: [:])
-    }
-}
-
 /// One entry of the global history. A `mark` is a single mark that was added
 /// or transformed on one display; a `clear` is a display's whole layer erased
 /// in one step (the Escape clear, T4/S5) — one undo step, not one per mark.
@@ -981,7 +951,7 @@ final class OverlayController {
         // One instant for the name and the pill, so they always agree.
         let date = Date()
         if case .folder = preference.destination, preference.destination.isUsablePath {
-            if let url = CaptureFile.write(result, preference: preference, date: date) {
+            if let url = CaptureFile.write(result, preference: preference, date: date, scale: scale) {
                 canvas.view.showHint("Capture saved to \(url.lastPathComponent)", seconds: 3)
                 Diag.log("capture saved \(result.width)x\(result.height) marks=\(canvas.view.session.strokes.count) file=\(url.lastPathComponent)")
             } else {

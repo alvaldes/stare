@@ -6,6 +6,7 @@ user gets.
 
 ## Unreleased
 
+- Capture: downscaling on save, off by default — Settings → Capture can write a Retina capture at its logical size (1×) or scaled down to a maximum width instead of its full pixel size; the saved file only, the clipboard always gets the full image, and smaller captures are never upscaled
 - Capture: new `⌥⇧O` — drag an area anywhere (no drawing session needed) and the text it holds, plus a QR code if that is what you framed, lands on the clipboard as plain text; recognition runs on-device with Vision and nothing is uploaded, and the same gesture works from the menu bar's "Recognise Text"
 - Capture: the OCR gesture answers every dead end plainly instead of clobbering your clipboard: without Screen Recording it points at System Settings (never a prompt mid-gesture), an empty selection or a failed read shows "No text found" / "Text recognition failed", and `Esc` cancels the drag with everything left as it was
 - Capture: pin an image with its own action, distinct from pinning your marks — the capture card's pin button (and `⌥⇧I` for the latest capture) floats the captured picture as a borderless always-on-top window: drag it anywhere, scroll to resize, ⌥-scroll to change its opacity, and `⌥⇧L` toggles a lock that makes it click-through so you can work underneath it; several pinned images coexist, each closes on its own, and they stay on screen no matter what you open or close in Stare — all in memory, nothing written to disk

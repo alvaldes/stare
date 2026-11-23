@@ -112,20 +112,45 @@ public struct CapturePreference: Codable, Equatable, Sendable {
         didSet { fileNamePrefix = Self.sanitisedPrefix(fileNamePrefix) }
     }
 
+    /// Save-time downscaling for folder saves (T7/S14): off by default —
+    /// today's behaviour, where every capture is saved exactly as captured.
+    public var downscaleMode: CaptureDownscale.Mode
+
+    /// The pixel width `.maxWidth` scales wider captures down to; narrower
+    /// captures are left alone. Never stored below 1, so nothing degrades to
+    /// nothing. The default is comfortably under a Retina display's width.
+    public var maxSaveWidth: Int {
+        didSet { maxSaveWidth = Self.clampedSaveWidth(maxSaveWidth) }
+    }
+
+    /// The maximum width a fresh install gets for `.maxWidth` saves.
+    public static let defaultMaxSaveWidth = 1600
+
     /// The capture preferences a fresh install gets, matching today's
     /// clipboard behaviour.
     public static let standard = CapturePreference()
 
     /// Creates capture preferences, sanitising the prefix and degrading an
     /// unusable folder destination to the clipboard.
-    public init(format: CaptureFormat = .png, destination: CaptureDestination = .clipboard, fileNamePrefix: String = defaultPrefix) {
+    public init(
+        format: CaptureFormat = .png,
+        destination: CaptureDestination = .clipboard,
+        fileNamePrefix: String = defaultPrefix,
+        downscaleMode: CaptureDownscale.Mode = .off,
+        maxSaveWidth: Int = defaultMaxSaveWidth
+    ) {
         self.format = format
         self.destination = destination.isUsablePath ? destination : .clipboard
         self.fileNamePrefix = Self.sanitisedPrefix(fileNamePrefix)
+        self.downscaleMode = downscaleMode
+        self.maxSaveWidth = Self.clampedSaveWidth(maxSaveWidth)
     }
 
     private enum CodingKeys: String, CodingKey {
         case format, destination, fileNamePrefix
+        // The downscale settings sit at the end of the document (T7/S14), so
+        // an older blob decodes with them at their defaults.
+        case downscaleMode, maxSaveWidth
     }
 
     /// Lenient decoding: an unknown format falls back to `.png`, an unusable
@@ -138,6 +163,10 @@ public struct CapturePreference: Codable, Equatable, Sendable {
         self.destination = (try? container.decode(CaptureDestination.self, forKey: .destination)) ?? .clipboard
         let rawPrefix = try? container.decode(String.self, forKey: .fileNamePrefix)
         self.fileNamePrefix = Self.sanitisedPrefix(rawPrefix)
+        self.downscaleMode =
+            (try? container.decode(CaptureDownscale.Mode.self, forKey: .downscaleMode)) ?? .off
+        let rawMaxSaveWidth = try? container.decode(Int.self, forKey: .maxSaveWidth)
+        self.maxSaveWidth = Self.clampedSaveWidth(rawMaxSaveWidth ?? Self.defaultMaxSaveWidth)
     }
 
     /// Builds a capture file name: `<prefix>-<YYYY>-<MM>-<DD>-at-<HH>-<MM>-<SS>
@@ -163,5 +192,12 @@ public struct CapturePreference: Codable, Equatable, Sendable {
             prefix.unicodeScalars.allSatisfy({ safePrefixCharacters.contains($0) })
         else { return defaultPrefix }
         return prefix
+    }
+
+    /// A saved width is never allowed to degrade to nothing: below 1 (a
+    /// typo, a garbage blob) it floors at 1 pixel. There is no upper bound —
+    /// a limit larger than the capture is a no-op by the never-upscale rule.
+    private static func clampedSaveWidth(_ width: Int) -> Int {
+        max(1, width)
     }
 }

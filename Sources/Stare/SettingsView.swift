@@ -1500,6 +1500,7 @@ private struct CapturePane: View {
             }, right: {
                 VStack(spacing: SettingsMetrics.cardSpacing) {
                     fileNameCard
+                    saveSizeCard
                 }
             })
         }
@@ -1555,6 +1556,39 @@ private struct CapturePane: View {
             )
             if isClipboard {
                 Text("The clipboard carries PNG and TIFF only; the format applies to folder saves.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// Save-time downscaling (T7/S14): off by default, so every capture is
+    /// written exactly as captured. Applies to the folder save only — the
+    /// clipboard always carries the full capture.
+    private var saveSizeCard: some View {
+        SettingsCard(title: "Save size", symbol: "arrow.down.forward.and.arrow.up.backward") {
+            SettingRow(
+                title: "Downscale on save",
+                detail: "Shrinks a Retina capture to its logical size, or to a width limit, when the file is written. Never upscales.",
+                content: Picker("", selection: $model.capture.downscaleMode) {
+                    ForEach(CaptureDownscale.Mode.allCases, id: \.self) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 140, alignment: .trailing)
+                .disabled(isClipboard)
+            )
+            if model.capture.downscaleMode == .maxWidth {
+                SettingRow(
+                    title: "Max width",
+                    detail: "Wider captures are scaled down to this many pixels; narrower ones are left alone.",
+                    content: TextField("", value: $model.capture.maxSaveWidth, format: .number)
+                        .frame(width: 140)
+                )
+            }
+            if isClipboard {
+                Text("The clipboard always carries the full capture; downscaling applies to folder saves.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
