@@ -60,7 +60,7 @@ S23. Auditoría de blur, previa a S13: un área cubierta por blur no debe dejar 
 | T1 | Captura de ventana del frente con marcas compuestas | S10, S21 | parent | 1ee6393, ff41287, 989b795 |
 | T2a | Area drag: geometría pura, ⇧ cuadrado, clamp al display | S11, S21 | worker | 3437beb |
 | T2b-a | Area drag: base congelada al arrancar, con liberación en captura, clic perdido, Esc y deactivate | S11, S21 | worker | bccea8d |
-| T2b-b | Area drag: lupa y rectángulo recordado | S11, S21 | parent | — |
+| T2b-b | Area drag: lupa sobre el frame congelado y rectángulo recordado con Return | S11, S21 | worker | cfc2dcc |
 | T3 | Historial de capturas en memoria, reabrir en el editor | S12, S21 | parent | — |
 | T4 | Pin de la imagen capturada desde la card, con atajo propio y lock | S6, S4, S21 | parent | — |
 | T5 | OCR y QR on-device con atajo global ⌥⇧O | S7, S9, S22 | parent | — |
@@ -82,6 +82,14 @@ T2b-a necesita ojo humano: el congelado es píxeles y orientación, nada de eso 
 4. Terminar el arrastre: la imagen de la card coincide con el frame congelado, y el overlay vivo vuelve enseguida.
 5. `⇧S` en el whiteboard igual que antes (sin congelado), y desactivar a mitad de arrastre no deja frame viejo al reentrar.
 6. Sin permiso de Screen Recording el arrastre sigue funcionando en vivo, como hoy.
+
+## Checks manuales de T2b-b
+
+1. `⇧S` sobre un tooltip: la lupa muestra píxeles congelados a 4× con la cruz en el borde exacto, y cerca del borde del display salta al otro lado en vez de tapar lo que enmarcás.
+2. Segundo `⇧S`: el área anterior aparece ya enmarcada; `Return` la captura al instante; un arrastre la reemplaza.
+3. `Esc` a mitad de arrastre o con el rect precargado: vuelve el overlay vivo con las marcas intactas.
+4. `⇧S` en el whiteboard: sin lupa y sin rectángulo recordado, captura como antes.
+5. Sin Screen Recording: el arrastre funciona en vivo y no aparece lupa.
 
 ## Checks manuales de T1
 
@@ -130,3 +138,7 @@ L9. **Prioridad 1 (restricción de displays).** Textual: "los 5 checks los prueb
 L10. Los cinco puntos manuales de T1 pasaron (usuario: "los 5 puntos probados y funcionando"). T1 cerrada por verificación humana sobre `989b795`.
 
 L11. Límite del enfoque "pinear ventanas": la preferencia de alcance del board resuelve `"active"` al display **donde está el puntero**, no al primario (`OverlayController.buildBoardCanvases`, `state.boardScope`), y `openBoard()` activa la app y ordena un board por display antes de que cualquier test pueda moverlo. Conclusión: sin un cambio de producto no se puede garantizar desde los tests que esos dos archivos no compongan un frame suelto en un monitor secundario. Regla operativa que rige la tanda mientras el usuario esté mirando los otros monitores: **nunca correr la suite completa ni `WhiteboardClearRoutingTests` ni `ToolbarPanelLiveResizeTests`**; la verificación se hace con filtros de una clase por invocación (la forma con `|` no matcheó nada una vez y no se usa), prefiriendo las clases que no abren ventanas. Todo lo que corra `swift test` completo —incluido cualquier worker— tiene que respetar esta regla.
+
+L12. T2 cerrada: T2a (`3437beb`), T2b-a (`bccea8d`, base congelada) y T2b-b (`cfc2dcc`, lupa 4× + rectángulo recordado con `Return`). La lupa lee el frame congelado a propósito: sobre píxeles vivos mentiría sobre el borde que estás eligiendo; sin permiso de Screen Recording no hay lupa y el arrastre sigue en vivo. `Return` sólo se toma cuando hay un rectángulo precargado, y el whiteboard no recibe ninguna de las dos cosas.
+
+L13. Trampa de verificación encontrada dos veces: `swift test --filter <Clase>` puede imprimir `Executed 0 tests` y aun así correr los casos en esa misma invocación. La lectura fiable es contar `Test Case '...' passed` y restar las cinco líneas de `Test Suite '...' passed` por corrida. `Executed 0 tests` no prueba ni que el filtro no matcheó ni que la corrida pasó. Con la suite completa prohibida por L11, el filtro por clase es la única verificación disponible, así que este conteo importa.
