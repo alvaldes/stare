@@ -64,6 +64,12 @@ S24. **Autorizaciones de superficie entre sesiones.** Para que ninguna decisión
 - `Sources/Stare/OverlayController.swift`, la llamada a `CaptureFile.write` dentro de `deliver`: **autorizada** a la sesión hermana en su rama apilada, sólo esas líneas, porque los parámetros `app:`/`displayName:` existen únicamente ahí. `appName` debe ser nil cuando el proceso al frente es Stare: un archivo llamado "Stare" es una mentira silenciosa, y la regla de disposición de T10 lo convierte en el prefijo de siempre.
 - T12 (canvas componible) es de la sesión hermana: necesita el `EditorViewport` que sólo existe en su rama.
 
+S25. **Forense de merge, contrastada por las dos sesiones.** Coincide con el `git merge-tree` de esta rama: `capture-filenames` conflictúa sólo en `CHANGELOG.md`; `capture-extras` conflictúa en siete archivos. Por archivo:
+- `MarkRenderer.swift`: lo de la hermana es **una función agregada** (`redactionPatch`), lo de esta rama es el threading de `canvas:` y `drawSpotlight`. Aditivo.
+- `MarkCompositor.swift`: lo suyo es un dispatch dentro de `case .blur`; lo mío es `case .spotlight`. Líneas adyacentes del mismo switch.
+- `Stroke.init` y el mapeo persistido: **el único conflicto real**. `redactionStyle` (suyo) contra `fill` y `arrowHead` (míos), todos opcionales. El orden se re-aplica a mano, nunca lo elige git.
+- `PersistedStroke`: `redactionStyle` como `String?`, independiente de los campos de esta rama, tal como registra S24.
+
 ## Tasks
 
 | ID | Tarea | Specs | Ruta | Commit |
