@@ -550,6 +550,10 @@ final class OverlayController {
             canvas.panel.orderFrontRegardless()
             canvas.panel.makeFirstResponder(canvas.view)
             canvas.view.showIntroHint()
+            // The area drag's frozen base is stocked now, not when ⇧S is
+            // pressed: the capture's latency must not sit between the drag's
+            // start and its base.
+            canvas.view.stockAreaFrame()
         }
         canvasUnderPointer()?.panel.makeKey()
         NSCursor.crosshair.set()
@@ -783,20 +787,35 @@ final class OverlayController {
         deliver(result, area: nil, canvas: canvas, displayID: target.displayID)
     }
 
-    /// Captures one full frame of the display for a running area drag and
-    /// hands it to that canvas's view (S11/T2b slice A). Off the main thread,
-    /// so the drag's first updates never wait for the capture; a frame that
-    /// lands after the drag ended is stale and dropped by the view's
-    /// lifecycle. The same own-windows-excluded one-shot capture every other
-    /// capture path uses, so the frozen base is Stare's capture of the
-    /// display, never the overlay's own pixels.
-    private func captureAreaFreezeFrame(displayID: CGDirectDisplayID) {
+    /// Captures one full frame of the display for a running area drag or to
+    /// stock the drag's next base (S11/T2b slice A). Off the main thread, so
+    /// the drag's first updates never wait for the capture; a frame that lands
+    /// after its drag ended is stale and dropped by the view's lifecycle. The
+    /// same own-windows-excluded one-shot capture every other capture path
+    /// uses, so the frozen base is Stare's capture of the display, never the
+    /// overlay's own pixels.
+    private enum AreaFrameLanding {
+        /// A drag in flight asked for its own frame (the fallback when no
+        /// stocked frame exists); it lands through the drag's token lifecycle.
+        case drag
+        /// The pre-armed base: captured at activation and refreshed after each
+        /// area capture, so ⇧S freezes on a frame that already exists.
+        case stock
+    }
+
+    private func captureAreaFreezeFrame(
+        displayID: CGDirectDisplayID,
+        landing: AreaFrameLanding
+    ) {
         guard let canvas = canvases[displayID] else { return }
         let captureService = self.captureService
         Task.detached(priority: .userInitiated) {
             let image = try? captureService.captureDisplay(displayID)
             DispatchQueue.main.async {
-                canvas.view.landAreaFrame(image)
+                switch landing {
+                case .drag: canvas.view.landAreaFrame(image)
+                case .stock: canvas.view.landStockFrame(image)
+                }
             }
         }
     }
@@ -1040,6 +1059,7 @@ final class OverlayController {
         for canvas in canvases.values {
             canvas.panel.orderFrontRegardless()
             canvas.panel.makeFirstResponder(canvas.view)
+            canvas.view.stockAreaFrame()
         }
         canvasUnderPointer()?.panel.makeKey()
     }
@@ -1088,12 +1108,19 @@ final class OverlayController {
             canvas.view.liveFrameSource = liveFrames
             canvas.view.onBlurMarksChanged = { [weak self] in self?.liveFrames.wake() }
             // The area drag's frozen frame (S11/T2b slice A): the drag asks
-            // for one capture of this display the instant it starts. Board
-            // canvases never get this wiring — the freeze is out of the
-            // whiteboard's scope (S11), so a board drag stays pending and
-            // paints nothing, exactly as before.
+            // for one capture of this display only when no stocked frame
+            // exists. Board canvases never get this wiring — the freeze is
+            // out of the whiteboard's scope (S11), so a board drag stays
+            // pending and paints nothing, exactly as before.
             canvas.view.onAreaSelectionFrame = { [weak self] in
-                self?.captureAreaFreezeFrame(displayID: displayID)
+                self?.captureAreaFreezeFrame(displayID: displayID, landing: .drag)
+            }
+            // The source of the stocked frame (S11/T2b follow-up): captured
+            // when the canvas is built and again after each capture, so the
+            // frame exists before ⇧S is ever pressed. Board canvases stock
+            // nothing either.
+            canvas.view.onAreaSelectionStockFrame = { [weak self] in
+                self?.captureAreaFreezeFrame(displayID: displayID, landing: .stock)
             }
             canvases[displayID] = canvas
         }

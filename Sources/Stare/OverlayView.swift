@@ -71,9 +71,14 @@ class OverlayView: NSView {
 
     /// The frozen-frame lifecycle of the area drag (S11/T2b slice A). Pure
     /// lifecycle in StareCore; this view holds the image and paints it as the
-    /// drag's base. The whiteboard is out of the freeze's scope: its canvases
-    /// get no `onAreaSelectionFrame`, so a board drag stays `pending` and
-    /// paints nothing, exactly as before the freeze existed.
+    /// drag's base. The frozen base is stocked in the background — taken when
+    /// the controller builds this canvas and refreshed after each area capture
+    /// — so a `⇧S` drag freezes on a frame that already exists instead of
+    /// waiting out a capture that starts with the drag itself (whose latency
+    /// is longer than most drags). The per-drag ask survives only as the
+    /// fallback for arming with no stocked frame. The whiteboard is out of the
+    /// freeze's scope: its canvases get neither ask, so a board drag stays
+    /// `pending` and paints nothing, exactly as before the freeze existed.
     private(set) var areaFrame = AreaCaptureFrameState()
     /// The frozen frame itself. Only read through `frozenAreaBase`, which
     /// gates on the lifecycle, so a stale image can never paint.
@@ -87,9 +92,26 @@ class OverlayView: NSView {
     /// A pending drag armed while a capture was still in flight and owes its
     /// own ask once that landing comes home.
     private var areaFrameAskQueued = false
-    /// Asks the controller to capture this display once for the drag's base.
-    /// Nil where there is nothing to freeze (the whiteboard).
+    /// Asks the controller to capture this display once for the drag's base —
+    /// the fallback for a drag that finds no stocked frame. Nil where there is
+    /// nothing to freeze (the whiteboard).
     var onAreaSelectionFrame: (() -> Void)?
+    /// Asks the controller to capture this display to stock the drag's base
+    /// ahead of any drag. The controller calls `stockAreaFrame` when it builds
+    /// the canvas (activation, display rebuilds) and the view asks again after
+    /// each area capture; nil on the whiteboard.
+    var onAreaSelectionStockFrame: (() -> Void)?
+
+    /// The frame stocked for the next drag: captured in the background when
+    /// the canvas is built and refreshed after each area capture. Truthful
+    /// staleness contract: the screen as it was when drawing mode was entered,
+    /// refreshed after each capture — never swapped under a drag already
+    /// running on it. `clear()` (the leaving-the-overlay path) drops it, so a
+    /// new session never inherits the previous one's pixels.
+    private var areaFrameStock: CGImage?
+    /// Whether a stock capture is in flight — one at a time, so a landing
+    /// always answers the ask the view itself made.
+    private var stockCaptureInFlight = false
 
     /// The drag's frozen base while one is frozen, nil otherwise. Also the
     /// base an area capture composes over, so the captured pixels are exactly
@@ -99,15 +121,28 @@ class OverlayView: NSView {
         return areaFrameImage
     }
 
-    /// The area drag started: request the one frame the drag will run on.
-    /// Called from `beginAreaSelection` (the `⇧S` path). While a capture is
-    /// still in flight (an `Esc`-and-re-arm inside one capture's latency),
-    /// the ask queues behind its landing — the in-flight frame then lands as
-    /// a superseded token and the state rejects it, instead of becoming the
-    /// new drag's base.
+    /// The area drag started: freeze on the stocked frame when there is one —
+    /// instantly, no capture in the way — and only otherwise ask for one as
+    /// the fallback (a stock capture that failed, a session that was cleared,
+    /// or `⇧S` inside a still-flying first capture). Called from
+    /// `beginAreaSelection` (the `⇧S` path). While a capture is still in
+    /// flight (an `Esc`-and-re-arm inside one capture's latency), the ask
+    /// queues behind its landing — the in-flight frame then lands as a
+    /// superseded token and the state rejects it, instead of becoming the new
+    /// drag's base.
     func beginAreaFrameFreeze() {
         let token = areaFrame.begin()
         areaFrameImage = nil
+        if let stock = areaFrameStock {
+            // The frame already exists: the drag freezes on it at once, and a
+            // later stock landing replaces the stock for the next drag —
+            // never the base under this one.
+            areaFrameImage = stock
+            areaFrame.land(token)
+            needsDisplay = true
+            invalidateLiveBlurMarks()
+            return
+        }
         guard areaFrameCaptureInFlight == nil else {
             areaFrameAskQueued = true
             return
@@ -121,6 +156,30 @@ class OverlayView: NSView {
     private func askForAreaFrame(_ token: AreaCaptureFrameState.Token) {
         areaFrameCaptureInFlight = token
         onAreaSelectionFrame?()
+    }
+
+    /// Arms the stocked base: captures this display once in the background so
+    /// a later `⇧S` freezes on a frame that already exists. One at a time; the
+    /// controller calls this when the canvas is built, the view calls it again
+    /// after each area capture. Without Screen Recording the capture fails and
+    /// the stock stays empty, which leaves the fallback drag ask as today's
+    /// whole behavior.
+    func stockAreaFrame() {
+        guard let onAreaSelectionStockFrame, !stockCaptureInFlight else { return }
+        stockCaptureInFlight = true
+        onAreaSelectionStockFrame()
+    }
+
+    /// The stocked frame landed (or failed). Only answers the ask the view
+    /// itself made: a nil failure keeps whatever is stocked (nothing newer is
+    /// available), and a landing that arrives after `clear()` dropped the
+    /// stock is discarded, so it can never carry into a fresh session.
+    func landStockFrame(_ image: CGImage?) {
+        guard stockCaptureInFlight else { return }
+        stockCaptureInFlight = false
+        guard let image else { return }
+        areaFrameStock = image
+        Diag.log("area frame stocked \(image.width)x\(image.height)")
     }
 
     /// The requested frame landed (or failed). Called on the main thread by
@@ -163,7 +222,9 @@ class OverlayView: NSView {
     /// Releases the frozen base: on capture, on a stray click, on `Esc` (the
     /// drag cancel), on leaving the overlay (`clear`) and on deactivation
     /// (deactivate → clearAll → clear). The overlay goes back to exactly what
-    /// it was.
+    /// it was. The stocked frame is not part of the drag's lifecycle: a
+    /// cancelled drag keeps it (the screen under the overlay has not changed),
+    /// and `clear` drops it explicitly (see below).
     func releaseAreaFrame() {
         guard areaFrame.release() || areaFrameImage != nil else { return }
         areaFrameImage = nil
@@ -483,6 +544,13 @@ class OverlayView: NSView {
         finishTextEditing(commit: false)
         stopLaserTimer()
         releaseAreaFrame()
+        // The stocked frame never survives a cleared session: `clear` is also
+        // the deactivation path, so the next session starts with no base at
+        // all and arms its own fresh stock. The in-flight flag goes with it,
+        // so a refresh landing that arrives after the clear is discarded
+        // instead of restocking a session that already ended.
+        areaFrameStock = nil
+        stockCaptureInFlight = false
         areaMemory.clear()
         areaLoupePoint = nil
         noteBlurInterestChanged()
@@ -839,6 +907,10 @@ class OverlayView: NSView {
             // Released on capture and on a stray click alike: the frozen base
             // never outlives the drag.
             releaseAreaFrame()
+            // The capture consumed the drag's frame: re-stock in the
+            // background so the next ⇧S again freezes on a frame that already
+            // exists.
+            stockAreaFrame()
             return
         }
 
@@ -892,8 +964,9 @@ class OverlayView: NSView {
         // drag replaces it. The whiteboard never pre-loads.
         selectionRect = isAreaCaptureCanvas ? areaMemory.preload : nil
         areaLoupePoint = nil
-        // S11/T2b slice A: the drag runs on one frame taken now, so what the
-        // user is framing cannot change under them while they choose.
+        // The drag runs on a frame that was stocked ahead of it — the screen
+        // as it was when drawing mode was entered, refreshed after each
+        // capture. Only when none is on hand does it ask for its own frame.
         beginAreaFrameFreeze()
         needsDisplay = true
         Diag.log("area selection started preload=\(selectionRect != nil)")
@@ -923,6 +996,7 @@ class OverlayView: NSView {
             areaMemory.confirm(rect)
         }
         releaseAreaFrame()
+        stockAreaFrame()
         Diag.log("area selection confirmed by return \(rect)")
     }
 

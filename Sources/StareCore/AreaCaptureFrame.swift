@@ -1,17 +1,25 @@
 /// Lifecycle of the frozen frame an area drag runs on (S11, T2b slice A).
 ///
-/// The instant `⇧S` arms the area drag, Stare captures its own one-shot frame
-/// of that display (Screen Recording, Stare's windows excluded) and the drag
-/// runs on it: what the user is framing cannot change under them while they
-/// choose. The lifecycle is pure logic here — the frame image and the AppKit
-/// glue live in the app layer (`OverlayView` paints it as the drag's base and
-/// sources blur marks from it; `OverlayController` captures it once and
-/// composes the area capture over it).
+/// Stare keeps one frame of each display stocked in the background — taken
+/// when the overlay's canvas is built and refreshed after each area capture —
+/// so a `⇧S` drag freezes on a frame that already exists: a frame asked for by
+/// the same gesture that needs it would have to win a capture whose latency is
+/// usually longer than the drag itself. Only when nothing is stocked (the
+/// stock capture failed, the session was cleared, or `⇧S` arrives inside a
+/// still-flying first capture) does the drag ask for its own frame as it
+/// always did — the `pending` path below — and a failed ask leaves the drag
+/// running live. The lifecycle is pure logic here; the frame imagery, the
+/// stocked copy and the AppKit glue live in the app layer (`OverlayView`
+/// paints it as the drag's base and sources blur marks from it;
+/// `OverlayController` captures it and composes the area capture over it).
 ///
-/// Release contract: the base never outlives the drag. It is released on
-/// capture, on a stray click, on `Esc` (the drag cancel), on leaving the
-/// overlay (the canvases' clear) and on deactivation, and a frame that lands
-/// after its drag already ended is stale and must never paint.
+/// Release contract: the drag's own base never outlives the drag. It is
+/// released on capture, on a stray click, on `Esc` (the drag cancel), and a
+/// frame that lands after its drag already ended is stale and must never
+/// paint. The stocked frame is not the drag's base until a drag arms on it:
+/// releasing a drag keeps the stock, while the overlay's `clear` (the
+/// leaving-the-overlay path, also the deactivation path) drops the stock so
+/// the next session starts clean — nothing stale carries over.
 public struct AreaCaptureFrameState: Equatable {
     /// Which armed drag a frame belongs to. Each `begin` mints a fresh one:
     /// a frame that lands after its own drag already ended — or after `Esc`

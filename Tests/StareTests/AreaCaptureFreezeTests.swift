@@ -258,6 +258,144 @@ final class AreaCaptureFreezeTests: XCTestCase {
             "the second drag freezes on its own frame")
     }
 
+    // MARK: The stocked base (the frame exists before ⇧S is pressed)
+
+    // T2b follow-up: a freeze asked for by the drag that needs it can never
+    // win — the capture's latency is longer than the drag. So the frame is
+    // taken when the overlay's canvas is built and again after each capture,
+    // and ⇧S freezes on the frame that is already there. The per-drag ask
+    // survives only as the fallback for arming with no stocked frame.
+
+    func testAStockedFrameBecomesTheDragBaseWithoutADragAsk() {
+        let view = makeView()
+        var dragAsks = 0
+        view.onAreaSelectionFrame = { dragAsks += 1 }
+        var stockAsks = 0
+        view.onAreaSelectionStockFrame = { stockAsks += 1 }
+
+        view.stockAreaFrame()
+        XCTAssertEqual(stockAsks, 1, "arming the session asks once, in the background")
+
+        view.landStockFrame(makeSolidImage(width: 1800, height: 1200, red: 0.1, green: 0.9, blue: 0.2))
+
+        view.beginAreaSelection() // ⇧S, with no drag yet
+        XCTAssertEqual(view.frozenAreaBase?.width, 1800,
+            "the base exists before ⇧S is pressed — nothing to wait for")
+        XCTAssertEqual(dragAsks, 0,
+            "a drag that has a stocked frame must not wait for a capture it did not pre-arm")
+    }
+
+    func testAnAreaCaptureRefreshesTheStockForTheNextDrag() throws {
+        let view = makeView()
+        let window = try hostWindow(view)
+        defer { window.orderOut(nil) }
+        var captureRequests = 0
+        view.onCaptureRequest = { _ in captureRequests += 1 }
+        var stockAsks = 0
+        view.onAreaSelectionStockFrame = { stockAsks += 1 }
+
+        view.stockAreaFrame()
+        view.landStockFrame(makeSolidImage(width: 1800, height: 1200, red: 0.1, green: 0.9, blue: 0.2))
+
+        view.beginAreaSelection()
+        XCTAssertEqual(view.frozenAreaBase?.width, 1800, "the first drag freezes on the stock at once")
+        view.mouseDown(with: mouseEvent(.leftMouseDown, at: CGPoint(x: 100, y: 100), window: window))
+        view.mouseDragged(with: mouseEvent(.leftMouseDragged, at: CGPoint(x: 400, y: 300), window: window))
+        view.mouseUp(with: mouseEvent(.leftMouseUp, at: CGPoint(x: 400, y: 300), window: window))
+
+        XCTAssertEqual(captureRequests, 1)
+        XCTAssertNil(view.frozenAreaBase, "released on capture, as before")
+        XCTAssertEqual(stockAsks, 2, "the capture refreshes the stock in the background")
+
+        view.landStockFrame(makeSolidImage(width: 1760, height: 1160, red: 0.1, green: 0.1, blue: 0.9))
+
+        view.beginAreaSelection()
+        XCTAssertEqual(view.frozenAreaBase?.width, 1760,
+            "the second drag runs on the refreshed base, not the first one's")
+    }
+
+    func testClearReleasesTheStockSoNothingStaleCarriesIntoTheNextSession() {
+        let view = makeView()
+        var dragAsks = 0
+        view.onAreaSelectionFrame = { dragAsks += 1 }
+        var stockAsks = 0
+        view.onAreaSelectionStockFrame = { stockAsks += 1 }
+
+        view.stockAreaFrame()
+        view.landStockFrame(makeImage(width: 1800, height: 1200))
+        view.clear() // the deactivate path: deactivate → clearAll → clear
+
+        view.beginAreaSelection()
+        XCTAssertNil(view.frozenAreaBase,
+            "nothing stale carried out of the cleared session onto the next arming")
+        XCTAssertEqual(dragAsks, 1,
+            "with no stock the drag asks its own frame, exactly as before the stock existed")
+        XCTAssertEqual(view.areaFrame.phase, .pending,
+            "the fallback path is the unchanged pending freeze")
+    }
+
+    func testCancellingADragKeepsTheStockForTheNextDrag() {
+        // Esc a halfway drag: the live screen comes back, but the screen under
+        // the overlay has not changed, so the stock stays and the next ⇧S
+        // still freezes at once. Only leaving the overlay (clear) drops it.
+        let view = makeView()
+        var stockAsks = 0
+        view.onAreaSelectionStockFrame = { stockAsks += 1 }
+
+        view.stockAreaFrame()
+        view.landStockFrame(makeImage(width: 1800, height: 1200))
+        view.beginAreaSelection()
+        view.releaseAreaFrame() // what cancelAreaSelection runs on Esc
+        XCTAssertNil(view.frozenAreaBase, "the drag's base is released")
+
+        view.beginAreaSelection()
+        XCTAssertEqual(view.frozenAreaBase?.width, 1800,
+            "the stocked frame survives a cancelled drag")
+    }
+
+    func testAStockCaptureFailureLeavesTheDragLiveExactlyAsToday() {
+        let view = makeView()
+        view.stockAreaFrame()
+        view.landStockFrame(nil) // no Screen Recording, or the display is gone
+
+        view.beginAreaSelection()
+        XCTAssertNil(view.frozenAreaBase, "no permission, no base, nothing invented")
+        XCTAssertEqual(view.areaFrame.phase, .pending, "the drag waits on its own ask, as today")
+
+        view.landAreaFrame(nil) // the drag's own ask comes back empty too
+        XCTAssertEqual(view.areaFrame.phase, .idle,
+            "the failed ask releases the pending freeze: live drag, no loupe")
+        XCTAssertNil(view.frozenAreaBase)
+    }
+
+    func testAStockAskNeverRunsTwiceAtOnce() {
+        let view = makeView()
+        var stockAsks = 0
+        view.onAreaSelectionStockFrame = { stockAsks += 1 }
+
+        view.stockAreaFrame()
+        view.stockAreaFrame()
+        XCTAssertEqual(stockAsks, 1, "one capture in flight at a time")
+
+        view.landStockFrame(nil)
+        view.stockAreaFrame()
+        XCTAssertEqual(stockAsks, 2, "the next refresh goes out once the previous one came home")
+    }
+
+    func testARefreshLandingDuringALiveDragNeverSwapsItsBase() {
+        let view = makeView()
+        view.onAreaSelectionStockFrame = {}
+
+        view.stockAreaFrame()
+        view.landStockFrame(makeSolidImage(width: 1800, height: 1200, red: 0.1, green: 0.9, blue: 0.2))
+
+        view.beginAreaSelection()
+        view.landStockFrame(makeSolidImage(width: 1760, height: 1160, red: 0.1, green: 0.1, blue: 0.9))
+
+        XCTAssertEqual(view.frozenAreaBase?.width, 1800,
+            "the user framed on the stock they saw when the drag started — never swapped under them")
+    }
+
     // MARK: Blur over the frozen frame
 
     func testBlurMarksSourceFromTheFrozenFrameWhileItHolds() {
