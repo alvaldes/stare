@@ -102,6 +102,22 @@ T2b-a necesita ojo humano: el congelado es píxeles y orientación, nada de eso 
 5. `⇧S` en el whiteboard igual que antes (sin congelado), y desactivar a mitad de arrastre no deja frame viejo al reentrar.
 6. Sin permiso de Screen Recording el arrastre sigue funcionando en vivo, como hoy.
 
+## Checks manuales de las ramas hermanas (no corribles hasta integrar)
+
+Ninguno de estos se puede probar en el build instalado: el pixelate, el eraser fix y el canvas componible viven en ramas basadas en `main`, así que **no contienen las ocho features de esta rama** — y esta rama no contiene las de ellos. Se corren después del merge, en el build integrado.
+
+### eraser — `99e0038` (defecto preexistente, sin `S#`)
+
+En el editor, arrastrá la goma sobre una marca y la marca se va; a zoom 3× borra donde está el puntero y nada más; y `⌘Z` retira la última edición real, no el borrado que no dejó nada. Lo que reemplazó: el canvas enrutaba la goma por `begin`/`extend`/`commit`, acuñando un trazo vacío invisible que además se comía un `⌘Z`.
+
+### T12 canvas componible — `502a5e2` (S19) + `2ba387f` (S19) + `c3f4b63` (S19)
+
+Arrastrar un PNG desde Finder: cae centrado en el drop. `⌥` reclama una capa (arrastrar mueve, el grip redimensiona, click selecciona) y la esquina opuesta queda anclada. `⌫` borra, `[` y `]` reordenan. `⌘V` pega centrado en el área visible a cualquier zoom, clampeado; pegar dos veces y deshacer dos veces va en orden inverso; Save/Copy coincide con el canvas, incluida una capa que cuelga de un borde recortado. Pegar texto o una URL de archivo no hace nada y no deja paso de undo.
+
+### Plantillas de nombre — `{app}` / `{display}` (S17)
+
+Con una app al frente, el nombre del archivo lleva el nombre de la app y no "Stare". Captura desde el whiteboard (Stare al frente): el nombre cae al prefijo en lugar de nombrarse con la herramienta. **Es un check, no un comportamiento probado**: el guard no tiene costura headless, lo que está pineado es el rechazo que dispara.
+
 ## Checks manuales de T6b (pixelate, rama hermana)
 
 Redacción, con las palabras exactas de la sesión hermana:
