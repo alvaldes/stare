@@ -223,6 +223,9 @@ extension ToolbarGripperTests {
         )
         window.contentView = hosting
         window.appearance = NSAppearance(named: appearanceName)
+        // Never order a test window front on whatever display holds
+        // the pointer: park it on the primary screen first.
+        window.confineToPrimaryScreen()
         window.orderFrontRegardless()
         RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         let representation = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))

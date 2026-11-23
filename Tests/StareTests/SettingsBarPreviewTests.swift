@@ -180,6 +180,9 @@ final class SettingsBarPreviewTests: XCTestCase {
         )
         window.contentView = hosting
         window.appearance = NSAppearance(named: NSAppearance.Name.aqua)
+        // Never order a test window front on whatever display holds
+        // the pointer: park it on the primary screen first.
+        window.confineToPrimaryScreen()
         window.orderFrontRegardless()
         // The preference keys the stage's fit factor reads settle on this
         // run-loop hop, exactly the settle time the other render tests use.
