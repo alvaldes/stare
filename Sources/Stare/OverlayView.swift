@@ -499,6 +499,7 @@ class OverlayView: NSView {
         case .laserSpark: glyphCursors[role] ?? .crosshair
         case .eraserBlock: glyphCursors[role] ?? .crosshair
         case .blurDots: glyphCursors[role] ?? .crosshair
+        case .spotlightBeam: glyphCursors[role] ?? .crosshair
         }
     }
 
@@ -1886,7 +1887,9 @@ class OverlayView: NSView {
                 committedBounds[stroke.id] = computed
                 return computed
             }()
-            guard box.intersects(pageDirty) else { continue }
+            // A spotlight's dim spans the whole canvas, so it can never be
+            // culled by its own bounds — only its hole is local.
+            guard stroke.tool == .spotlight || box.intersects(pageDirty) else { continue }
             render(stroke, in: context)
         }
 
@@ -2015,6 +2018,10 @@ class OverlayView: NSView {
             withMarkRotation(stroke, in: context) { drawBlur(stroke, in: context) }
             return
         }
+        if stroke.tool == .spotlight {
+            drawSpotlight(stroke, in: context)
+            return
+        }
         MarkRenderer.draw(
             stroke: stroke,
             in: context,
@@ -2023,6 +2030,20 @@ class OverlayView: NSView {
         if stroke.tool == .number {
             withMarkRotation(stroke, in: context) { drawStepNumber(stroke) }
         }
+    }
+
+    /// Live spotlight: everything outside the mark's region dims, over the
+    /// whole visible canvas. Marks live in page space, so the canvas is the
+    /// visible view rect mapped back into page space — under the board's
+    /// pan and zoom the dim still covers everything the user sees, exactly
+    /// what the capture composites. The renderer turns the hole with the
+    /// mark; nothing here wraps the call in the rotation.
+    private func drawSpotlight(_ stroke: Stroke, in context: CGContext) {
+        MarkRenderer.drawSpotlight(
+            stroke,
+            canvas: viewTransform.rect(toPage: bounds),
+            in: context
+        )
     }
 
     /// The image a blur mark diffuses, with its pixels per view point. While
@@ -2214,6 +2235,7 @@ private enum ToolGlyphCursor {
         case .laserSpark: drawSpark()
         case .eraserBlock: drawEraserBlock()
         case .blurDots: drawDotGrid()
+        case .spotlightBeam: drawSpotlightBeam()
         case .editArrow, .textIBeam, .numberHand, .lineCrosshair:
             break // system roles: AppKit answers, nothing to draw
         }
@@ -2319,6 +2341,13 @@ private enum ToolGlyphCursor {
                 dot(centre: NSPoint(x: x, y: y), radius: 1.2)
             }
         }
+    }
+
+    /// Spotlight: an outlined ring around a filled beam dot — the window of
+    /// light with its source in it.
+    private static func drawSpotlightBeam() {
+        outline(NSBezierPath(ovalIn: NSRect(x: 3.4, y: 3.4, width: 9.2, height: 9.2)))
+        dot(centre: NSPoint(x: 8, y: 8), radius: 1.4)
     }
 
     // MARK: Path helpers

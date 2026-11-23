@@ -30,7 +30,7 @@ public enum PathBuilder {
             return linePath(from: first, to: points.last ?? first)
         case .arrow:
             return arrowPath(from: first, to: points.last ?? first)
-        case .rectangle, .blur:
+        case .rectangle, .blur, .spotlight:
             return rectanglePath(from: first, to: points.last ?? first)
         case .ellipse:
             return ellipsePath(from: first, to: points.last ?? first)

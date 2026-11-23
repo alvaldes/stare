@@ -1391,4 +1391,80 @@ final class DrawingSessionTests: XCTestCase {
         XCTAssertEqual(session.strokes.first?.arrowHead, .filled)
         XCTAssertEqual(session.undoneStrokes, [])
     }
+
+    // MARK: - S15 slice B: the spotlight is a mark like any other
+
+    /// The tool arrives through its persisted raw value, so these tests run
+    /// (and fail) before the case exists instead of failing to compile.
+    private func spotlightTool() throws -> Tool {
+        try XCTUnwrap(Tool(rawValue: "spotlight"), "the spotlight tool must exist")
+    }
+
+    /// A spotlight spans the dragged rectangle and nothing else: the commit
+    /// collapses it to its endpoints exactly like the blur.
+    func testSpotlightCommitsAsAnEndpointsOnlyAreaMark() throws {
+        var session = DrawingSession()
+        session.begin(at: CGPoint(x: 10, y: 10), tool: try spotlightTool(), ink: .black)
+        session.extend(to: CGPoint(x: 40, y: 30))
+        session.extend(to: CGPoint(x: 80, y: 60))
+        session.commit()
+
+        XCTAssertEqual(session.strokes.count, 1)
+        XCTAssertEqual(
+            session.strokes[0].points,
+            [CGPoint(x: 10, y: 10), CGPoint(x: 80, y: 60)],
+            "a spotlight keeps only the drag's endpoints"
+        )
+    }
+
+    /// A mark, not a pointer effect: undo takes it away, redo brings it back,
+    /// and the editor's move round trip keeps it whole.
+    func testSpotlightSurvivesUndoRedoAndAMove() throws {
+        var session = DrawingSession()
+        session.begin(at: CGPoint(x: 10, y: 10), tool: try spotlightTool(), ink: .black)
+        session.extend(to: CGPoint(x: 60, y: 50))
+        session.commit()
+        let original = session.strokes[0]
+
+        XCTAssertTrue(session.undo())
+        XCTAssertTrue(session.strokes.isEmpty)
+        XCTAssertTrue(session.redo())
+        XCTAssertEqual(session.strokes, [original])
+
+        let moved = MarkTransform.translated(original, by: CGPoint(x: 15, y: 5))
+        XCTAssertTrue(session.replace(moved))
+        XCTAssertEqual(session.strokes, [moved])
+        XCTAssertTrue(session.undo())
+        XCTAssertEqual(session.strokes, [original], "undo restores the pre-move geometry")
+    }
+
+    /// The eraser reads the spotlight as an area, like the blur: a point
+    /// inside the dragged rectangle touches the mark, a point outside does
+    /// not.
+    func testEraserTakesASpotlightByItsArea() throws {
+        var session = DrawingSession()
+        session.begin(at: CGPoint(x: 10, y: 10), tool: try spotlightTool(), ink: .black)
+        session.extend(to: CGPoint(x: 80, y: 60))
+        session.commit()
+        let id = session.strokes[0].id
+
+        XCTAssertEqual(session.erase(at: CGPoint(x: 45, y: 35)), [id], "the interior erases")
+
+        session.redo()
+        XCTAssertTrue(session.erase(at: CGPoint(x: 5, y: 5)).isEmpty, "outside the rect nothing erases")
+    }
+
+    /// The mark rides the documented persistence seam whole, so a snapshot
+    /// and the capture history restore the region the user framed.
+    func testSpotlightRoundTripsThroughThePersistenceSeam() throws {
+        let stroke = Stroke(
+            tool: try spotlightTool(),
+            ink: .black,
+            points: [CGPoint(x: 5, y: 6), CGPoint(x: 70, y: 45)]
+        )
+        let restored = try XCTUnwrap(
+            decoded(try JSONEncoder().encode(stroke.persisted))
+        )
+        XCTAssertEqual(restored, stroke, "the spotlight must survive the round trip whole")
+    }
 }

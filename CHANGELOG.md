@@ -6,6 +6,7 @@ user gets.
 
 ## Unreleased
 
+- Drawing: the spotlight joins the tools (`D`) — drag a region and everything outside it dims in the capture, with a soft rim fading from the region's edge; it is a mark like any other, so undo, redo, the eraser, moving and the editor all treat it as one, it works on the whiteboard and in the capture editor, and it carries no ink of its own — the ink keys keep working while it is selected
 - Drawing: annotation depth — `9` toggles whether the next rectangle or ellipse is drawn filled or outline-only, and `0` cycles the next arrow's head between the plain open barbs and a solid one; the style is a property of the mark itself, so shapes keep whatever they were drawn with through undo, redo and every capture, and a rebound tool shortcut always wins over the plain keys. The next text mark starts with the style the last one was typed at (its size and ink); the memory is session-scoped, nothing persists
 - Capture: downscaling on save, off by default — Settings → Capture can write a Retina capture at its logical size (1×) or scaled down to a maximum width instead of its full pixel size; the saved file only, the clipboard always gets the full image, and smaller captures are never upscaled
 - Capture: new `⌥⇧O` — drag an area anywhere (no drawing session needed) and the text it holds, plus a QR code if that is what you framed, lands on the clipboard as plain text; recognition runs on-device with Vision and nothing is uploaded, and the same gesture works from the menu bar's "Recognise Text"

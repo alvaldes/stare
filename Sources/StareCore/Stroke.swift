@@ -96,7 +96,7 @@ public struct Stroke: Identifiable, Equatable, Sendable {
         switch tool {
         case .highlighter: 18
         case .number: 2
-        case .text, .select, .eraser, .blur: 0
+        case .text, .select, .eraser, .blur, .spotlight: 0
         case .pen, .arrow, .line, .rectangle, .ellipse, .laser: 3
         }
     }
@@ -178,9 +178,10 @@ public struct Stroke: Identifiable, Equatable, Sendable {
             return bounds.insetBy(dx: -radius, dy: -radius).contains(local)
         case .eraser:
             return false
-        case .blur:
-            // The blur mark is an area, not an outline: a point inside the
-            // rectangle spanned by its endpoints touches the mark.
+        case .blur, .spotlight:
+            // The blur and the spotlight are areas, not outlines: a point
+            // inside the rectangle spanned by their endpoints touches the
+            // mark.
             guard let first = points.first, let last = points.last else { return false }
             return PathBuilder.normalizedRect(from: first, to: last).contains(local)
         case .pen, .highlighter, .arrow, .line, .rectangle, .ellipse, .laser:
@@ -201,7 +202,7 @@ public struct Stroke: Identifiable, Equatable, Sendable {
     public func isSelectedByCursor(at point: CGPoint, radius: CGFloat) -> Bool {
         if hitTest(point, radius: radius) { return true }
         switch tool {
-        case .rectangle, .ellipse, .blur, .text, .number:
+        case .rectangle, .ellipse, .blur, .spotlight, .text, .number:
             return displayBounds.insetBy(dx: -radius, dy: -radius).contains(point)
         case .select, .eraser, .pen, .highlighter, .arrow, .line, .laser:
             return false

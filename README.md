@@ -91,7 +91,7 @@ reopen it any time from the menu bar with **Setup Guide…**.
 | `⌥⇧I` | Pin the latest capture as a floating image (draggable, resizable, lockable) |
 | `⌥⇧O` | Recognise the text and QR code in an area you drag — on-device, straight to the clipboard |
 | `P` `H` `A` `L` `R` `O` | Pen, highlighter, arrow, line, rectangle, ellipse |
-| `T` `C` `F` `B` `E` | Text, numbered step, laser, blur, eraser |
+| `T` `C` `B` `D` `F` `E` | Text, numbered step, blur, spotlight, laser, eraser |
 | `1`–`8` | Red, orange, yellow, green, blue, purple, white, black |
 | `9` · `0` | Toggle whether the next shape is filled · cycle the next arrow's head (plain open, then filled) |
 | `S` · `⇧S` · `⌥S` | Capture the display · drag to capture an area · capture the front window |
@@ -107,6 +107,7 @@ reopen it any time from the menu bar with **Setup Guide…**.
 | Drawing | The `⇧S` area capture remembers the last rectangle for the session: press `⇧S` again and the old area is already framed — `Return` captures it as is, dragging chooses a new one — and leaving the overlay forgets it |
 | Drawing | `Esc` clears the marks, and `⌘Z` brings back everything it cleared |
 | Drawing | `9` toggles whether the next rectangle or ellipse is drawn filled or as an outline, and `0` cycles the next arrow's head between the plain open head and a solid one — the style is a property of the mark, so each shape keeps whatever it was drawn with through undo, redo and the capture. The next text mark also starts with the style the last one was typed at (its size and ink) for the session, and leaving the overlay forgets it |
+| Drawing | `D` arms the spotlight: drag a region and everything outside it dims — the region's ellipse stays clear, a soft rim fades from its edge into the dim, and the dim reaches the whole capture, so the shot shows exactly the area you emphasised. The spotlight is a mark like any other: undo, redo, the eraser, the pointer tool's move and the capture editor all treat it as one, it works on the whiteboard too, and it has no ink of its own — the number keys keep choosing inks while it is selected |
 | Whiteboard | `⌘←` `⌘→` change page (going past the last one adds a page) · `⌘B` flips the page between white and black · hold space and drag to pan (the pointer becomes a grabbing hand) · pinch, `⌘` + scroll or `⌘+`/`⌘−` zooms, `⌘0` resets pan and zoom |
 | Whiteboard | `S` captures the marks over the page colour, no Screen Recording needed · `Esc` closes the board and keeps the pages for the session |
 | Capture card | Hover keeps it on screen · click opens the editor · drag it into another app · the pin button in its corner floats the image as a borderless always-on-top window of its own: drag it anywhere, scroll to resize, ⌥-scroll to change its opacity, and each one closes on its own — the pinned images stay on screen no matter what you open or close in Stare, and they never leave your machine |

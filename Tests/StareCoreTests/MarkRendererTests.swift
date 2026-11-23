@@ -192,4 +192,98 @@ final class MarkRendererTests: XCTestCase {
         XCTAssertEqual(ArrowHeadStyle(rawValue: "open"), .open)
         XCTAssertEqual(ArrowHeadStyle(rawValue: "filled"), .filled)
     }
+
+    // MARK: - Spotlight (S15 slice B)
+
+    /// The spotlight weight outside the region (S15 slice B): one decision
+    /// shared by the overlay preview and the compositor, so both read the
+    /// same values back.
+    private var spotlightDimAlpha: CGFloat { 0.55 }
+
+    /// Black at `alpha` over the white canvas.
+    private func dimmedWhite(_ alpha: CGFloat) -> (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) {
+        (1 - alpha, 1 - alpha, 1 - alpha, 1)
+    }
+
+    /// Builds a spotlight stroke through its persisted raw value, so these
+    /// behaviour tests run (and fail) before the tool case exists instead of
+    /// failing to compile.
+    private func spotlightStroke(
+        from: CGPoint,
+        to: CGPoint,
+        ink: Ink = .black,
+        rotation: CGFloat = 0
+    ) throws -> Stroke {
+        let tool = try XCTUnwrap(Tool(rawValue: "spotlight"), "the spotlight tool must exist")
+        var stroke = Stroke(tool: tool, ink: ink, points: [from, to])
+        stroke.rotation = rotation
+        return stroke
+    }
+
+    private static let spotlightRect = (from: CGPoint(x: 20, y: 15), to: CGPoint(x: 80, y: 65))
+
+    /// The lit window is the dragged rectangle's inscribed ellipse: the
+    /// centre stays bare and a probe just inside the ellipse's edge on the
+    /// rectangle's own axis stays clear too.
+    func testSpotlightKeepsTheRegionInteriorClear() throws {
+        let stroke = try spotlightStroke(from: Self.spotlightRect.from, to: Self.spotlightRect.to)
+        for point in [CGPoint(x: 50, y: 40), CGPoint(x: 79, y: 40), CGPoint(x: 50, y: 16)] {
+            let pixel = colour(of: [stroke], at: point, in: Self.canvasSize)
+            assertApproximatelyEqual(pixel, (1, 1, 1, 1), tolerance: 0.02)
+        }
+    }
+
+    /// Everything beyond the soft rim dims at the fixed weight, no matter
+    /// how far out — the far corner reads exactly like the near rim's end.
+    func testSpotlightDimsEverythingOutsideTheRegion() throws {
+        let stroke = try spotlightStroke(from: Self.spotlightRect.from, to: Self.spotlightRect.to)
+        for point in [CGPoint(x: 5, y: 5), CGPoint(x: 95, y: 75), CGPoint(x: 5, y: 75)] {
+            let pixel = colour(of: [stroke], at: point, in: Self.canvasSize)
+            assertApproximatelyEqual(pixel, dimmedWhite(spotlightDimAlpha), tolerance: 0.03)
+        }
+    }
+
+    /// The rim ramps from fully clear at the region's ellipse to the dim
+    /// weight at the reach: halfway along that band (a probe at 11/12 of the
+    /// reach radius, on the rectangle's axis) the dim is half weight.
+    func testSpotlightRampRisesAcrossTheSoftRim() throws {
+        let stroke = try spotlightStroke(from: Self.spotlightRect.from, to: Self.spotlightRect.to)
+        let pixel = colour(of: [stroke], at: CGPoint(x: 83, y: 40), in: Self.canvasSize)
+        let halfwayAlpha = spotlightDimAlpha * 0.5
+        assertApproximatelyEqual(pixel, dimmedWhite(halfwayAlpha), tolerance: 0.04)
+    }
+
+    /// A spotlight has no ink of its own: the dim is identical whatever ink
+    /// the mark carries.
+    func testSpotlightIgnoresItsInk() throws {
+        let red = try spotlightStroke(from: Self.spotlightRect.from, to: Self.spotlightRect.to, ink: .red)
+        let blue = try spotlightStroke(from: Self.spotlightRect.from, to: Self.spotlightRect.to, ink: .blue)
+        for point in [CGPoint(x: 5, y: 5), CGPoint(x: 50, y: 40)] {
+            XCTAssertEqual(
+                colour(of: [red], at: point, in: Self.canvasSize).red,
+                colour(of: [blue], at: point, in: Self.canvasSize).red,
+                accuracy: 0.001
+            )
+        }
+    }
+
+    /// The dim always covers the whole canvas, even when the mark itself is
+    /// rotated: only the hole turns with the mark, never the shroud.
+    func testRotatedSpotlightStillDimsTheWholeCanvas() throws {
+        let stroke = try spotlightStroke(
+            from: Self.spotlightRect.from,
+            to: Self.spotlightRect.to,
+            rotation: .pi / 2
+        )
+        assertApproximatelyEqual(
+            colour(of: [stroke], at: CGPoint(x: 5, y: 5), in: Self.canvasSize),
+            dimmedWhite(spotlightDimAlpha),
+            tolerance: 0.03
+        )
+        assertApproximatelyEqual(
+            colour(of: [stroke], at: CGPoint(x: 50, y: 40), in: Self.canvasSize),
+            (1, 1, 1, 1),
+            tolerance: 0.02
+        )
+    }
 }

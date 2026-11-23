@@ -25,7 +25,7 @@ final class ToolbarLayoutInvariantTests: XCTestCase {
         let clamped = layout.removing(.tool(.eraser), intoPoolAt: -1)
 
         XCTAssertEqual(clamped.pool.first, .eraser, "a negative index clamps to slot 0")
-        XCTAssertEqual(clamped.pool.dropFirst(), [.laser, .number, .select, .highlighter, .line, .arrow, .rectangle, .ellipse, .text, .blur])
+        XCTAssertEqual(clamped.pool.dropFirst(), [.laser, .number, .select, .highlighter, .line, .arrow, .rectangle, .ellipse, .text, .blur, .spotlight])
     }
 
     /// A too-large pool index clamps to the end of the pool — the same
@@ -38,7 +38,7 @@ final class ToolbarLayoutInvariantTests: XCTestCase {
         let clamped = layout.removing(.tool(.eraser), intoPoolAt: 99)
 
         XCTAssertEqual(clamped.pool.last, .eraser, "a too-large index clamps to the end")
-        XCTAssertEqual(clamped.pool.dropLast(), [.laser, .number, .select, .highlighter, .line, .arrow, .rectangle, .ellipse, .text, .blur])
+        XCTAssertEqual(clamped.pool.dropLast(), [.laser, .number, .select, .highlighter, .line, .arrow, .rectangle, .ellipse, .text, .blur, .spotlight])
     }
 
     /// The boundary values keep their old meaning: 0 inserts in front of the
@@ -52,7 +52,7 @@ final class ToolbarLayoutInvariantTests: XCTestCase {
 
         XCTAssertEqual(layout.removing(.tool(.eraser), intoPoolAt: 0).pool.first, .eraser)
         let appended = layout.removing(.tool(.eraser), intoPoolAt: 2)
-        XCTAssertEqual(appended.pool.count, 11)
+        XCTAssertEqual(appended.pool.count, 12)
         XCTAssertEqual(appended.pool[2], .eraser, "pool.count appends right after the stored tools")
     }
 
@@ -66,7 +66,7 @@ final class ToolbarLayoutInvariantTests: XCTestCase {
         let removed = layout.removing(.separator, intoPoolAt: -7)
         XCTAssertEqual(removed.items, [.tool(.pen), .tool(.eraser)])
         XCTAssertEqual(removed.pool.first, .laser, "the pool keeps its order top-up after the stored tools")
-        XCTAssertEqual(removed.pool.count, 10)
+        XCTAssertEqual(removed.pool.count, 11)
     }
 
     // MARK: - a separator next to another separator does not vanish

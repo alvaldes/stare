@@ -16,6 +16,7 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
     case laser
     case eraser
     case blur
+    case spotlight
 
     public var id: String { rawValue }
 
@@ -34,6 +35,7 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
         case .laser: "F"
         case .eraser: "E"
         case .blur: "B"
+        case .spotlight: "D"
         }
     }
 
@@ -51,6 +53,7 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
         case .laser: "Laser pointer"
         case .eraser: "Eraser"
         case .blur: "Blur"
+        case .spotlight: "Spotlight"
         }
     }
 
@@ -71,6 +74,7 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
         case .laser: .laserSpark
         case .eraser: .eraserBlock
         case .blur: .blurDots
+        case .spotlight: .spotlightBeam
         }
     }
 
@@ -88,6 +92,7 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
         case .laser: "sparkles"
         case .eraser: "eraser"
         case .blur: "camera.filters"
+        case .spotlight: "sun.max"
         }
     }
 
@@ -95,7 +100,7 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
     /// samples carry no meaning for these tools.
     public var usesEndpointsOnly: Bool {
         switch self {
-        case .line, .arrow, .rectangle, .ellipse, .blur: true
+        case .line, .arrow, .rectangle, .ellipse, .blur, .spotlight: true
         case .select, .pen, .highlighter, .text, .number, .laser, .eraser: false
         }
     }
@@ -104,7 +109,7 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
     public var isClickTool: Bool {
         switch self {
         case .number, .text: true
-        case .select, .pen, .highlighter, .arrow, .line, .rectangle, .ellipse, .laser, .eraser, .blur: false
+        case .select, .pen, .highlighter, .arrow, .line, .rectangle, .ellipse, .laser, .eraser, .blur, .spotlight: false
         }
     }
 
@@ -116,7 +121,7 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
         [.pen, .highlighter],
         [.line, .arrow, .rectangle, .ellipse],
         [.text, .number],
-        [.blur, .laser],
+        [.blur, .spotlight, .laser],
         [.eraser],
     ]
 
@@ -194,6 +199,8 @@ public enum ToolCursor: Equatable, CaseIterable, Sendable {
     case eraserBlock
     /// A drawn grid of dots, for the frosted blur patch.
     case blurDots
+    /// A drawn ring around a beam dot, for the dimming spotlight region.
+    case spotlightBeam
 }
 
 public enum ToolShortcut {

@@ -40,7 +40,7 @@ final class ToolAndInkTests: XCTestCase {
     func testClickToolsAreNumberAndText() {
         XCTAssertTrue(Tool.number.isClickTool)
         XCTAssertTrue(Tool.text.isClickTool)
-        for tool in [Tool.pen, .highlighter, .arrow, .line, .rectangle, .ellipse, .laser, .eraser] {
+        for tool in [Tool.pen, .highlighter, .arrow, .line, .rectangle, .ellipse, .laser, .eraser, .blur, .spotlight] {
             XCTAssertFalse(tool.isClickTool, "\(tool) needs a drag")
         }
     }
@@ -86,6 +86,31 @@ final class ToolAndInkTests: XCTestCase {
         XCTAssertEqual(Tool.blur.symbolName, "camera.filters")
         XCTAssertEqual(ToolShortcut.tool(for: "b"), .blur)
         XCTAssertEqual(ToolShortcut.tool(for: "B"), .blur)
+    }
+
+    // S15 slice B: the spotlight (D) is a persistent dimming mark, an area
+    // tool like the blur — a key of its own, no ink of its own.
+    func testSpotlightResolvesFromDAndDescribesItself() {
+        XCTAssertEqual(Tool.spotlight.shortcut, "D")
+        XCTAssertEqual(Tool.spotlight.displayName, "Spotlight")
+        XCTAssertEqual(ToolShortcut.tool(for: "d"), .spotlight)
+        XCTAssertEqual(ToolShortcut.tool(for: "D"), .spotlight)
+        // The ink keys must keep working while the spotlight is selected:
+        // the spotlight claims a letter, never a digit, and every ink keeps
+        // its number.
+        XCTAssertEqual(ShortcutRouter.resolve("1"), .ink(.red))
+        for ink in Ink.allCases {
+            XCTAssertEqual(ShortcutRouter.resolve(Character("\(ink.number)")), .ink(ink))
+        }
+    }
+
+    func testSpotlightIsAnEndpointsOnlyDimmingAreaTool() {
+        XCTAssertTrue(Tool.spotlight.usesEndpointsOnly, "the spotlight spans the dragged rectangle")
+        XCTAssertFalse(Tool.spotlight.isClickTool)
+        XCTAssertFalse(Tool.spotlight.isTransient, "a spotlight is a persistent mark, never a fading one")
+        XCTAssertFalse(Tool.spotlight.isEraser)
+        XCTAssertFalse(Tool.spotlight.commitsImmediately)
+        XCTAssertTrue(Tool.spotlight.worksInCaptureEditor, "an emphasis region works over a still capture too")
     }
 
     // T5/S3: blur is an area tool drawn by dragging a rectangle.
@@ -178,7 +203,7 @@ final class ToolAndInkTests: XCTestCase {
         XCTAssertFalse(offered.contains(.select), "the cursor is dead in the capture editor")
         XCTAssertFalse(offered.contains(.text), "text has no field editor in the capture editor")
         XCTAssertFalse(offered.contains(.laser), "the laser fades with the session, not over a still image")
-        for tool in [.pen, .highlighter, .arrow, .line, .rectangle, .ellipse, .number, .eraser, .blur] as [Tool] {
+        for tool in [.pen, .highlighter, .arrow, .line, .rectangle, .ellipse, .number, .eraser, .blur, .spotlight] as [Tool] {
             XCTAssertTrue(offered.contains(tool), "\(tool) still works over a captured image")
         }
         // Same order and grouping as the main bar, minus the dead tools.
@@ -223,6 +248,7 @@ final class ToolAndInkTests: XCTestCase {
             .laser: .laserSpark,
             .eraser: .eraserBlock,
             .blur: .blurDots,
+            .spotlight: .spotlightBeam,
         ]
         XCTAssertEqual(expected.count, Tool.allCases.count, "the pin must name every tool")
         for (tool, role) in expected {

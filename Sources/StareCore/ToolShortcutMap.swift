@@ -78,7 +78,7 @@ public struct ToolShortcutMap: Codable, Equatable, Sendable {
 
     private enum ToolKey: String, CodingKey {
         case select, pen, highlighter, arrow, line, rectangle, ellipse
-        case text, number, laser, eraser, blur
+        case text, number, laser, eraser, blur, spotlight
     }
 
     /// Encodes each tool's shortcut as a single-character string; decoding is

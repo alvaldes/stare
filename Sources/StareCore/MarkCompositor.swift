@@ -102,6 +102,21 @@ public enum MarkCompositor {
                 drawBlur(stroke, in: context, base: base, scale: scale, diffusesContent: diffusesContent)
             }
             return
+        case .spotlight:
+            // The dim covers the whole capture, in overlay points. The
+            // renderer turns the hole with the mark itself; nothing here
+            // wraps the call in the rotation transform.
+            MarkRenderer.drawSpotlight(
+                stroke,
+                canvas: CGRect(
+                    x: 0,
+                    y: 0,
+                    width: CGFloat(base.width) / scale,
+                    height: CGFloat(base.height) / scale
+                ),
+                in: context
+            )
+            return
         default:
             MarkRenderer.draw(stroke: stroke, in: context)
         }
