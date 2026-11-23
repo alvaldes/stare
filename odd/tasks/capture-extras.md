@@ -33,9 +33,9 @@ lines below are quoted from it verbatim, because that file is not on this branch
 
 | ID | Specs | Task | Route | Commit |
 | --- | --- | --- | --- | --- |
-| T6a | S23 | Audit blur as redaction: measure what survives a blur mark, and whether the original is reconstructible | worker | |
+| T6a | S23 | Audit blur as redaction: measure what survives a blur mark, and whether the original is reconstructible | worker | 8fea337 (record) |
 | T6b | S13 | Pixelate as the second redaction option next to blur (contingent on T6a) | worker | |
-| T9 | S16 | Editor zoom and pan, tool keys unchanged | worker | |
+| T9 | S16 | Editor zoom and pan, tool keys unchanged | worker | 36a6a72 |
 | T10 | S17 | Filename templates by token over the folder destination; the current prefix keeps working | worker | |
 | T11 | S18 | Optional backdrop on save: padding, rounded corners, shadow | worker | |
 
@@ -60,3 +60,17 @@ and the `AreaCapture*`/`AreaSelection*`/`FrontWindow*`/`WindowCaptureGeometry` f
   merge into `main` without the human saying so.
 - **L4** (evidence, T6a): the blur is one `CIGaussianBlur` whose radius is a fixed constant — `BlurEffect.defaultRadius = 15` pt, multiplied by the backing scale, never proportional to the mark and with no user control anywhere. With that radius no cheap attack recovers either fixture: downscale/upscale, unsharp deconvolution, thresholding and deconvolution-plus-threshold all fail, and Vision OCR reads nothing in the blurred region on both the small-text and the 40 pt headline fixtures, while it reads both originals. Pearson correlation against the original is 0.17 for small text and 0.93 for the large plate, and against a low-passed original 0.43 and 0.95: only the presence, position and extent of a redacted block survive, which is inherent to any in-place primitive that respects the mark silhouette.
   **Verdict: S23 holds at the shipped parameters**, so the spec's fallback clause does not trigger — the randomized pixelate is a second *option* (S13), not a replacement, and the README does not need correcting. The structural caveat is the radius-to-glyph ratio: 12 pt was the smallest radius in the sweep that stayed safe against 11 pt text, so anything that later exposes a radius below roughly 10 pt would erode S23 and must be blocked instead of offered.
+- **L5** (evidence, T9): the zoom is a pure `EditorViewport` in StareCore — zoom about a point, pan, clamped so
+  the capture never leaves the viewport, the fit as the fixed point of every transition — and the editor
+  composes it with the existing crop space. The save target stays fit-sized, which is what makes a pen line
+  drawn at 3× save byte-identical to the same line drawn at the fit, and a blur drawn at 3× diffuse exactly
+  the same rect; both are pinned. 19 tests (8 pure, 11 through the canvas), the four neighbouring editor
+  classes still green, tool keys untouched. 36a6a72.
+  **Manual checks**: zoom feel on trackpad and wheel, the hand cursors under space-drag, pinch about the
+  pointer, and the scroll-pan direction convention — deltas are taken raw, and synthesized events cannot
+  confirm the felt direction.
+  **Found, not fixed** (pre-existing, outside T9): the editor canvas never routes the eraser to
+  `DrawingSession.erase`, so eraser strokes commit as invisible no-ops.
+- **L6** (slice note): T6a + T9 are 1104 authored lines over three commits, past the ~400-line slice. T6a is
+  a record, T9 is one unit (pure viewport, editor composition, tests, docs). Delivery shape when publishing:
+  this branch as one PR per task once the peer's T7 unblocks the save path, never T6b + T10 + T11 together.
