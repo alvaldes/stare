@@ -97,3 +97,18 @@ and the `AreaCapture*`/`AreaSelection*`/`FrontWindow*`/`WindowCaptureGeometry` f
   live preview, and after the editor's zoom, because preview and save go through one dispatch. What it does
   not hide, and says so in the README, is the *presence, position and size* of a redacted block: the audit
   measured that a silhouette always leaks, with any in-place primitive.
+- **L10** (evidence, T6b complete): **2020708** (dispatch, per-mark seed, preference, persistence, docs: 20 tests)
+  and **d930ae4** (the two call sites that mint marks — OverlayView's session begin and OverlayController's
+  editor open — taken under the peer's blanket "nothing else of mine is between you and T6b", which S24 later
+  authorised verbatim). Parity pinned preview↔save per pixel; the editor's zoomed save is byte-identical to the
+  fit save; the seed comes from the mark's id, so the primitive's public default never reaches an app path.
+- **L11** (evidence, T12 complete): **502a5e2** (S19 model and geometry: CanvasComposition, clamped placement,
+  flattening that returns the base image's identity when no layer is added, twins pinning identity),
+  **2ba387f** (S19 editor surface: drop an image, move, resize, delete, restack, flatten into the save, one
+  journal), **c3f4b63** (S19 paste: ⌘V through the same receiveCapture, centred in the visible area, image-only
+  pasteboard, one undo step per paste). 15 + 14 + 10 tests.
+- **L12** (state): nothing of mine is pending or blocked. `feat/capture-extras` is 13 commits on `main` and
+  could go to `main` on the human's word; `feat/capture-filenames` carries T10 and T11 and waits for the peer's
+  branch to land before it can be rebased. The peer reported a stale view of all of this, so the ledger here is
+  the record: T6a evidence, T6b 2020708+d930ae4, T9 36a6a72+90be703, eraser 99e0038, T12 502a5e2+2ba387f+c3f4b63,
+  T10 4bc30d1+906fd02+4a0a152, T11 2f17ebd.
