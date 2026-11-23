@@ -20,6 +20,13 @@ public struct PersistedStroke: Codable, Equatable, Sendable {
     public var createdAt: Date?
     public var badgeSize: CGFloat?
     public var rotation: CGFloat
+    /// S15: `true` when the shape was drawn filled. Nil in documents written
+    /// before the field existed — they decode to the outline default.
+    public var fill: Bool? = nil
+    /// S15: `ArrowHeadStyle.rawValue` of an arrow mark's head, nil for every
+    /// other tool and in documents written before the field existed; an
+    /// unknown raw value falls back to the open head.
+    public var arrowHead: String? = nil
 }
 
 /// The persisted form of one mark (see `PersistedStroke`).
@@ -36,7 +43,9 @@ extension Stroke {
             textSize: textSize,
             createdAt: createdAt,
             badgeSize: badgeSize,
-            rotation: rotation
+            rotation: rotation,
+            fill: isFilled ? true : nil,
+            arrowHead: isFilledHead ? arrowHead.rawValue : nil
         )
     }
 
@@ -57,14 +66,34 @@ extension Stroke {
             textSize: stroke.textSize,
             createdAt: stroke.createdAt,
             badgeSize: stroke.badgeSize,
-            rotation: stroke.rotation
+            rotation: stroke.rotation,
+            fill: stroke.fill ?? false,
+            arrowHead: stroke.arrowHead.flatMap(ArrowHeadStyle.init(rawValue:)) ?? .open
         )
+    }
+
+    /// Whether a mark stores nothing extra, so its persisted form omits the
+    /// S15 fields entirely and a document carries no decoration it does not
+    /// show.
+    private var isFilledHead: Bool {
+        tool == .arrow && arrowHead == .filled
     }
 }
 
 /// The marks of one drawing layer plus its undo history. A session is a value
 /// type: the overlay owns one per display, and tests drive it directly.
 public struct DrawingSession: Equatable, Sendable {
+    /// The remembered default of the next text mark (S15): a font size in
+    /// points and an ink.
+    public struct TextMarkStyle: Equatable, Sendable {
+        public var fontSize: CGFloat
+        public var ink: Ink
+
+        public init(fontSize: CGFloat, ink: Ink) {
+            self.fontSize = fontSize
+            self.ink = ink
+        }
+    }
     /// Committed marks, in draw order.
     public private(set) var strokes: [Stroke] = []
     /// Marks `undo` took away, newest last, waiting for `redo`.
@@ -79,6 +108,11 @@ public struct DrawingSession: Equatable, Sendable {
     public private(set) var nextStepNumber: Int = 1
     /// How long laser marks live before they are pruned.
     public var laserLifetime: TimeInterval = 1.2
+    /// The style the next text mark starts with (S15): the size and ink of the
+    /// last committed text mark, session-scoped — nothing persists it, and a
+    /// fresh session starts with no memory, so the next text falls back to the
+    /// shipped default the view measures with.
+    public private(set) var lastTextStyle: TextMarkStyle?
 
     /// What undo can reverse, newest last.
     private enum UndoOp: Sendable, Equatable {
@@ -121,6 +155,7 @@ public struct DrawingSession: Equatable, Sendable {
             && lhs.active == rhs.active
             && lhs.nextStepNumber == rhs.nextStepNumber
             && lhs.laserLifetime == rhs.laserLifetime
+            && lhs.lastTextStyle == rhs.lastTextStyle
             // Two sessions that only look alike but hold different history
             // behave differently on undo/redo, so the journals count too.
             && lhs.undoOps == rhs.undoOps
@@ -158,7 +193,14 @@ public struct DrawingSession: Equatable, Sendable {
     /// until its content is confirmed. The edit cursor never starts a mark: it
     /// transforms existing ones, so a stray drag must leave nothing behind.
     @discardableResult
-    public mutating func begin(at point: CGPoint, tool: Tool, ink: Ink, now: Date = Date()) -> Stroke {
+    public mutating func begin(
+        at point: CGPoint,
+        tool: Tool,
+        ink: Ink,
+        fill: Bool = false,
+        arrowHead: ArrowHeadStyle = .open,
+        now: Date = Date()
+    ) -> Stroke {
         guard !tool.isSelection else {
             return Stroke(tool: tool, ink: ink, points: [point])
         }
@@ -167,6 +209,14 @@ public struct DrawingSession: Equatable, Sendable {
         // The badge stores the size it is drawn at, so a later uniform scale
         // scales the badge and its digit with it (advisory A).
         if tool == .number { stroke.badgeSize = PathBuilder.badgeDiameter }
+        // S15: the style keys arm properties of the next mark. Only the tool
+        // a property belongs to stores it, so a mark never carries a style it
+        // never shows.
+        switch tool {
+        case .rectangle, .ellipse: stroke.isFilled = fill
+        case .arrow: stroke.arrowHead = arrowHead
+        default: break
+        }
 
         if tool.commitsImmediately {
             stroke.stepNumber = nextStepNumber
@@ -184,6 +234,14 @@ public struct DrawingSession: Equatable, Sendable {
         current.text = text
         current.textSize = size
         active = current
+    }
+
+    /// Remembers the style the next text mark starts with (S15). Called by the
+    /// surface that knows the measured font size at the moment a text mark
+    /// commits; an unusable size is refused so the memory never holds garbage.
+    public mutating func rememberTextStyle(_ style: TextMarkStyle) {
+        guard style.fontSize > 0 else { return }
+        lastTextStyle = style
     }
 
     /// Removes every mark the pointer touches. Returns the removed ids.
@@ -441,6 +499,9 @@ public struct DrawingSession: Equatable, Sendable {
         undoOps.removeAll()
         active = nil
         nextStepNumber = 1
+        // The style memory is session-scoped (S15): a cleared session starts
+        // its next text over with the shipped default.
+        lastTextStyle = nil
     }
 
     /// The Escape clear (T4/S5): every committed mark goes away as one undoable

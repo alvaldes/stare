@@ -309,7 +309,12 @@ class OverlayView: NSView {
         onBatchTransform?(strokes)
     }
 
-    static let textFont = NSFont.systemFont(ofSize: 20, weight: .regular)
+    static let textFont = font(ofSize: OverlayStyle.textSize)
+
+    /// The system UI font at `size`, the one shape every text size takes.
+    static func font(ofSize size: CGFloat) -> NSFont {
+        NSFont.systemFont(ofSize: size, weight: .regular)
+    }
     private static let eraserRadius: CGFloat = 8
 
     private var textField: NSTextField?
@@ -789,7 +794,13 @@ class OverlayView: NSView {
             finishPendingTextEditing()
         }
 
-        let placed = session.begin(at: point, tool: state.tool, ink: state.ink)
+        let placed = session.begin(
+            at: point,
+            tool: state.tool,
+            ink: state.ink,
+            fill: state.shapesFilled,
+            arrowHead: state.arrowHeadStyle
+        )
         if state.tool.isTransient { startLaserTimer() }
         noteBlurInterestChanged()
         noteSessionChanged()
@@ -1373,14 +1384,22 @@ class OverlayView: NSView {
 
     private func beginTextEditing(at pagePoint: CGPoint, viewPoint: CGPoint) {
         finishTextEditing(commit: true)
-        session.begin(at: pagePoint, tool: .text, ink: state.ink)
+        // S15 slice A: the next text starts with the style of the last
+        // committed one — the remembered size and ink — instead of resetting
+        // to the palette ink and the shipped 20-pt field. With no memory
+        // (or the capture editor's own surfaces) today's behavior stands.
+        let remembered = session.lastTextStyle
+        let ink = remembered?.ink ?? state.ink
+        session.begin(at: pagePoint, tool: .text, ink: ink)
 
         let field = NSTextField(frame: CGRect(x: viewPoint.x, y: viewPoint.y, width: 320, height: 30))
         field.isBezeled = false
         field.drawsBackground = false
         field.focusRingType = .none
-        field.font = Self.textFont
-        field.textColor = NSColor(cgColor: state.ink.cgColor()) ?? .white
+        // The field shows what the mark will measure at, so remembering a
+        // size never misleads the user about the text they are typing.
+        field.font = remembered.map { Self.font(ofSize: $0.fontSize) } ?? Self.textFont
+        field.textColor = NSColor(cgColor: ink.cgColor()) ?? .white
         field.delegate = self
         field.cell?.wraps = false
         field.cell?.isScrollable = true
@@ -1404,6 +1423,7 @@ class OverlayView: NSView {
     private func finishTextEditing(commit: Bool, text: String? = nil) {
         guard let field = textField else { return }
         let typed = text ?? field.currentEditor()?.string ?? field.stringValue
+        let fieldFont = field.font
         Diag.log(
             "text finish commit=\(commit) explicit=\(text != nil) chars=\(typed.count) active=\(session.active?.tool.rawValue ?? "nil") strokes=\(session.strokes.count)"
         )
@@ -1416,7 +1436,7 @@ class OverlayView: NSView {
         }
 
         if commit, !typed.isEmpty {
-            let size = (typed as NSString).size(withAttributes: [.font: Self.textFont])
+            let size = (typed as NSString).size(withAttributes: [.font: fieldFont ?? Self.textFont])
             // The field is a view-space editor: its measured size is screen
             // points, while the text mark stores page-space points.
             session.setActiveText(
@@ -1427,6 +1447,11 @@ class OverlayView: NSView {
             if let committed = session.strokes.last {
                 committedBounds[committed.id] = committed.bounds
                 onCommit?(committed)
+                // S15 slice A: the style of the text that just committed
+                // becomes the next text's remembered default.
+                if let fontSize = fieldFont?.pointSize {
+                    session.rememberTextStyle(.init(fontSize: fontSize, ink: committed.ink))
+                }
             }
         } else {
             session.undo()
@@ -1642,6 +1667,22 @@ class OverlayView: NSView {
                 } else {
                     onCaptureRequest?(nil)
                 }
+                return
+            }
+            // S15 slice A: the style keys the plain keys leave free. They sit
+            // after the live shortcut router on purpose — a rebound tool entry
+            // keeps winning over a plain digit — and after the ink digits.
+            // `9` toggles whether the next shape is filled; `0` cycles the
+            // next arrow's head. Style of the coming mark, nothing persisted,
+            // armed from anywhere the way the ink digits are.
+            if character == "9" {
+                state.shapesFilled.toggle()
+                Diag.log("shapes filled \(state.shapesFilled)")
+                return
+            }
+            if character == "0" {
+                state.arrowHeadStyle = state.arrowHeadStyle.next
+                Diag.log("arrow head \(state.arrowHeadStyle.rawValue)")
                 return
             }
         }

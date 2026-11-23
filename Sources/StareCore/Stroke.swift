@@ -1,6 +1,25 @@
 import CoreGraphics
 import Foundation
 
+/// The head an arrow mark carries. Pure model: the open head is the shipped
+/// barb pair, the filled head inks the triangle the barbs span. The style is
+/// a property of the mark (S15), so an arrow keeps the head it was drawn
+/// with through undo, redo and the editor.
+public enum ArrowHeadStyle: String, CaseIterable, Sendable {
+    /// The shipped arrow head: two straight barbs from the tip.
+    case open
+    /// A solid triangle spanning the two barbs.
+    case filled
+
+    /// The next style when the key cycles the choice.
+    public var next: ArrowHeadStyle {
+        switch self {
+        case .open: .filled
+        case .filled: .open
+        }
+    }
+}
+
 /// One mark on the screen. Points live in a top-left-origin, display-local space
 /// measured in points, which is what the overlay view and the capture both use.
 public struct Stroke: Identifiable, Equatable, Sendable {
@@ -25,6 +44,13 @@ public struct Stroke: Identifiable, Equatable, Sendable {
     /// bounds). Positive turns clockwise on screen. It is metadata, never baked
     /// into `points`: a rotated rectangle must stay a rectangle.
     public var rotation: CGFloat
+    /// S15: whether this mark draws filled instead of outline only. A property
+    /// of the mark: a shape keeps whatever it was drawn with through undo,
+    /// redo and the editor. Only ever true on `.rectangle` and `.ellipse`.
+    public var isFilled: Bool = false
+    /// S15: the head this arrow mark draws. A property of the mark like the
+    /// fill; only ever set on `.arrow`.
+    public var arrowHead: ArrowHeadStyle = .open
 
     public init(
         id: UUID = UUID(),
@@ -36,7 +62,9 @@ public struct Stroke: Identifiable, Equatable, Sendable {
         textSize: CGSize? = nil,
         createdAt: Date? = nil,
         badgeSize: CGFloat? = nil,
-        rotation: CGFloat = 0
+        rotation: CGFloat = 0,
+        fill: Bool = false,
+        arrowHead: ArrowHeadStyle = .open
     ) {
         self.id = id
         self.tool = tool
@@ -48,6 +76,8 @@ public struct Stroke: Identifiable, Equatable, Sendable {
         self.createdAt = createdAt
         self.badgeSize = badgeSize
         self.rotation = rotation
+        self.isFilled = fill
+        self.arrowHead = arrowHead
     }
 
     /// The mark's own badge diameter, falling back to the default.

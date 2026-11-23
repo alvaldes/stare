@@ -63,6 +63,18 @@ final class EditorState: ObservableObject {
     @Published var toolShortcuts: ToolShortcutMap = .standard {
         didSet { writeIfNotSyncing { $0.toolShortcuts = toolShortcuts } }
     }
+    /// S15 slice A: whether the next rectangle or ellipse is drawn filled, and
+    /// the head the next arrow carries — the style keys of the drawing
+    /// session (`9` toggles the fill, `0` cycles the head, overlay only).
+    /// Deliberately NOT wired into the preferences mirror plumbing: nothing
+    /// persists them, nothing in Settings references them, and surfaces that
+    /// have not adopted the keys keep the outline/open default — the capture
+    /// editor draws its shapes through its own `session.begin` calls and
+    /// stays outline-only for now (gap on record, a later unit adopts it).
+    @Published var shapesFilled: Bool = false
+    /// S15 slice A: the arrowhead style the next arrow is drawn with (see
+    /// `shapesFilled` for why this stays out of the persistence plumbing).
+    @Published var arrowHeadStyle: ArrowHeadStyle = .open
     /// The router the drawing surfaces resolve keys with: always rebuilt from
     /// the live map, so the map the Settings pane edits is the map that
     /// routes.

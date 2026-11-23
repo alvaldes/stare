@@ -1202,4 +1202,193 @@ final class DrawingSessionTests: XCTestCase {
     func testSessionStoreOfAnEmptyStoreIsFresh() {
         XCTAssertNil(BootSessionStore(store: InMemoryPreferenceStore(), bootTime: { Date() }).load())
     }
+
+    // MARK: - S15 slice A: shape fill, arrow-head styles, remembered text style
+
+    private func decoded(_ data: Data) throws -> Stroke? {
+        Stroke(persisted: try JSONDecoder().decode(PersistedStroke.self, from: data))
+    }
+
+    /// A document written before fill and arrow heads existed simply carries
+    /// no such keys: the restored mark must be outline with the open head,
+    /// never a filled shape resurrected by a decode default.
+    func testLegacyPersistedStrokeWithoutTheNewFieldsDecodesOutlineAndOpen() throws {
+        let json = Data("""
+        {"id":"11111111-1111-1111-1111-111111111111","tool":"rectangle","ink":"blue",\
+         "points":[[10,20],[30,40]],"stepNumber":null,"text":null,\
+         "textSize":null,"createdAt":null,"badgeSize":null,"rotation":0}
+        """.utf8)
+        let restored = try XCTUnwrap(decoded(json))
+        XCTAssertEqual(restored.tool, .rectangle)
+        XCTAssertEqual(restored.ink, .blue)
+        XCTAssertFalse(restored.isFilled, "a legacy mark must restore as an outline")
+        XCTAssertEqual(restored.arrowHead, .open, "a legacy mark must restore the open head")
+    }
+
+    /// The plain keys `9` and `0` are free for the new style keys: no tool
+    /// letter claims them, no ink digit answers them, and a rebound map entry
+    /// keeps winning before any plain-key decision (the view routes the
+    /// shortcut map first).
+    func testFillAndArrowHeadKeysAreFreeOfCollisions() {
+        XCTAssertNil(Tool.allCases.first { $0.shortcut == "9" || $0.shortcut == "0" },
+                     "no tool must claim the style keys")
+        XCTAssertNil(ToolShortcutMap.standard.tool(for: "9"))
+        XCTAssertNil(ToolShortcutMap.standard.tool(for: "0"))
+
+        for digit in 1...8 {
+            guard case .ink = ShortcutRouter.resolve(Character("\(digit)")) else {
+                return XCTFail("digit \(digit) must select its ink")
+            }
+        }
+        XCTAssertEqual(ShortcutRouter.resolve("9"), .none)
+        XCTAssertEqual(ShortcutRouter.resolve("0"), .none, "no ink lives on 0")
+
+        var rebound = ToolShortcutMap.standard
+        guard case .success = rebound.assigning("9", to: .pen) else {
+            return XCTFail("9 must be assignable to a tool in a custom map")
+        }
+        XCTAssertEqual(ShortcutRouter(shortcuts: rebound).resolve("9"), .tool(.pen),
+                       "a rebound entry must win over the plain style key")
+    }
+
+    private func roundTrip(_ stroke: Stroke) throws -> Stroke? {
+        try decoded(try JSONEncoder().encode(stroke.persisted))
+    }
+
+    /// The fill and the head ride the documented persistence seam, so a
+    /// snapshot and the capture history restore the shape the user drew.
+    func testPersistedRoundTripCarriesFillAndArrowHead() throws {
+        let rectangle = Stroke(tool: .rectangle, ink: .blue, points: [CGPoint(x: 1, y: 2), CGPoint(x: 30, y: 40)], fill: true)
+        let arrow = Stroke(tool: .arrow, ink: .red, points: [.zero, CGPoint(x: 10, y: 10)], arrowHead: .filled)
+        for stroke in [rectangle, arrow] {
+            let restored = try XCTUnwrap(roundTrip(stroke))
+            XCTAssertEqual(restored, stroke, "\(stroke.tool.rawValue) must survive the round trip whole")
+        }
+    }
+
+    /// A raw value this build does not know can only mean the shipped head:
+    /// a foreign document must never draw a shape nobody drew.
+    func testUnknownArrowHeadRawValueRestoresOpen() throws {
+        var stroke = Stroke(tool: .arrow, ink: .red, points: [.zero, CGPoint(x: 10, y: 10)], arrowHead: .filled)
+        // Hand-write the document so the raw value is truly foreign.
+        let data = try JSONEncoder().encode(stroke.persisted)
+        let corrupted = String(data: data, encoding: .utf8)!
+            .replacingOccurrences(of: "filled", with: "chevron")
+        let restored = try XCTUnwrap(decoded(Data(corrupted.utf8)))
+        XCTAssertEqual(restored.arrowHead, .open, "an unknown head must fall back to open")
+    }
+
+    /// The remembered text style (S15): the next text mark starts with the
+    /// style of the last committed one.
+    func testRememberedTextStyleHoldsTheLastCommittedStyle() {
+        var session = DrawingSession()
+        XCTAssertNil(session.lastTextStyle, "a fresh session starts with no memory")
+
+        session.rememberTextStyle(.init(fontSize: 26, ink: .purple))
+        XCTAssertEqual(session.lastTextStyle, .init(fontSize: 26, ink: .purple))
+
+        session.rememberTextStyle(.init(fontSize: 14, ink: .green))
+        XCTAssertEqual(session.lastTextStyle, .init(fontSize: 14, ink: .green),
+                       "the newest committed text decides")
+    }
+
+    func testRememberedTextStyleRefusesAnUnusableSize() {
+        var session = DrawingSession()
+        session.rememberTextStyle(.init(fontSize: 26, ink: .purple))
+        session.rememberTextStyle(.init(fontSize: 0, ink: .green))
+        session.rememberTextStyle(.init(fontSize: -3, ink: .green))
+        XCTAssertEqual(session.lastTextStyle, .init(fontSize: 26, ink: .purple),
+                       "garbage styles never displace a good memory")
+    }
+
+    /// The style memory is session-scoped: a cleared session forgets it.
+    func testClearingTheSessionForgetsTheRememberedTextStyle() {
+        var session = DrawingSession()
+        session.rememberTextStyle(.init(fontSize: 26, ink: .purple))
+        session.clear()
+        XCTAssertNil(session.lastTextStyle, "a cleared session starts text over")
+    }
+
+    /// The restore seam rebuilds marks from a snapshot; the style memory
+    /// belongs to the live session and restarts with it.
+    func testRestoredSessionForgetsTheRememberedTextStyle() {
+        var live = DrawingSession()
+        live.rememberTextStyle(.init(fontSize: 26, ink: .purple))
+        live.begin(at: .zero, tool: .text, ink: .purple)
+        live.setActiveText("a", size: nil)
+        live.commit()
+
+        let restored = DrawingSession.restored(strokes: live.strokes)
+        XCTAssertNil(restored.lastTextStyle, "a restored session has no style memory")
+        XCTAssertNotEqual(restored, live, "the memory is part of what makes sessions distinct")
+    }
+
+    /// The plain `begin` — what every surface that has not adopted the style
+    /// keys calls — keeps today's outline and open head.
+    func testBeginDefaultsToOutlineAndOpenHead() {
+        for tool in [Tool.pen, .line, .rectangle, .ellipse, .arrow, .text, .number, .blur] {
+            var session = DrawingSession()
+            session.begin(at: .zero, tool: tool, ink: .red)
+            guard let mark = session.active ?? session.strokes.last else {
+                return XCTFail("\(tool.rawValue) must lay a mark")
+            }
+            XCTAssertFalse(mark.isFilled, "\(tool.rawValue) must default to outline")
+            XCTAssertEqual(mark.arrowHead, .open, "\(tool.rawValue) must default to the open head")
+        }
+    }
+
+    /// A style property is stored only on the tool it belongs to: the keys arm
+    /// the next *shape*, the next *arrow* — a pen or line never carries them.
+    func testBeginStoresTheStyleOnlyOnTheToolItBelongsTo() {
+        var session = DrawingSession()
+        session.begin(at: .zero, tool: .rectangle, ink: .red, fill: true, arrowHead: .filled)
+        let shape = session.active ?? session.strokes.last
+        XCTAssertEqual(shape?.isFilled, true)
+        XCTAssertEqual(shape?.arrowHead, .open, "an open-by-default head never rides a shape")
+
+        var arrows = DrawingSession()
+        arrows.begin(at: .zero, tool: .arrow, ink: .red, fill: true, arrowHead: .filled)
+        let arrow = arrows.active ?? arrows.strokes.last
+        XCTAssertEqual(arrow?.arrowHead, .filled)
+        XCTAssertEqual(arrow?.isFilled, false, "a fill never rides an arrow")
+
+        var others = DrawingSession()
+        others.begin(at: .zero, tool: .pen, ink: .red, fill: true, arrowHead: .filled)
+        let other = others.active ?? others.strokes.last
+        XCTAssertEqual(other?.isFilled, false)
+        XCTAssertEqual(other?.arrowHead, .open)
+    }
+
+    /// The style is a property of the mark: commit, undo, redo and the editor
+    /// transforms all keep whatever the mark was drawn with.
+    func testFillAndHeadSurviveCommitUndoRedoAndReplace() {
+        var session = DrawingSession()
+        session.begin(at: .zero, tool: .rectangle, ink: .red, fill: true)
+        session.extend(to: CGPoint(x: 50, y: 40))
+        session.commit()
+        let drawn = session.strokes.first
+        XCTAssertEqual(drawn?.isFilled, true)
+
+        var moved = MarkTransform.translated(session.strokes[0], by: CGPoint(x: 5, y: 5))
+        XCTAssertTrue(session.replace(moved))
+        XCTAssertTrue(session.strokes.first!.isFilled)
+        XCTAssertTrue(session.undo())
+        XCTAssertTrue(session.strokes.first!.isFilled, "undo restores the filled mark")
+        XCTAssertTrue(session.strokes.first! == drawn!)
+        XCTAssertTrue(session.redo())
+        XCTAssertTrue(session.strokes.first!.isFilled, "redo reapplies the transform with the style intact")
+    }
+
+    func testArrowHeadSurvivesCommitAndUndoRedo() {
+        var session = DrawingSession()
+        session.begin(at: .zero, tool: .arrow, ink: .red, arrowHead: .filled)
+        session.extend(to: CGPoint(x: 50, y: 40))
+        session.commit()
+        XCTAssertEqual(session.strokes.first?.arrowHead, .filled)
+
+        XCTAssertTrue(session.undo())
+        XCTAssertTrue(session.redo())
+        XCTAssertEqual(session.strokes.first?.arrowHead, .filled)
+        XCTAssertEqual(session.undoneStrokes, [])
+    }
 }
