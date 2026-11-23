@@ -172,6 +172,28 @@ final class AreaCaptureFreezeTests: XCTestCase {
         XCTAssertNil(view.frozenAreaBase, "the base never outlives the drag")
     }
 
+    // MARK: Re-arm inside the capture's latency
+
+    func testAFrameLandedAfterEscAndReArmNeverBecomesTheNewDragBase() {
+        let view = makeView()
+        let firstFrame = makeImage(width: 1800, height: 1200)
+        let secondFrame = makeImage(width: 1800, height: 1200)
+
+        view.beginAreaSelection() // arm: the drag asks for its frame
+        view.releaseAreaFrame() // Esc
+        view.beginAreaSelection() // re-arm while the first capture is still in flight
+        view.landAreaFrame(firstFrame) // the first drag's frame lands
+
+        XCTAssertNil(view.frozenAreaBase,
+            "the first drag's frame must never become the second drag's base")
+
+        view.landAreaFrame(secondFrame) // the second drag's own frame lands
+        XCTAssertEqual(
+            view.frozenAreaBase.map { CGSize(width: $0.width, height: $0.height) },
+            CGSize(width: 1800, height: 1200),
+            "the second drag freezes on its own frame")
+    }
+
     // MARK: Blur over the frozen frame
 
     func testBlurMarksSourceFromTheFrozenFrameWhileItHolds() {

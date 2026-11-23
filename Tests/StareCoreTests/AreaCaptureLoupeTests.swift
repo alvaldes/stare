@@ -73,8 +73,8 @@ final class AreaCaptureLoupeTests: XCTestCase {
         // The loupe sits below-right with the shipped gap.
         XCTAssertEqual(planValue.frame, CGRect(x: 524, y: 374, width: 120, height: 120))
         // Source: `side / magnification` points centred on the pointer, in
-        // frame pixel coordinates (bottom-left origin): 30 pt around
-        // (500, 350) → pixels (970, 670, 60, 60).
+        // frame pixel coordinates (top-left origin, as `CGImage.cropping(to:)`
+        // crops): 30 pt around (500, 350) → pixels (970, 670, 60, 60).
         XCTAssertEqual(planValue.source, CGRect(x: 970, y: 670, width: 60, height: 60))
         // Unclamped, the source lands exactly on the loupe.
         XCTAssertEqual(planValue.destination, planValue.frame)
@@ -135,5 +135,91 @@ final class AreaCaptureLoupeTests: XCTestCase {
             framePixelSize: framePixels,
             pixelsPerPoint: 0
         ))
+    }
+
+    // MARK: Orientation
+
+    // `CGImage.cropping(to:)` crops in the frame's own pixel space, which is
+    // top-left origin (CaptureEditor's `EditorCropSpace` states the same
+    // convention for the editor's crops). These tests read actual cropped
+    // pixels, not coordinate arithmetic: the frame carries distinct
+    // horizontal bands and the pointer sits well off the display's vertical
+    // centre — a mirrored, bottom-left source rect lands a different band, so
+    // it fails under the very pixels it chose.
+
+    /// The frozen frame split into two horizontal bands in top-left pixel
+    /// space: `topHalf` covers rows 0..<700, `bottomHalf` rows 700..<1400.
+    /// CGContext fills bottom-up, so the bottom band is painted at its own
+    /// context y first and the top band above it.
+    private func bandedFrame(
+        topHalf: (r: CGFloat, g: CGFloat, b: CGFloat),
+        bottomHalf: (r: CGFloat, g: CGFloat, b: CGFloat)
+    ) -> CGImage {
+        let context = CGContext(
+            data: nil, width: 2000, height: 1400, bitsPerComponent: 8,
+            bytesPerRow: 2000 * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(red: bottomHalf.r, green: bottomHalf.g, blue: bottomHalf.b, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: 2000, height: 700))
+        context.setFillColor(red: topHalf.r, green: topHalf.g, blue: topHalf.b, alpha: 1)
+        context.fill(CGRect(x: 0, y: 700, width: 2000, height: 700))
+        return context.makeImage()!
+    }
+
+    /// The single pixel of `image` whose top-left corner index is `point`:
+    /// cropped 1×1 in the frame's own top-left space, decoded to RGBA8.
+    private func pixel(
+        of image: CGImage, at point: CGPoint
+    ) throws -> (r: UInt8, g: UInt8, b: UInt8) {
+        let one = try XCTUnwrap(image.cropping(
+            to: CGRect(origin: point, size: CGSize(width: 1, height: 1))))
+        let context = try XCTUnwrap(CGContext(
+            data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.draw(one, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        let bytes = try XCTUnwrap(context.data).bindMemory(to: UInt8.self, capacity: 4)
+        return (bytes[0], bytes[1], bytes[2])
+    }
+
+    func testAnOffCentrePointerMagnifiesThePixelUnderItInTopLeftPixelSpace() throws {
+        // The pointer (500, 300) sits on pixel row 600 under the top-left
+        // convention `CGImage.cropping(to:)` crops by, but on row 800 under a
+        // bottom-left one — different halves, so a mirrored source fails on
+        // the pixels themselves.
+        let frame = bandedFrame(topHalf: (0, 1, 0), bottomHalf: (0, 0, 1))
+        let plan = try XCTUnwrap(AreaCaptureLoupe.plan(
+            at: CGPoint(x: 500, y: 300),
+            bounds: display,
+            framePixelSize: framePixels,
+            pixelsPerPoint: pixelsPerPoint
+        ))
+        let crop = try XCTUnwrap(frame.cropping(to: plan.source))
+        let centre = try pixel(
+            of: crop, at: CGPoint(x: crop.width / 2, y: crop.height / 2))
+        XCTAssertEqual(centre.g, 255, "the crop's centre pixel is the pixel under the pointer")
+        XCTAssertEqual(centre.b, 0)
+        XCTAssertEqual(centre.r, 0)
+    }
+
+    func testADisplayWhoseOriginIsNotZeroStillMagnifiesTopLeft() throws {
+        // A display canvas does not sit at (0,0): a display above or left of
+        // the primary has a negative origin, and the conversion must be
+        // bounds-relative. Here (1700, 300) is 300 points below the display's
+        // own top edge, which is pixel row 1200 — the bottom band.
+        let offOriginDisplay = CGRect(x: 1200, y: -300, width: 1000, height: 700)
+        let frame = bandedFrame(topHalf: (1, 0, 0), bottomHalf: (0, 0, 1))
+        let plan = try XCTUnwrap(AreaCaptureLoupe.plan(
+            at: CGPoint(x: 1700, y: 300),
+            bounds: offOriginDisplay,
+            framePixelSize: framePixels,
+            pixelsPerPoint: pixelsPerPoint
+        ))
+        let crop = try XCTUnwrap(frame.cropping(to: plan.source))
+        let centre = try pixel(
+            of: crop, at: CGPoint(x: crop.width / 2, y: crop.height / 2))
+        XCTAssertEqual(centre.b, 255, "the crop's centre pixel is the pixel under the pointer")
+        XCTAssertEqual(centre.g, 0)
+        XCTAssertEqual(centre.r, 0)
     }
 }

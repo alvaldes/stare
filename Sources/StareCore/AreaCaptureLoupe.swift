@@ -32,9 +32,11 @@ public enum AreaCaptureLoupe {
         /// The loupe's frame in view space, never covering the pointer and
         /// never leaving the display.
         public let frame: CGRect
-        /// The pixels of the frozen frame the loupe magnifies (bottom-left
-        /// image origin). Clamped to the frame, so near a display edge the
-        /// source stops at the frame's edge and nothing is invented.
+        /// The pixels of the frozen frame the loupe magnifies (top-left
+        /// image origin, the convention `CGImage.cropping(to:)` crops by —
+        /// the same one the editor's `EditorCropSpace` states). Clamped to
+        /// the frame, so near a display edge the source stops at the frame's
+        /// edge and nothing is invented.
         public let source: CGRect
         /// Where `source` lands in view space. Smaller than (or overhanging)
         /// `frame` near an edge: the empty rest of the loupe stays empty
@@ -97,11 +99,14 @@ public enum AreaCaptureLoupe {
         ).intersection(bounds)
         guard !viewRect.isNull, !viewRect.isEmpty else { return nil }
 
-        // To the frame's pixel coordinates: bottom-left origin under the
-        // top-left view origin, the same conversion the blur's crop uses.
+        // To the frame's pixel coordinates. Both spaces here are top-left
+        // origin: the view's y grows downward from `bounds.minY` and
+        // `CGImage.cropping(to:)` crops from the frame's top row, so the
+        // conversion is the bounds-relative offset itself — which also keeps
+        // it correct when the display's view does not sit at (0,0).
         let pixelRect = CGRect(
             x: (viewRect.minX - bounds.minX) * pixelsPerPoint,
-            y: (bounds.maxY - viewRect.maxY) * pixelsPerPoint,
+            y: (viewRect.minY - bounds.minY) * pixelsPerPoint,
             width: viewRect.width * pixelsPerPoint,
             height: viewRect.height * pixelsPerPoint
         )

@@ -78,6 +78,15 @@ class OverlayView: NSView {
     /// The frozen frame itself. Only read through `frozenAreaBase`, which
     /// gates on the lifecycle, so a stale image can never paint.
     private var areaFrameImage: CGImage?
+    /// The token whose capture is in flight — the drag the arriving frame
+    /// belongs to. Nil while nothing is on its way. One capture at a time: a
+    /// re-arm while a frame is still on its way queues its ask behind the
+    /// in-flight landing, so every landing is unambiguously the capture the
+    /// view itself asked for and the state can reject it by token.
+    private var areaFrameCaptureInFlight: AreaCaptureFrameState.Token?
+    /// A pending drag armed while a capture was still in flight and owes its
+    /// own ask once that landing comes home.
+    private var areaFrameAskQueued = false
     /// Asks the controller to capture this display once for the drag's base.
     /// Nil where there is nothing to freeze (the whiteboard).
     var onAreaSelectionFrame: (() -> Void)?
@@ -91,18 +100,51 @@ class OverlayView: NSView {
     }
 
     /// The area drag started: request the one frame the drag will run on.
-    /// Called from `beginAreaSelection` (the `⇧S` path).
+    /// Called from `beginAreaSelection` (the `⇧S` path). While a capture is
+    /// still in flight (an `Esc`-and-re-arm inside one capture's latency),
+    /// the ask queues behind its landing — the in-flight frame then lands as
+    /// a superseded token and the state rejects it, instead of becoming the
+    /// new drag's base.
     func beginAreaFrameFreeze() {
-        areaFrame.begin()
+        let token = areaFrame.begin()
         areaFrameImage = nil
+        guard areaFrameCaptureInFlight == nil else {
+            areaFrameAskQueued = true
+            return
+        }
+        areaFrameAskQueued = false
+        askForAreaFrame(token)
+    }
+
+    /// Asks the controller for the frame and remembers which drag it will
+    /// belong to, so the landing can be told apart from any other.
+    private func askForAreaFrame(_ token: AreaCaptureFrameState.Token) {
+        areaFrameCaptureInFlight = token
         onAreaSelectionFrame?()
     }
 
     /// The requested frame landed (or failed). Called on the main thread by
-    /// the controller after the capture returns; a frame for a drag that is
-    /// no longer pending is stale and dropped by the lifecycle.
+    /// the controller after the capture returns; the landing is stamped with
+    /// the token whose ask was in flight, so a frame belonging to a drag that
+    /// already ended — or that was superseded by an `Esc`-and-re-arm — is
+    /// stale and dropped by the lifecycle, never painted.
     func landAreaFrame(_ image: CGImage?) {
+        let landing = areaFrameCaptureInFlight
+        areaFrameCaptureInFlight = nil
+        let queuedAsk = areaFrameAskQueued
+        areaFrameAskQueued = false
+
         guard areaFrame.phase == .pending else { return }
+
+        // A queued ask means the pending drag armed while an earlier capture
+        // was still in flight: this landing can only be that older capture.
+        // Drop it and let the pending drag ask its own frame now.
+        if queuedAsk {
+            if let token = areaFrame.pendingToken { askForAreaFrame(token) }
+            return
+        }
+
+        guard let landing, landing == areaFrame.pendingToken else { return }
         guard let image else {
             // The capture failed (no Screen Recording, unavailable display):
             // release the pending state and let the drag run live, as before
@@ -111,7 +153,7 @@ class OverlayView: NSView {
             return
         }
         areaFrameImage = image
-        areaFrame.land()
+        areaFrame.land(landing)
         needsDisplay = true
         // Existing blur marks must re-source from the frozen base at once, so
         // what they blur is what the user is framing.
@@ -125,6 +167,7 @@ class OverlayView: NSView {
     func releaseAreaFrame() {
         guard areaFrame.release() || areaFrameImage != nil else { return }
         areaFrameImage = nil
+        areaFrameAskQueued = false
         needsDisplay = true
     }
 
