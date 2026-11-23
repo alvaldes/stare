@@ -52,6 +52,13 @@ S22. Tests y docs van con el código en la misma unidad de trabajo. Toda prefere
 
 S23. Auditoría de blur, previa a S13: un área cubierta por blur no debe dejar reconstruible el contenido original. Si no se sostiene, el pixelado aleatorizado pasa a ser la primitiva de redacción y el README se corrige.
 
+S24. **Autorizaciones de superficie entre sesiones.** Para que ninguna decisión dependa de un mensaje que puede perderse, van escritas acá:
+- `Sources/Stare/OverlayView.swift`, `blurSource` y su hermana del whiteboard: **autorizadas** a la sesión hermana por el tiempo que dure T6b. Nada más de ese archivo.
+- `Sources/StareCore/MarkCompositor.swift`, la rama `.blur`: **autorizada** a la sesión hermana para T6b.
+- `Sources/StareCore/MarkRenderer.swift`: **liberado**; esta rama no tiene ediciones pendientes en él (lo que T8b necesite espera a T6b).
+- `Sources/Stare/OverlayController.swift`, la llamada a `CaptureFile.write` dentro de `deliver`: **autorizada** a la sesión hermana en su rama apilada, sólo esas líneas, porque los parámetros `app:`/`displayName:` existen únicamente ahí. `appName` debe ser nil cuando el proceso al frente es Stare: un archivo llamado "Stare" es una mentira silenciosa, y la regla de disposición de T10 lo convierte en el prefijo de siempre.
+- T12 (canvas componible) es de la sesión hermana: necesita el `EditorViewport` que sólo existe en su rama.
+
 ## Tasks
 
 | ID | Tarea | Specs | Ruta | Commit |
@@ -199,3 +206,7 @@ L17. Reparto con la sesión hermana (a pedido del usuario: "coordina con el otro
 - **Esta rama**: T3 historial, T4 pin de imagen, T5 OCR, T7 downscale, T8 profundidad de anotación, T12 canvas componible. Archivos míos: `OverlayController`, `OverlayView`, `FrontWindowLocator`, `WindowCaptureTarget`, `CaptureCard` y los módulos de área/ventana de `StareCore`.
 - Compartidos: `SettingsView.swift` (5 líneas de registro, el pane va en archivo nuevo — S4) y `GeneralPreferences.swift` (mis tres líneas del default; quien agregue una preferencia la suma al final). Quien aterrice segundo re-aplica sus cinco líneas.
 - Reglas que se le pasaron: nada de suite completa, filtros de una clase, conteo real de casos (L11/L13), ventanas de test confinadas al primario, RED observado, docs con el código, sin push ni merge sin el humano.
+
+L18. Auditoría de S23 (sesión hermana, registro completo en `odd/tasks/capture-extras.md`): **se sostiene a los parámetros que Stare usa hoy**. Downscale→upscale ×4/×8/×16, deconvolución, threshold y deconvolve+threshold no recuperan contenido en ninguno de los dos fixtures; Vision OCR lee los originales y nada dentro del blur, con radios de 20 a 3 pt. Lo que sí se filtra es estructura, no contenido: correlación 0.17 en texto chico y 0.93 en un bloque grande, o sea se ve dónde redactaste. Cualquier primitiva in-place que respete la silueta filtra lo mismo. **Restricción derivada: si algún día hay control de radio, no debe ofrecer menos de ~10 pt** (12 pt fue el mínimo seguro contra texto de 11 pt). No hay corrección de README que hacer.
+
+L19. **Incidente de canal con la sesión hermana**: la autorización de `blurSource` se envió cuatro veces (correlaciones c21ad07, e8fcc54, ecaace7f, bbfa283) y las cuatro veces volvió a preguntar, incluso con la respuesta en la primera línea. Los envíos se aceptan ("accepted for delivery; not a delivery or read receipt") pero el contenido no llega. Mitigación adoptada: las decisiones de superficie se escriben en S24 de este documento, que es el artefacto que ambas sesiones leemos al rebasear, y el chat queda sólo para avisar que hay algo nuevo. Si vuelve a pasar con algo que bloquee, se escala al humano para que relaye.
