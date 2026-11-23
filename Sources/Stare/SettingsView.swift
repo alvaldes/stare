@@ -551,6 +551,12 @@ struct BarPane: View {
         .help(Text(verbatim: "Drag \(tool.displayName) onto the bar"))
     }
 
+    /// The payload the pool's separator chip drags (S3): a *source* for a new
+    /// divider, never a placed one. One property, used by the chip and read by
+    /// the tests, so a revert to a placed separator's identifier fails a test
+    /// instead of silently deleting a divider from the bar again.
+    var poolSeparatorChipPayload: ToolbarDragPayload { .addSeparator }
+
     /// The separator chip: always available to drag onto the bar; it never
     /// takes drops, because separators do not stack in the pool. Its drag
     /// carries the source payload ("add a separator"), not the identifier a
@@ -573,7 +579,7 @@ struct BarPane: View {
                 .fill(Color.secondary.opacity(0.10))
         )
         .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .onDrag { ToolbarDragPayload.addSeparator.provider }
+        .onDrag { poolSeparatorChipPayload.provider }
         .help(Text(verbatim: "Drag a separator onto the bar"))
     }
 

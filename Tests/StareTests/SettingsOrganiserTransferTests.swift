@@ -422,3 +422,107 @@ final class SettingsOrganiserTransferTests: XCTestCase {
                 pool: offBar(items: [.tool(.pen), .tool(.laser)], except: [.eraser]) + [.eraser]))
     }
 }
+
+/// The organiser's wire, not its handlers (S3): the verifier's regression probe
+/// showed that a test which calls `handlePoolDrop` directly stays green even
+/// when the pool's source chip is reverted to dragging a placed separator's
+/// identifier — which reintroduces the bug. These drive each chip's own drag
+/// provider through the delegate the pane installs, so the payload the chip
+/// actually sends is what the assertion covers.
+@MainActor
+final class SettingsOrganiserWireTests: XCTestCase {
+    private final class Store: PreferenceStore {
+        private var values: [String: Any] = [:]
+        func object(forKey key: String) -> Any? { values[key] }
+        func set(_ value: Any?, forKey key: String) { values[key] = value }
+    }
+
+    private func makePane(
+        items: [ToolbarLayoutItem], pool: [Tool]
+    ) -> (BarPane, PreferencesModel) {
+        let model = PreferencesModel(store: Store())
+        model.toolbarTools = ToolbarToolLayout(items: items, pool: pool)
+        return (BarPane(model: model, cardsWidth: 600), model)
+    }
+
+    private func settle(_ done: @escaping () -> Bool) async throws -> Bool {
+        let deadline = Date().addingTimeInterval(10)
+        while !done() && Date() < deadline {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return done()
+    }
+
+    /// The pool chip's delegate, built the way `toolbarPoolChip(_:)` builds it:
+    /// no source hook, so a separator source must change nothing.
+    private func poolChipDelegate(_ pane: BarPane, _ tool: Tool) -> ToolbarSlotDropDelegate {
+        ToolbarSlotDropDelegate(
+            target: .tool(tool),
+            size: CGSize(width: 80, height: 26),
+            axisVertical: false,
+            onDrop: { target, edge, payload in
+                pane.handlePoolDrop(target: target, edge: edge, payload: .item(payload))
+            }
+        )
+    }
+
+    /// S3 and the regression: the source chip's own wire on a pool chip, on the
+    /// end zone, and on a bar slot.
+    func testTheSourceChipLeavesTheDraftAloneAndStillInsertsOnTheBar() async throws {
+        XCTAssertNil(
+            ToolbarLayoutItem(identifier: ToolbarDragPayload.addSeparator.wire),
+            "the source token must name no stored item")
+        let (pane, model) = makePane(items: [.tool(.pen), .separator, .tool(.eraser)], pool: [.laser])
+        let before = model.toolbarTools
+        let chip = poolChipDelegate(pane, .laser)
+        let source = pane.poolSeparatorChipPayload.provider
+        try await Task.detached { [chip] in chip.dropPayload(from: source, edge: .before) }.value
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(model.toolbarTools, before, "the source chip on a pool chip changes nothing")
+
+        try await Task.detached {
+            ToolbarOrganiserHooks.deliverDragPayload(of: ToolbarDragPayload.addSeparator.provider) {
+                pane.handlePoolEndDrop(payload: $0)
+            }
+        }.value
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(model.toolbarTools, before, "the source chip on the end zone changes nothing")
+
+        let (bar, barModel) = makePane(items: [.tool(.pen), .tool(.eraser)], pool: [])
+        let slot = ToolbarSlotDropDelegate(
+            target: .tool(.pen),
+            size: CGSize(width: 28, height: 26),
+            axisVertical: false,
+            onDrop: { target, edge, payload in
+                bar.handleBarDrop(target: target, edge: edge, payload: .item(payload))
+            },
+            onSourceDrop: { target, edge in
+                bar.handleBarDrop(target: target, edge: edge, payload: .addSeparator)
+            }
+        )
+        try await Task.detached { [slot] in slot.dropPayload(from: source, edge: .after) }.value
+        let inserted = try await settle { barModel.toolbarTools.items.count == 3 }
+        XCTAssertTrue(inserted, "a source drop on a bar slot still adds one divider")
+        XCTAssertEqual(barModel.toolbarTools.items, [.tool(.pen), .separator, .tool(.eraser)])
+    }
+
+    /// S3 on the wire: a placed separator still comes off both pool targets.
+    func testAPlacedSeparatorsOwnWireStillComesOffBothPoolTargets() async throws {
+        let (pane, model) = makePane(items: [.tool(.pen), .separator, .tool(.eraser)], pool: [.laser])
+        let chip = poolChipDelegate(pane, .laser)
+        try await Task.detached { [chip] in
+            chip.dropPayload(from: ToolbarDragPayload.item(.separator).provider, edge: .after)
+        }.value
+        let off = try await settle { model.toolbarTools.items == [.tool(.pen), .tool(.eraser)] }
+        XCTAssertTrue(off, "placed separator off through a pool chip: \(model.toolbarTools.items)")
+
+        let (endPane, endModel) = makePane(items: [.tool(.pen), .separator, .tool(.eraser)], pool: [])
+        try await Task.detached {
+            ToolbarOrganiserHooks.deliverDragPayload(of: ToolbarDragPayload.item(.separator).provider) {
+                endPane.handlePoolEndDrop(payload: $0)
+            }
+        }.value
+        let offEnd = try await settle { endModel.toolbarTools.items == [.tool(.pen), .tool(.eraser)] }
+        XCTAssertTrue(offEnd, "placed separator off through the end zone: \(endModel.toolbarTools.items)")
+    }
+}
