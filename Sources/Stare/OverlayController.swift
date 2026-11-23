@@ -955,9 +955,10 @@ final class OverlayController {
             // the whiteboard or straight after the overlay opens, Stare can be the
             // frontmost application, and a file named after the tool is a silent lie.
             let frontmost = NSWorkspace.shared.frontmostApplication
-            let appName: String? = frontmost?.processIdentifier == ProcessInfo.processInfo.processIdentifier
-                ? nil
-                : frontmost?.localizedName
+            let appName = CaptureAppIdentity.appName(
+                frontmostName: frontmost?.localizedName,
+                frontmostProcessIdentifier: frontmost?.processIdentifier
+            )
             let displayName: String? = screen(for: canvas.displayID)?.localizedName
             if let url = CaptureFile.write(
                 result, preference: preference, date: date, scale: scale,
