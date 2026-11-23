@@ -400,23 +400,39 @@ struct EditorCropRule {
 }
 
 /// The applied crop's own history (S7): which region is live and the steps
-/// undo/redo reverse. Crops share ONE journal with the marks so ⌘Z always
-/// pops the change that happened last, whatever kind it was.
+/// undo/redo reverse. Crops share ONE journal with the marks (and, T12/S19
+/// slice 2, with the canvas layers) so ⌘Z always pops the change that
+/// happened last, whatever kind it was.
 struct EditorCropRecord: Equatable {
     enum Step: Equatable {
         case marks
         case crop(previous: CGRect?)
+        /// One canvas step: `previous` is the layer list before the change —
+        /// an append, a remove, a restack or one whole drag. Layers are
+        /// values, so the snapshot is the restore.
+        case canvas(previous: [CanvasLayer])
     }
 
     private(set) var region: CGRect?
+    /// The newest journal state of the canvas layers, exactly as `region` is
+    /// the newest region: every journalled change refreshes it, undo and redo
+    /// read the restore from it. ONE journal owns both directions; the canvas
+    /// keeps no second undo system.
+    private(set) var canvasLayers: [CanvasLayer] = []
     /// Applied steps, newest last. `marks` mirror the drawing session's own
     /// journal one to one, so a popped `.marks` delegates to it.
     private(set) var applied: [Step] = []
     /// Undone steps, newest last; `redo` reapplies these.
     private(set) var undone: [Step] = []
-    /// The region each undone crop left behind for `redo` to reapply,
-    /// aligned with the crop entries of `undone` in order.
-    private var redoTargets: [CGRect?] = []
+
+    /// What an undone payload step restores, appended at undo time, aligned
+    /// with the payload entries (crops and canvas steps) of `undone` in
+    /// order.
+    private enum RedoTarget: Equatable {
+        case crop(CGRect?)
+        case canvas([CanvasLayer])
+    }
+    private var redoTargets: [RedoTarget] = []
 
     var canUndo: Bool { !applied.isEmpty }
     var canRedo: Bool { !undone.isEmpty }
@@ -429,6 +445,16 @@ struct EditorCropRecord: Equatable {
         region = newRegion
     }
 
+    /// Journals one canvas change as one undoable step: `previous` is what it
+    /// changed from, `current` what it changed to — the journal keeps both
+    /// directions' values so ⌘Z and ⇧⌘Z need nothing else.
+    mutating func canvas(from previous: [CanvasLayer], to current: [CanvasLayer]) {
+        applied.append(.canvas(previous: previous))
+        undone.removeAll()
+        redoTargets.removeAll()
+        canvasLayers = current
+    }
+
     /// Journals a committed mark so the shared journal keeps the true order.
     /// Like the drawing session's own commit, it forks the redo history.
     mutating func noteMark() {
@@ -437,8 +463,9 @@ struct EditorCropRecord: Equatable {
         redoTargets.removeAll()
     }
 
-    /// Reverses the newest step: a crop restores its previous region, a mark
-    /// is routed to the drawing session by the caller.
+    /// Reverses the newest step: a crop restores its previous region, a
+    /// canvas step restores its previous layers, and a mark is routed to the
+    /// drawing session by the caller.
     @discardableResult
     mutating func undo() -> Step? {
         guard let step = applied.popLast() else { return nil }
@@ -446,8 +473,11 @@ struct EditorCropRecord: Equatable {
         switch step {
         case .marks: break
         case let .crop(previous):
-            redoTargets.append(region)
+            redoTargets.append(.crop(region))
             region = previous
+        case let .canvas(previous):
+            redoTargets.append(.canvas(canvasLayers))
+            canvasLayers = previous
         }
         return step
     }
@@ -457,25 +487,39 @@ struct EditorCropRecord: Equatable {
     mutating func redo() -> Step? {
         guard let step = undone.popLast() else { return nil }
         applied.append(step)
-        if case .crop = step {
-            region = redoTargets.popLast() ?? region
+        switch step {
+        case .marks: break
+        case .crop:
+            if case let .crop(target) = redoTargets.last {
+                redoTargets.removeLast()
+                region = target
+            }
+        case .canvas:
+            if case let .canvas(target) = redoTargets.last {
+                redoTargets.removeLast()
+                canvasLayers = target
+            }
         }
         return step
     }
 
     /// The drawing session was hard-cleared: its history is gone, so the
-    /// mark steps leave the journal. The crops keep their place and the redo
-    /// targets stay aligned with them — by crop-entry position, never by
-    /// position in `undone`, which mark entries shift (S7).
+    /// mark steps leave the journal. The payload steps (crops and canvas
+    /// steps) keep their place, and the redo targets stay aligned with them —
+    /// by payload-entry position, never by position in `undone`, which mark
+    /// entries shift (S7).
     mutating func clearMarkHistory() {
-        var survivingTargets: [CGRect?] = []
+        var survivingTargets: [RedoTarget] = []
         var targetIndex = 0
         for step in undone {
-            guard case .crop = step else { continue }
-            if targetIndex < redoTargets.count {
-                survivingTargets.append(redoTargets[targetIndex])
+            guard case .marks = step else {
+                // A payload entry holds the alignment slot for its target.
+                if targetIndex < redoTargets.count {
+                    survivingTargets.append(redoTargets[targetIndex])
+                }
+                targetIndex += 1
+                continue
             }
-            targetIndex += 1
         }
         redoTargets = survivingTargets
         // `removeAll(where:)` drops what the predicate accepts, so it is the
@@ -573,9 +617,15 @@ final class CaptureEditorCanvas: NSView {
     /// moment it started. Marks are never rewritten; the renderer converts
     /// them below through their own space.
     private var spaces: [UUID: EditorCropSpace] = [:]
-    /// The applied crop and its journal (S7): ⌘Z pops crops and marks in the
-    /// order they happened.
+    /// The applied crop and its journal (S7): ⌘Z pops crops, marks and
+    /// canvas steps in the order they happened.
     private var record = EditorCropRecord()
+    /// The composable canvas (S19 slice 2): the original capture as the base
+    /// and the layers the editor received. Its placements live in the same
+    /// pixel space `EditorCropSpace.coverage` names, so the view maps them
+    /// through the ONE crop-space/viewport route — no view coordinates inside
+    /// the model, and no second mapping that can drift from the viewport's.
+    private(set) var composition: CanvasComposition
     /// The staged rectangle waiting for the user's Return (T4/S6). No drag
     /// applies the crop any more — the pointer only reshapes this through the
     /// stage's rules, and Return is the only route into the journal.
@@ -616,6 +666,12 @@ final class CaptureEditorCanvas: NSView {
         case adjusting(handle: CropHandle, start: CGRect)
         /// The staged rectangle is being moved by its interior.
         case moving(start: CGRect, grab: CGPoint)
+        /// A canvas layer is being moved by its interior: the placement where
+        /// the drag began and the pixel the grab took (S19 slice 2).
+        case layerMove(id: UUID, start: CGRect, grab: CGPoint)
+        /// A canvas layer is being resized across a grip: the placement where
+        /// the drag began and the grip itself.
+        case layerResize(id: UUID, handle: CropHandle, start: CGRect)
     }
     private var gesture: Gesture?
     private var gestureSpace: EditorCropSpace?
@@ -631,7 +687,13 @@ final class CaptureEditorCanvas: NSView {
 
     init(image: CGImage) {
         self.image = image
+        composition = CanvasComposition(base: image)
         super.init(frame: .zero)
+        // Drop input (S19 slice 2): a second capture reaches the editor as a
+        // drag session today — no capture-history store, and clipboard paste
+        // is slice 3. The adapter below only converts the drop; the rule is
+        // `receiveCapture(atView:)`.
+        registerForDraggedTypes([.fileURL, .png, .tiff])
     }
 
     @available(*, unavailable)
@@ -794,6 +856,12 @@ final class CaptureEditorCanvas: NSView {
         context.scaleBy(x: 1, y: -1)
         context.translateBy(x: 0, y: -space.display.midY)
         context.draw(image, in: frame)
+        // The layers ride the same flip and the same mapping (S19 slice 2):
+        // z-order bottom to top, each drawn into the view rect its placement
+        // maps to through the space — what the save flattens is what shows.
+        for layer in composition.layers {
+            context.draw(layer.image, in: space.viewRect(fromPixel: layer.placement))
+        }
         context.restoreGState()
 
         // Every mark is placed through the space it was recorded in, so the
@@ -810,6 +878,26 @@ final class CaptureEditorCanvas: NSView {
             drawCropOverlay(space: space, region: stage.pending ?? record.region, in: context)
             if stage.showsHint {
                 drawCropHint(space: space, region: stage.pending, in: context)
+            }
+        } else {
+            // The selected layer's outline, the ⌥-selection made visible —
+            // the same white-square vocabulary the crop's grips draw.
+            if let id = selectedLayerID, let layer = composition.layer(withID: id) {
+                let rect = space.viewRect(fromPixel: layer.placement)
+                context.setStrokeColor(CGColor(gray: 1, alpha: 0.9))
+                context.setLineWidth(1.5)
+                context.addRect(rect)
+                context.strokePath()
+                let side: CGFloat = 8
+                context.setFillColor(CGColor(gray: 1, alpha: 1))
+                context.setStrokeColor(CGColor(gray: 0, alpha: 0.5))
+                context.setLineWidth(1)
+                for grip in [CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY),
+                             CGPoint(x: rect.minX, y: rect.maxY), CGPoint(x: rect.maxX, y: rect.maxY)] {
+                    let square = CGRect(x: grip.x - side / 2, y: grip.y - side / 2, width: side, height: side)
+                    context.addRect(square)
+                    context.drawPath(using: .fillStroke)
+                }
             }
         }
     }
@@ -979,6 +1067,13 @@ final class CaptureEditorCanvas: NSView {
             return
         }
 
+        // ⌥ claims a canvas layer (S19 slice 2): the crop owns the pointer
+        // when armed, otherwise a drop-in capture is where the gesture goes.
+        if event.modifierFlags.contains(.option), !isCropping {
+            grabCanvasLayer(at: point)
+            return
+        }
+
         guard let state else { return }
         let drawingSpace = displaySpace(armed: false)
         guard drawingSpace.display.contains(point) else { return }
@@ -1011,6 +1106,21 @@ final class CaptureEditorCanvas: NSView {
         }
         let point = convert(event.locationInWindow, from: nil)
 
+        if isLayerGesture, let gesture, let space = gestureSpace {
+            let pixel = space.pixelPoint(fromView: point)
+            switch gesture {
+            case let .layerMove(id, _, grab):
+                _ = composition.move(id: id, by: CGSize(width: pixel.x - grab.x, height: pixel.y - grab.y))
+            case let .layerResize(id, handle, start):
+                _ = composition.place(
+                    id: id,
+                    at: EditorCropRule.region(from: start, dragging: handle, to: pixel, in: fullBounds))
+            default: break
+            }
+            needsDisplay = true
+            return
+        }
+
         if isCropping, let gesture, let space = gestureSpace {
             let pixel = space.pixelPoint(fromView: point)
             // Every drag only reshapes the STAGED preview (T4/S6): the
@@ -1028,6 +1138,7 @@ final class CaptureEditorCanvas: NSView {
                     movedBy: CGPoint(x: pixel.x - grab.x, y: pixel.y - grab.y),
                     in: fullBounds
                 ))
+            default: break
             }
             needsDisplay = true
             return
@@ -1050,6 +1161,11 @@ final class CaptureEditorCanvas: NSView {
             if event.buttonNumber == 2 { isMiddlePanning = false }
             lastPanPoint = nil
             reassertCursor() // drag end → open hand (space held) or the arrow
+            return
+        }
+        // One canvas step per drag (S19 slice 2) — never one per mouse event.
+        if isLayerGesture {
+            endCanvasLayerDrag()
             return
         }
         if isCropping {
@@ -1192,10 +1308,150 @@ final class CaptureEditorCanvas: NSView {
         applyZoom(1 + event.magnification, anchoredAt: convert(event.locationInWindow, from: nil))
     }
 
+    // MARK: - Drop input (S19 slice 2)
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        sender.draggingPasteboard.canReadObject(forClasses: [NSImage.self]) ? [.copy] : []
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let point = convert(sender.draggingLocation, from: nil)
+        guard let image = NSImage(pasteboard: sender.draggingPasteboard)?
+            .cgImage(forProposedRect: nil, context: nil, hints: nil) else { return false }
+        return receiveCapture(image, atView: point) != nil
+    }
+
     private func endZoomScroll() {
         isZoomScrolling = false
         scrollZoomGesture = ScrollZoom.Gesture()
         reassertCursor()
+    }
+
+    // MARK: - Canvas layers (S19 slice 2)
+
+    /// The layer list of the canvas, in z-order — the model's own value, read
+    /// by the tests through the public surface.
+    var canvasLayers: [CanvasLayer] { composition.layers }
+
+    /// The layer the keys act on: minted by a ⌥-click, kept until the layer
+    /// goes away.
+    private var selectedLayerID: UUID?
+
+    var selectedCanvasLayer: CanvasLayer? {
+        selectedLayerID.flatMap { composition.layer(withID: $0) }
+    }
+
+    /// The applied crop's region as the tests' mapping reads it (read-only
+    /// seam; the gesture rules live in `EditorCropRule`).
+    var croppedRegion: CGRect? { record.region }
+
+    /// The route a dropped capture takes (S19 slice 2): AppKit's drag session
+    /// — the surface route that exists today; the app keeps no capture
+    /// history, and clipboard paste is slice 3 — hands the editor an image
+    /// and a view point, and this rule turns them into one layer centred on
+    /// the drop point at the image's own pixel size, clamped by the model.
+    /// While the crop is armed the drop is refused: the crop owns the pointer.
+    @discardableResult
+    func receiveCapture(_ image: CGImage, atView point: CGPoint) -> CanvasLayer? {
+        guard !isCropping, image.width > 0, image.height > 0 else { return nil }
+        let space = displaySpace(armed: false)
+        guard space.display.contains(point) else { return nil }
+        let pixel = space.pixelPoint(fromView: point)
+        let placement = CGRect(
+            x: pixel.x - CGFloat(image.width) / 2,
+            y: pixel.y - CGFloat(image.height) / 2,
+            width: CGFloat(image.width),
+            height: CGFloat(image.height))
+        var newID: UUID?
+        mutateCanvas { newID = $0.append(image, at: placement).id }
+        selectedLayerID = newID
+        Diag.log("editor canvas layer added \(image.width)x\(image.height)")
+        return newID.flatMap { composition.layer(withID: $0) }
+    }
+
+    /// Every canvas mutation funnels through here: the change runs on a copy
+    /// and only a value change journals one `.canvas` step into the ONE
+    /// journal — a no-op (a clamped-away reorder, a click that moved a layer
+    /// nowhere) eats no ⌘Z, exactly like the marks' rule.
+    private func mutateCanvas(_ change: (inout CanvasComposition) -> Void) {
+        var updated = composition
+        change(&updated)
+        guard updated.layers != composition.layers else { return }
+        record.canvas(from: composition.layers, to: updated.layers)
+        composition = updated
+        needsDisplay = true
+    }
+
+    /// The topmost layer whose view rect is under the point, grips included:
+    /// the hit is answered in the same space the layer renders in.
+    private func layerHit(at point: CGPoint, in space: EditorCropSpace) -> CanvasLayer? {
+        let reach = EditorCropRule.defaultHandleReach
+        for layer in composition.layers.reversed() {
+            let rect = space.viewRect(fromPixel: layer.placement)
+                .insetBy(dx: -reach, dy: -reach)
+            if rect.contains(point) { return layer }
+        }
+        return nil
+    }
+
+    /// A ⌥ press over a layer claims it: the grip resize-s, the interior
+    /// move-s, and the layer takes the selection so the keys can act on it.
+    private func grabCanvasLayer(at point: CGPoint) {
+        let space = displaySpace(armed: false)
+        guard space.display.contains(point), let hit = layerHit(at: point, in: space) else { return }
+        selectedLayerID = hit.id
+        gestureSpace = space
+        canvasDragStart = composition.layers
+        let viewRect = space.viewRect(fromPixel: hit.placement)
+        if let handle = EditorCropRule.handle(at: point, on: viewRect) {
+            gesture = .layerResize(id: hit.id, handle: handle, start: hit.placement)
+        } else {
+            gesture = .layerMove(id: hit.id, start: hit.placement, grab: space.pixelPoint(fromView: point))
+        }
+        needsDisplay = true
+    }
+
+    private var isLayerGesture: Bool {
+        switch gesture {
+        case .layerMove, .layerResize: true
+        default: false
+        }
+    }
+
+    /// The layer list where the current drag began, so the whole drag
+    /// journals exactly one canvas step — never one per mouse event.
+    private var canvasDragStart: [CanvasLayer]?
+
+    /// The drag ends: the placement changes already sit on the composition
+    /// (applied live through `move`/`place` and their clamps), and the whole
+    /// drag is journalled as one step when the value truly changed.
+    private func endCanvasLayerDrag() {
+        defer {
+            gesture = nil
+            gestureSpace = nil
+            canvasDragStart = nil
+            needsDisplay = true
+        }
+        guard let start = canvasDragStart, composition.layers != start else { return }
+        record.canvas(from: start, to: composition.layers)
+        Diag.log("editor canvas layer step layers=\(composition.layers.count)")
+    }
+
+    /// ⌫ — the selected layer leaves, one canvas step.
+    private func removeSelectedCanvasLayer() -> Bool {
+        guard let id = selectedLayerID, composition.layer(withID: id) != nil else { return false }
+        mutateCanvas { _ = $0.remove(id: id) }
+        selectedLayerID = nil
+        return true
+    }
+
+    /// `[` sends the selection one step back, `]` one step forward; a
+    /// clamped-away restack is a no-op that journals nothing.
+    private func restackSelectedCanvasLayer(by delta: Int) -> Bool {
+        guard let id = selectedLayerID,
+            let current = composition.layers.firstIndex(where: { $0.id == id }) else { return false }
+        mutateCanvas { $0.reorder(id: id, to: current + delta) }
+        return true
     }
 
     // MARK: - Gesture cursors (S16/T9)
@@ -1230,6 +1486,9 @@ final class CaptureEditorCanvas: NSView {
         lastPanPoint = nil
         isZoomScrolling = false
         scrollZoomGesture = ScrollZoom.Gesture()
+        // The layer surface's in-flight state dies with the window too.
+        selectedLayerID = nil
+        canvasDragStart = nil
     }
 
     // MARK: - Keyboard
@@ -1298,6 +1557,15 @@ final class CaptureEditorCanvas: NSView {
             return
         }
 
+        // Canvas layers (S19 slice 2): ⌫ deletes and `[`/`]` restack the
+        // selection none of them is a tool key. Nothing selected — the key is
+        // not the editor's: it falls through like Return with nothing staged.
+        if !isCropping {
+            if event.keyCode == 51, removeSelectedCanvasLayer() { return } // ⌫
+            if event.keyCode == 33, restackSelectedCanvasLayer(by: -1) { return } // [
+            if event.keyCode == 30, restackSelectedCanvasLayer(by: 1) { return } // ]
+        }
+
         if let character = characters.first, let state {
             // Only tools the editor offers resolve here: V and T must not arm
             // a cursor or a text field this surface cannot serve. The editor's
@@ -1339,12 +1607,17 @@ final class CaptureEditorCanvas: NSView {
         applyZoom(1 / EditorViewport.zoomStep)
     }
 
-    /// ⌘Z reverses the newest change — the crop or a mark, in the order they
-    /// happened (S7). The armed palette item does not move: undo restores the
-    /// previous region and re-entering the crop shows it again.
+    /// ⌘Z reverses the newest change — a crop, a mark or a canvas step, in
+    /// the order they happened (S7, S19 slice 2). The armed palette item does
+    /// not move: undo restores the previous region and re-entering the crop
+    /// shows it again.
     func undo() {
         if let step = record.undo() {
-            if case .marks = step { _ = session.undo() }
+            switch step {
+            case .marks: _ = session.undo()
+            case .canvas: adoptCanvasFromJournal()
+            case .crop: break
+            }
         } else {
             _ = session.undo()
         }
@@ -1353,11 +1626,25 @@ final class CaptureEditorCanvas: NSView {
 
     func redo() {
         if let step = record.redo() {
-            if case .marks = step { _ = session.redo() }
+            switch step {
+            case .marks: _ = session.redo()
+            case .canvas: adoptCanvasFromJournal()
+            case .crop: break
+            }
         } else {
             _ = session.redo()
         }
         needsDisplay = true
+    }
+
+    /// Copies the journal's layer restore into the live composition: the ONE
+    /// journal owns both directions of a canvas step, the composition stays
+    /// its mirror.
+    private func adoptCanvasFromJournal() {
+        composition.restore(record.canvasLayers)
+        if let id = selectedLayerID, composition.layer(withID: id) == nil {
+            selectedLayerID = nil
+        }
     }
 
     func clearMarks() {
@@ -1383,12 +1670,20 @@ final class CaptureEditorCanvas: NSView {
     /// pixels, so repeated crops never lose pixels.
     func composedImage() -> CGImage? {
         let space = displaySpace(armed: false)
-        let base: CGImage
-        if let region = record.region, region != fullBounds {
-            guard let cropped = image.cropping(to: region) else { return nil }
-            base = cropped
+        // The canvas layers flatten FIRST (S19 slice 2): `flattened()` returns
+        // the base itself with no layers — the identity slice 1 pinned — so
+        // today's save path runs untouched then, byte for byte.
+        var base: CGImage
+        if composition.layers.isEmpty {
+            base = image
+        } else if let flattened = composition.flattened() {
+            base = flattened
         } else {
             base = image
+        }
+        if let region = record.region, region != fullBounds {
+            guard let cropped = base.cropping(to: region) else { return nil }
+            base = cropped
         }
         // The compositor places a mark at `point x scale` measured from the
         // base image's top-left corner, but the marks' view space is the

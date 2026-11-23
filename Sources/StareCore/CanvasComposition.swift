@@ -162,6 +162,14 @@ public struct CanvasComposition: Equatable {
         layers.first { $0.id == id }
     }
 
+    /// Restores a whole layer list in z-order — the journal's canvas step
+    /// handing its snapshot back to the editor's undo. No clamping and no
+    /// re-identifying: the snapshot's placements are already clamped values
+    /// and its identities are the layers' own.
+    public mutating func restore(_ layers: [CanvasLayer]) {
+        self.layers = layers
+    }
+
     // MARK: - Flattening
 
     /// Writes the composition out as one image at the base's pixel
