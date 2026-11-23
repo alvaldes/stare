@@ -89,7 +89,7 @@ S25. **Forense de merge, contrastada por las dos sesiones.** Coincide con el `gi
 | T9 | Zoom y pan en el editor | S16, S21 | peer | 36a6a72, 90be703 |
 | T10 | Plantillas de nombre por tokens | S17, S21 | peer | 4bc30d1, 906fd02, 4a0a152 |
 | T11 | Backdrop barato: padding, esquinas, sombra | S18, S22 | peer | 2f17ebd |
-| T12 | Canvas componible: sumar captura o imagen pegada | S19, S21 | peer | — |
+| T12 | Canvas componible: sumar captura o imagen pegada | S19, S21 | peer | 502a5e2, 2ba387f, c3f4b63 |
 
 ## Checks manuales
 
@@ -240,4 +240,6 @@ L21. **Libro de commits de la sesión hermana**, con tarea y `S#` en la misma l�
 - Defecto preexistente del eraser (sin `S#`): `99e0038` — el canvas del editor no enrutaba a `DrawingSession.erase`, así que los trazos de goma se commiteaban como no-ops invisibles.
 - T10 (S17): `4bc30d1` (tokens y writer) + `906fd02` (el call site del `deliver`, el que yo escribí mal) + `4a0a152` (el guard de app al frente, ahora puro y testeado).
 - T11 (S18): `2f17ebd`.
-- T12: pendiente, única tarea que le queda.
+- T12 (S19): `502a5e2` (modelo y geometría) + `2ba387f` (superficie del editor) + `c3f4b63` (pegar desde el portapapeles). Completa.
+
+L22. **Las doce tareas están cerradas.** Ocho en esta rama (T1, T2a, T2b-a, T2b-b, T3, T4, T5, T7, T8a, T8b) y cuatro en las ramas de la hermana (T6, T9, T10, T11, T12). Nada pendiente de implementación en ninguna de las dos sesiones; lo que queda es el pase manual del humano y su palabra para integrar y publicar. Ninguna rama se pushea ni se mergea sin eso: push y merge son decisiones suyas, no de las sesiones.
