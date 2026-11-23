@@ -34,6 +34,7 @@ user gets.
 - Capture editor: choosing the crop only stages a rectangle — move or resize it as long as you like, then `↵` cuts it; `Esc` drops it and `⌘Z` returns the previous crop
 - Capture editor: zoom and pan to annotate a fine detail — `⌘+`/`⌘−`/`⌘0`, `⌘` + scroll or pinch zoom about the pointer, plain scroll or space-drag pans, and a zoomed or panned stroke still saves exactly the pixels the fit drawing would save; the tool keys never change
 - Capture editor: drop an image on the window to stack it over the capture — hold `⌥` to move, resize or select it, `⌫` deletes it and `[`/`]` restack it, saving exactly what the canvas shows
+- Capture editor: `⌘V` pastes an image from the clipboard onto the canvas, centred in the view and clamped exactly like a dropped image, and one `⌘Z` takes it back
 - Bar: Settings now organises the toolbar the way Bartender does — a live preview of the bar next to a pool of tools and separators, arranged by dragging, with the bar following every drop
 - Settings now chooses the bar's orientation and the edge it docks to (top or bottom when horizontal, left or right when vertical), which tools it shows, and in which order
 - Board: `⌘` + scroll zooms in one smooth gesture — no contrary kicks, no momentum overshoot — and the pointer turns into a hand while you pan and a magnifier while you zoom

@@ -689,10 +689,10 @@ final class CaptureEditorCanvas: NSView {
         self.image = image
         composition = CanvasComposition(base: image)
         super.init(frame: .zero)
-        // Drop input (S19 slice 2): a second capture reaches the editor as a
-        // drag session today — no capture-history store, and clipboard paste
-        // is slice 3. The adapter below only converts the drop; the rule is
-        // `receiveCapture(atView:)`.
+        // Drop input (S19 slice 2) and paste input (slice 3): a second capture
+        // reaches the editor as a drag session — no capture-history store.
+        // The adapter below only converts the drop; the rule is
+        // `receiveCapture(atView:)`, which paste shares.
         registerForDraggedTypes([.fileURL, .png, .tiff])
     }
 
@@ -1327,6 +1327,29 @@ final class CaptureEditorCanvas: NSView {
         reassertCursor()
     }
 
+
+    // MARK: - Clipboard paste (S19 slice 3)
+
+    /// ⌘V: reads an image from the general pasteboard — through its explicit
+    /// TIFF or PNG data only, never `NSImage(pasteboard:)`, which would also
+    /// resolve a file URL to an image — and hands it to `receiveCapture`, the
+    /// same route a drop takes, so the placement, the clamps, the crop-armed
+    /// refusal and the ONE journal are not written twice. A pasteboard
+    /// carrying no image pastes nothing and journals no step: `receiveCapture`
+    /// is never reached, so the value comparison in `mutateCanvas` is never
+    /// even entered.
+    func pasteFromClipboard() {
+        let pasteboard = NSPasteboard.general
+        let data = pasteboard.data(forType: .tiff) ?? pasteboard.data(forType: .png)
+        guard let data, let image = NSImage(data: data)?
+            .cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            Diag.log("editor paste ignored: pasteboard carries no image")
+            return
+        }
+        _ = receiveCapture(image)
+        Diag.log("editor pasted \(image.width)x\(image.height)")
+    }
+
     // MARK: - Canvas layers (S19 slice 2)
 
     /// The layer list of the canvas, in z-order — the model's own value, read
@@ -1346,17 +1369,32 @@ final class CaptureEditorCanvas: NSView {
     var croppedRegion: CGRect? { record.region }
 
     /// The route a dropped capture takes (S19 slice 2): AppKit's drag session
-    /// — the surface route that exists today; the app keeps no capture
-    /// history, and clipboard paste is slice 3 — hands the editor an image
-    /// and a view point, and this rule turns them into one layer centred on
-    /// the drop point at the image's own pixel size, clamped by the model.
+    /// — the surface route that exists today — hands the editor an image and a
+    /// view point, and this rule turns them into one layer centred on the
+    /// drop point at the image's own pixel size, clamped by the model.
     /// While the crop is armed the drop is refused: the crop owns the pointer.
+    ///
+    /// Clipboard paste (S19 slice 3) rides this same machinery rather than a
+    /// second placement path: `point == nil` names a paste, which lands
+    /// centred on the VISIBLE canvas area — the display rect the current
+    /// space maps, the viewport's zoom and pan included — at the image's own
+    /// pixel size, and the model clamps it exactly like a drop. The paste
+    /// point deliberately does NOT depend on the pointer: a ⌘V while the
+    /// pointer sits over another window or off the canvas would otherwise
+    /// place the layer out of sight or be refused outright, and neither is a
+    /// sane answer for a keyboard gesture with a defined centre.
     @discardableResult
-    func receiveCapture(_ image: CGImage, atView point: CGPoint) -> CanvasLayer? {
+    func receiveCapture(_ image: CGImage, atView point: CGPoint? = nil) -> CanvasLayer? {
         guard !isCropping, image.width > 0, image.height > 0 else { return nil }
         let space = displaySpace(armed: false)
-        guard space.display.contains(point) else { return nil }
-        let pixel = space.pixelPoint(fromView: point)
+        let pixel: CGPoint
+        if let point {
+            guard space.display.contains(point) else { return nil }
+            pixel = space.pixelPoint(fromView: point)
+        } else {
+            let centre = CGPoint(x: space.display.midX, y: space.display.midY)
+            pixel = space.pixelPoint(fromView: centre)
+        }
         let placement = CGRect(
             x: pixel.x - CGFloat(image.width) / 2,
             y: pixel.y - CGFloat(image.height) / 2,
@@ -1538,6 +1576,15 @@ final class CaptureEditorCanvas: NSView {
 
         if event.modifierFlags.contains(.command) {
             switch event.charactersIgnoringModifiers?.lowercased() {
+            case "v": // ⌘V — paste an image from the clipboard onto the canvas (S19 slice 3)
+                // A field editor owning the responder chain keeps its own ⌘V:
+                // the canvas never steals a text field's paste.
+                guard !(window?.firstResponder is NSTextView) else {
+                    super.keyDown(with: event)
+                    return
+                }
+                pasteFromClipboard()
+                return
             case "z":
                 undo()
                 return
