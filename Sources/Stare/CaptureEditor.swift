@@ -259,6 +259,24 @@ struct EditorCropSpace: Equatable {
         }
         return result
     }
+
+    /// The space the editor shows for a capture at a given viewport (S16/T9):
+    /// the fitted mapping with the viewport composed on top — the fitted
+    /// display re-placed inside the canvas by the zoom and pan, the coverage
+    /// (which pixels it draws) unchanged. Everything that reads pixels
+    /// through a space — drawing, hit-testing, crops, the save — keeps its
+    /// exactness, because the mapping keeps going through the same pixel
+    /// route.
+    static func fitted(coverage: CGRect, viewport: EditorViewport, inCanvas canvas: CGRect) -> EditorCropSpace {
+        let base = fitted(coverage: coverage, inCanvas: canvas)
+        guard viewport != .identity, canvas.width > 0, canvas.height > 0,
+            base.display.width > 0, base.display.height > 0
+        else { return base }
+        return EditorCropSpace(
+            display: viewport.displayRect(fit: base.display, canvas: canvas),
+            coverage: coverage
+        )
+    }
 }
 
 /// Pure crop geometry: regions are rects in the original capture's pixel
@@ -564,6 +582,13 @@ final class CaptureEditorCanvas: NSView {
         state?.isCropMarked ?? false
     }
 
+    // MARK: - Zoom and pan (S16/T9)
+
+    /// The viewport over the current fit: how the capture is zoomed and panned
+    /// for precise annotation. The pure rules live in `EditorViewport`
+    /// (StareCore); the canvas only feeds it gestures.
+    private var viewport = EditorViewport()
+
     /// Adapts to a new state: sink onto the one selection (S6) so a tool
     /// pick — routed through `EditorState` — also ungates the staged
     /// rectangle. One selection state owns both the marking and the
@@ -614,13 +639,116 @@ final class CaptureEditorCanvas: NSView {
     /// The mapping of the current mode: while the crop is armed the canvas
     /// shows the WHOLE original — the context around the region is what makes
     /// its edges grabbable and growable (S7); otherwise it fits the applied
-    /// region, or the whole image while nothing is cropped.
+    /// region, or the whole image while nothing is cropped. The viewport
+    /// (S16/T9) composes on top of the fit, so whatever it shows is still the
+    /// same one mapping between view and pixels the rest of the editor reads.
     private func displaySpace(armed: Bool) -> EditorCropSpace {
         let full = CGRect(x: 0, y: 0, width: image.width, height: image.height)
         var coverage = full
         if !armed, let region = record.region { coverage = region }
-        return EditorCropSpace.fitted(coverage: coverage, inCanvas: bounds)
+        let base = EditorCropSpace.fitted(coverage: coverage, viewport: .identity, inCanvas: bounds)
+        reconcileViewport(against: base)
+        guard viewport != .identity else { return base }
+        return EditorCropSpace(
+            display: viewport.displayRect(fit: base.display, canvas: bounds),
+            coverage: base.coverage
+        )
     }
+
+    /// A fit the viewport was not built for resets it to ⌘0's state: a crop
+    /// applied or undone, the window resized, the armed crop's whole-picture
+    /// view. The fit is identified by rect AND coverage — two coverages can
+    /// share a display rect (a square region fits into the same 200×200 slot
+    /// as the whole capture), and only the same rect over the same pixels is
+    /// the same ground. A first read adopts the fit without resetting — the
+    /// viewport is the identity until a gesture moves it anyway.
+    private var lastFit: (display: CGRect, coverage: CGRect)?
+
+    private func reconcileViewport(against base: EditorCropSpace) {
+        if let last = lastFit, last != (base.display, base.coverage) {
+            viewport = .identity
+        }
+        lastFit = (base.display, base.coverage)
+    }
+
+    /// The viewport's current value, reconciled against the fit — the
+    /// reconciled observable state the tests pin and ⌘0 reports.
+    var viewportState: EditorViewport {
+        _ = displaySpace(armed: isCropping)
+        return viewport
+    }
+
+    /// The coverage whose fit the current mode's gestures stand on.
+    private var currentFitCoverage: CGRect {
+        var coverage = fullBounds
+        if !isCropping, let region = record.region { coverage = region }
+        return coverage
+    }
+
+    /// The fitted display for a coverage, with the viewport reconciled
+    /// against it.
+    private func fittedBase(for coverage: CGRect) -> CGRect {
+        let base = EditorCropSpace.fitted(coverage: coverage, inCanvas: bounds)
+        reconcileViewport(against: base)
+        return base.display
+    }
+
+    /// One multiplicative zoom step (⌘+, ⌘−, ⌘ + scroll, pinch), anchored at
+    /// a view point like the board's every zoom: the pixels under the anchor
+    /// stay under it (S16).
+    func applyZoom(_ factor: CGFloat, anchoredAt anchor: CGPoint? = nil) {
+        let fit = fittedBase(for: currentFitCoverage)
+        let updated = viewport.zoomed(
+            byStep: factor, anchoredAt: anchor ?? pointerAnchor(), fit: fit, canvas: bounds)
+        guard updated != viewport else { return }
+        viewport = updated
+        needsDisplay = true
+        Diag.log("editor zoom zoom=\(viewport.zoom) pan=\(viewport.pan)")
+    }
+
+    /// Pans by a view-point delta (content follows the pointer), clamped so
+    /// the capture stays in sight (S16).
+    func pan(byPointerDelta delta: CGSize) {
+        let fit = fittedBase(for: currentFitCoverage)
+        let updated = viewport.panned(by: delta, fit: fit, canvas: bounds)
+        guard updated != viewport else { return }
+        viewport = updated
+        needsDisplay = true
+        Diag.log("editor pan pan=\(viewport.pan)")
+    }
+
+    /// ⌘0 — back to the fit: pan and zoom reset together. Marks never move
+    /// (they are recorded in the space of the moment they were drawn), so
+    /// nothing else changes.
+    func resetViewport() {
+        guard viewport != .identity else { return }
+        viewport = .identity
+        needsDisplay = true
+        Diag.log("editor viewport reset")
+    }
+
+    /// The anchor a keyboard zoom uses: the pointer's view point — keys zoom
+    /// where the user is looking — falling back to the canvas centre when the
+    /// pointer does not sit on this window. The board's rule, verbatim.
+    private func pointerAnchor() -> CGPoint {
+        guard let window else { return CGPoint(x: bounds.midX, y: bounds.midY) }
+        let location = window.convertPoint(fromScreen: NSEvent.mouseLocation)
+        let anchor = convert(location, from: nil)
+        return bounds.contains(anchor) ? anchor : CGPoint(x: bounds.midX, y: bounds.midY)
+    }
+
+    /// Space is held: drags pan the capture instead of drawing, and a
+    /// middle-button drag pans too — the board's gesture, on the editor.
+    private var isSpacePanning = false
+    private var isMiddlePanning = false
+    private var lastPanPoint: CGPoint?
+    private var isPanning: Bool { (isSpacePanning || isMiddlePanning) && lastPanPoint != nil }
+    /// ⌘ + scroll is zooming: a magnifier cursor shows while the gesture
+    /// runs, through the same `ScrollZoom.Gesture` state machine the board
+    /// uses, so the direction lock and the momentum rejection come for free.
+    private var isZoomScrolling = false
+    private var lastZoomScrollDelta: CGFloat = 0
+    private var scrollZoomGesture = ScrollZoom.Gesture()
 
     /// The space strokes are placed in: a live gesture keeps the mapping it
     /// started with, everything else uses the current one.
@@ -764,6 +892,14 @@ final class CaptureEditorCanvas: NSView {
     // MARK: - Mouse
 
     override func mouseDown(with event: NSEvent) {
+        // Space-pan (and middle-button pan) wins over every other gesture,
+        // as on the board: the drag moves the capture, not a tool.
+        if isSpacePanning || event.buttonNumber == 2 {
+            isMiddlePanning = event.buttonNumber == 2
+            lastPanPoint = convert(event.locationInWindow, from: nil)
+            reassertCursor() // pan drag starts → closed hand (S3's vocabulary)
+            return
+        }
         let point = convert(event.locationInWindow, from: nil)
 
         if isCropping {
@@ -812,6 +948,14 @@ final class CaptureEditorCanvas: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if isPanning {
+            let point = convert(event.locationInWindow, from: nil)
+            if let last = lastPanPoint {
+                pan(byPointerDelta: CGSize(width: point.x - last.x, height: point.y - last.y))
+            }
+            lastPanPoint = point
+            return
+        }
         let point = convert(event.locationInWindow, from: nil)
 
         if isCropping, let gesture, let space = gestureSpace {
@@ -844,6 +988,12 @@ final class CaptureEditorCanvas: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if isPanning {
+            if event.buttonNumber == 2 { isMiddlePanning = false }
+            lastPanPoint = nil
+            reassertCursor() // drag end → open hand (space held) or the arrow
+            return
+        }
         if isCropping {
             endCropDrag()
             return
@@ -921,9 +1071,99 @@ final class CaptureEditorCanvas: NSView {
         isCropping && stage.showsHint
     }
 
+    // MARK: - Zoom and pan input (S16/T9)
+
+    /// ⌘ + scroll zooms through the same gesture state machine the board
+    /// uses (`ScrollZoom.Gesture`: direction lock, momentum rejection, the
+    /// raw content-directed delta) and the same anchored zoom; plain scroll
+    /// pans inside the clamp. The wheel is the editor's natural pan: no
+    /// modifier needed, and no zoom can ever come from a plain scroll.
+    override func scrollWheel(with event: NSEvent) {
+        let zooming = event.modifierFlags.contains(.command)
+        guard zooming || isZoomScrolling else {
+            pan(byPointerDelta: CGSize(width: event.scrollingDeltaX, height: event.scrollingDeltaY))
+            return
+        }
+        defer {
+            // The gesture's closing phases release the lock (see the board's
+            // handler for the probed phase values).
+            if event.phase == .ended || event.phase == .cancelled { endZoomScroll() }
+        }
+        guard zooming else {
+            // ⌘ let go mid-gesture: the gesture is over.
+            endZoomScroll()
+            return
+        }
+        let decision = scrollZoomGesture.decide(for: ScrollZoom.Event(
+            deltaY: event.scrollingDeltaY,
+            phase: ScrollZoom.Phase(rawValue: Int(event.phase.rawValue)) ?? .none,
+            momentumPhase: ScrollZoom.MomentumPhase(rawValue: Int(event.momentumPhase.rawValue)) ?? .none
+        ))
+        guard case let .zoom(factor) = decision else { return }
+        applyZoom(factor, anchoredAt: convert(event.locationInWindow, from: nil))
+        isZoomScrolling = true
+        lastZoomScrollDelta = factor > 1 ? 1 : -1
+        reassertCursor()
+    }
+
+    /// Trackpad pinch: magnification events carry a multiplicative factor
+    /// around the pointer — the app's anchoring rule, on the same viewport.
+    override func magnify(with event: NSEvent) {
+        guard event.magnification != 0 else { return }
+        applyZoom(1 + event.magnification, anchoredAt: convert(event.locationInWindow, from: nil))
+    }
+
+    private func endZoomScroll() {
+        isZoomScrolling = false
+        scrollZoomGesture = ScrollZoom.Gesture()
+        reassertCursor()
+    }
+
+    // MARK: - Gesture cursors (S16/T9)
+
+    /// The running gesture's cursor, derived from the state so every exit
+    /// path reverts it simply by clearing that state: closed hand while a
+    /// pan drag runs, open hand while space is held, a magnifier while
+    /// ⌘ + scroll runs — the board's vocabulary, on the editor.
+    private var gestureCursor: NSCursor? {
+        if isPanning { return .closedHand }
+        if isSpacePanning { return .openHand }
+        if isZoomScrolling { return lastZoomScrollDelta >= 0 ? NSCursor.zoomIn : NSCursor.zoomOut }
+        return nil
+    }
+
+    private func reassertCursor() {
+        (gestureCursor ?? NSCursor.arrow).set()
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        reassertCursor()
+    }
+
+    /// The view going away ends any gesture, so nothing stale survives the
+    /// editor closing and the next window shows its own cursor.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window == nil else { return }
+        isSpacePanning = false
+        isMiddlePanning = false
+        lastPanPoint = nil
+        isZoomScrolling = false
+        scrollZoomGesture = ScrollZoom.Gesture()
+    }
+
     // MARK: - Keyboard
 
     override func keyDown(with event: NSEvent) {
+        // Space pans (the app-wide convention); holding it never draws and
+        // never arms anything (S16: the tool keys are untouched).
+        if event.keyCode == 49 {
+            if !event.isARepeat {
+                isSpacePanning = true
+                reassertCursor() // space held → open hand
+            }
+            return
+        }
         if event.keyCode == 53 { // Escape
             if isCropping {
                 // Cancel the staged rectangle and hand the mark back to the
@@ -958,9 +1198,21 @@ final class CaptureEditorCanvas: NSView {
         }
 
         if event.modifierFlags.contains(.command) {
-            if characters.lowercased() == "z" {
+            switch event.charactersIgnoringModifiers?.lowercased() {
+            case "z":
                 undo()
                 return
+            case "0": // ⌘0 — pan and zoom back to the fit (S16/T9)
+                resetViewport()
+                return
+            case "+", "=": // ⌘+ / ⌘=
+                zoomIn()
+                return
+            case "-", "_": // ⌘−
+                zoomOut()
+                return
+            default:
+                break
             }
             super.keyDown(with: event)
             return
@@ -986,7 +1238,26 @@ final class CaptureEditorCanvas: NSView {
         super.keyDown(with: event)
     }
 
-    // MARK: - Actions
+    override func keyUp(with event: NSEvent) {
+        if event.keyCode == 49 {
+            isSpacePanning = false
+            // Space release → the tool cursor, or the closed hand if a pan
+            // drag is still running.
+            reassertCursor()
+            return
+        }
+        super.keyUp(with: event)
+    }
+
+    /// ⌘+ / ⌘− — one zoom step, anchored at the pointer like the board's
+    /// keys, falling back to the canvas centre.
+    func zoomIn() {
+        applyZoom(EditorViewport.zoomStep)
+    }
+
+    func zoomOut() {
+        applyZoom(1 / EditorViewport.zoomStep)
+    }
 
     /// ⌘Z reverses the newest change — the crop or a mark, in the order they
     /// happened (S7). The armed palette item does not move: undo restores the
@@ -1046,11 +1317,18 @@ final class CaptureEditorCanvas: NSView {
         // is re-anchored at the base's origin subtracts that letterbox origin
         // while keeping the display's fit, so a mark drawn at a view point is
         // saved at the pixel that point maps to — on every window aspect,
-        // the letterboxed axis included (S7/T11). Applied over that mapping,
-        // the crop only cuts the base: it never shifts the marks a second
-        // time, because the converted coordinates are already region-relative.
+        // the letterboxed axis included (S7/T11). The fit's scale (S16/T9):
+        // the target is always the FIT-sized display, never the viewport's
+        // zoomed one, so a mark drawn while the editor is zoomed or panned
+        // converts through its recorded space into the same fit-sized target
+        // — the same stroke drawn at 3× saves exactly the pixels the fit
+        // drawing saves. Zoom changes where you look, never what lands in
+        // the file. Applied over that mapping, the crop only cuts the base:
+        // it never shifts the marks a second time, because the converted
+        // coordinates are already region-relative.
+        let fitted = EditorCropSpace.fitted(coverage: space.coverage, inCanvas: bounds)
         let target = EditorCropSpace(
-            display: CGRect(origin: .zero, size: space.display.size),
+            display: CGRect(origin: .zero, size: fitted.display.size),
             coverage: space.coverage
         )
         let marks = session.strokes.map { target.convert($0, from: spaces[$0.id] ?? space) }
