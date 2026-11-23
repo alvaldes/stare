@@ -490,6 +490,7 @@ struct ToolbarView: View {
                 view
                     .opacity(0.3)
                     .help(Text(verbatim: Self.fixedHelp(item)))
+                    .onDrag { organiser.dragProvider(item) }
                     .background(
                         GeometryReader { geo in
                             Color.clear.preference(key: ToolbarItemSizeKey.self, value: [item: geo.size])
