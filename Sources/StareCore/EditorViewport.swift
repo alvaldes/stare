@@ -181,3 +181,95 @@ public struct EditorViewport: Equatable, Sendable {
         return min(max(origin, canvasMin), canvasMax - content)
     }
 }
+
+/// The scroll wheel's pan-or-zoom **gate** (S16/T9, review of
+/// `feat/capture-extras`): what one scroll event does when it reaches the
+/// capture editor — pan, zoom, or nothing. It sits next to the viewport its
+/// pan feeds and keeps the whole decision out of the editor so the rules are
+/// pinneable without a window, the same discipline `ScrollZoom.Gesture` set
+/// for the zoom itself. The gate only routes: what a ⌘ + scroll event does
+/// inside the zoom stays that gesture state machine's business (direction
+/// lock phases, its own momentum rejection) — one zoom state machine, never
+/// a second one.
+///
+/// Three rules, all the gate's own:
+///
+/// - **Momentum rejection, matched to the zoom's.** An event with
+///   `momentumPhase != .none` belongs to no live gesture — `ScrollZoom.Gesture`
+///   says exactly that for zooming — and it says so for panning too. Every
+///   momentum event arrives *after* a scroll stream's own `.ended`, which is
+///   what makes the zoom's tail the reviewed bug: the gesture was already
+///   torn down, no ⌘ was held, and raw feeding kicked the viewport after the
+///   zoom had finished. The same rule keeps a plain scroll's flick from
+///   coasting the content past where the finger left it.
+/// - **Zoom routing.** With ⌘ held the event belongs to the zoom gesture;
+///   without ⌘ while the gesture still holds, it is the gesture's wind-down
+///   (⌘ released mid-gesture, or its closing phases) and pans nothing.
+/// - **Felt direction.** Pan deltas arrive in AppKit's content-directed
+///   numbering, which under natural scrolling (`isDirectionInvertedFromDevice`)
+///   is the opposite of the direction the user feels. The felt delta negates
+///   the raw one there, so the content follows the finger on every device:
+///   an inverted one pans the same felt direction as a device without the
+///   setting, and whoever keeps the default keeps the direction this editor
+///   has always panned in.
+public enum ScrollPan: Sendable {
+    /// One scroll event reduced to what the gate decides on. `phase` rides
+    /// with the zoom branch (`ScrollZoom.Event` takes it) and with the
+    /// handler's closing rule; the gate itself keys off the momentum phase,
+    /// which is exactly the "momentum that follows a `.ended`" signal.
+    public struct Event: Equatable, Sendable {
+        /// `NSEvent.scrollingDeltaX` as the device reported it.
+        public var deltaX: CGFloat
+        /// `NSEvent.scrollingDeltaY` as the device reported it.
+        public var deltaY: CGFloat
+        /// `NSEvent.isDirectionInvertedFromDevice` — natural scrolling.
+        public var isDirectionInvertedFromDevice: Bool
+        /// `NSEvent.momentumPhase`.
+        public var momentumPhase: ScrollZoom.MomentumPhase
+        /// Whether the zoom modifier (⌘) was down for this event.
+        public var commandHeld: Bool
+        /// The editor still holds a ⌘ + scroll zoom gesture when the event
+        /// arrives — the state a wind-down event ends.
+        public var zoomGestureLive: Bool
+
+        public init(
+            deltaX: CGFloat = 0,
+            deltaY: CGFloat = 0,
+            isDirectionInvertedFromDevice: Bool = false,
+            momentumPhase: ScrollZoom.MomentumPhase = .none,
+            commandHeld: Bool = false,
+            zoomGestureLive: Bool = false
+        ) {
+            self.deltaX = deltaX
+            self.deltaY = deltaY
+            self.isDirectionInvertedFromDevice = isDirectionInvertedFromDevice
+            self.momentumPhase = momentumPhase
+            self.commandHeld = commandHeld
+            self.zoomGestureLive = zoomGestureLive
+        }
+    }
+
+    /// What the event does to the viewport: pan by the felt delta, feed the
+    /// zoom gesture, or move nothing.
+    public enum Decision: Equatable, Sendable {
+        case pan(delta: CGSize)
+        case zoom
+        case ignore
+    }
+
+    /// Decides what `event` does to the viewport (S16/T9).
+    public static func decide(for event: Event) -> Decision {
+        // Momentum belongs to no live gesture: reject it before touching any
+        // state, exactly as `ScrollZoom.Gesture` does for the zoom — the
+        // flick's tail after the zoom's own `.ended` must not kick the
+        // viewport, and it must not coast the pan either.
+        guard event.momentumPhase == .none else { return .ignore }
+        if event.commandHeld { return .zoom }
+        if event.zoomGestureLive { return .ignore }
+        // The deltas arrive in AppKit's content-directed numbering, which is
+        // the opposite of the felt direction when natural scrolling is on:
+        // negate there, so the content follows the finger on every device.
+        let invert: CGFloat = event.isDirectionInvertedFromDevice ? -1 : 1
+        return .pan(delta: CGSize(width: event.deltaX * invert, height: event.deltaY * invert))
+    }
+}

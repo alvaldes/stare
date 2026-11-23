@@ -188,4 +188,51 @@ final class EditorViewportTests: XCTestCase {
             CGRect(x: 0, y: 70, width: 300, height: 100),
             "the content follows the drag one to one in view points while the clamp stays quiet")
     }
+
+    // MARK: - The scroll-pan gate (review: direction + momentum)
+
+    /// The default setting keeps the direction the editor has always panned
+    /// in: AppKit's raw content-directed delta
+    func testTheGatePansTheRawDeltaWhenTheDeviceIsNotInverted() {
+        XCTAssertEqual(
+            ScrollPan.decide(for: ScrollPan.Event(deltaX: 12, deltaY: 30, isDirectionInvertedFromDevice: false)),
+            .pan(delta: CGSize(width: 12, height: 30)),
+            "without inversion the felt direction is the raw delta's, exactly as the editor has always panned")
+    }
+
+    /// Natural scrolling inverts the raw deltas' relationship to the felt
+    /// direction: the same physical gesture must pan the same way on a
+    /// device with the setting and on one without it.
+    func testAnInvertedDevicePansTheSameFeltDirectionAsAnotherWithoutInversion() {
+        let plain = ScrollPan.decide(for: ScrollPan.Event(deltaX: 12, deltaY: 30, isDirectionInvertedFromDevice: false))
+        let inverted = ScrollPan.decide(for: ScrollPan.Event(deltaX: -12, deltaY: -30, isDirectionInvertedFromDevice: true))
+        XCTAssertEqual(inverted, plain, "the same physical gesture must pan the same felt direction whatever the natural-scrolling setting says")
+        XCTAssertEqual(inverted, .pan(delta: CGSize(width: 12, height: 30)), "natural scrolling must not flip the felt direction")
+    }
+
+    /// The zoom gesture's own discipline — momentum belongs to no live
+    /// gesture (v0.5/S2) — now says so for panning too: a flick's tail moves
+    /// nothing, however large its delta.
+    func testTheMomentumTailNeverPans() {
+        for phase in [ScrollZoom.MomentumPhase.begin, .continued, .end] {
+            XCTAssertEqual(
+                ScrollPan.decide(for: ScrollPan.Event(deltaX: 40, deltaY: 300, momentumPhase: phase)),
+                .ignore,
+                "momentum phase \(phase) belongs to no live gesture and must neither pan nor zoom")
+        }
+    }
+
+    /// The gate's routing is unchanged where the review touched nothing: ⌘
+    /// held sends the event to the zoom gesture, and a non-⌘ event while the
+    /// gesture holds is its wind-down, which pans nothing.
+    func testTheGateRoutesZoomAndTheGestureWindDownAsBefore() {
+        XCTAssertEqual(
+            ScrollPan.decide(for: ScrollPan.Event(deltaY: 30, commandHeld: true)),
+            .zoom,
+            "⌘ + scroll belongs to the zoom gesture")
+        XCTAssertEqual(
+            ScrollPan.decide(for: ScrollPan.Event(deltaY: 30, commandHeld: false, zoomGestureLive: true)),
+            .ignore,
+            "a non-⌘ event while the zoom gesture holds is its wind-down")
+    }
 }

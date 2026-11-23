@@ -1076,34 +1076,46 @@ final class CaptureEditorCanvas: NSView {
     /// ⌘ + scroll zooms through the same gesture state machine the board
     /// uses (`ScrollZoom.Gesture`: direction lock, momentum rejection, the
     /// raw content-directed delta) and the same anchored zoom; plain scroll
-    /// pans inside the clamp. The wheel is the editor's natural pan: no
-    /// modifier needed, and no zoom can ever come from a plain scroll.
+    /// pans inside the clamp. What an event does — pan, zoom or nothing — is
+    /// the pure gate's decision (`ScrollPan.decide` in StareCore), so this
+    /// handler is only its adapter: it maps the `NSEvent` onto the gate's
+    /// event, applies the pan in the felt direction, and feeds the zoom
+    /// gesture the events the gate routes to it.
     override func scrollWheel(with event: NSEvent) {
-        let zooming = event.modifierFlags.contains(.command)
-        guard zooming || isZoomScrolling else {
-            pan(byPointerDelta: CGSize(width: event.scrollingDeltaX, height: event.scrollingDeltaY))
-            return
-        }
-        defer {
-            // The gesture's closing phases release the lock (see the board's
-            // handler for the probed phase values).
-            if event.phase == .ended || event.phase == .cancelled { endZoomScroll() }
-        }
-        guard zooming else {
-            // ⌘ let go mid-gesture: the gesture is over.
-            endZoomScroll()
-            return
-        }
-        let decision = scrollZoomGesture.decide(for: ScrollZoom.Event(
+        let decision = ScrollPan.decide(for: ScrollPan.Event(
+            deltaX: event.scrollingDeltaX,
             deltaY: event.scrollingDeltaY,
-            phase: ScrollZoom.Phase(rawValue: Int(event.phase.rawValue)) ?? .none,
-            momentumPhase: ScrollZoom.MomentumPhase(rawValue: Int(event.momentumPhase.rawValue)) ?? .none
+            isDirectionInvertedFromDevice: event.isDirectionInvertedFromDevice,
+            momentumPhase: ScrollZoom.MomentumPhase(rawValue: Int(event.momentumPhase.rawValue)) ?? .none,
+            commandHeld: event.modifierFlags.contains(.command),
+            zoomGestureLive: isZoomScrolling
         ))
-        guard case let .zoom(factor) = decision else { return }
-        applyZoom(factor, anchoredAt: convert(event.locationInWindow, from: nil))
-        isZoomScrolling = true
-        lastZoomScrollDelta = factor > 1 ? 1 : -1
-        reassertCursor()
+        switch decision {
+        case let .pan(delta):
+            pan(byPointerDelta: delta)
+        case .zoom:
+            defer {
+                // The gesture's closing phases release the lock (see the
+                // board's handler for the probed phase values).
+                if event.phase == .ended || event.phase == .cancelled { endZoomScroll() }
+            }
+            let gestureDecision = scrollZoomGesture.decide(for: ScrollZoom.Event(
+                deltaY: event.scrollingDeltaY,
+                phase: ScrollZoom.Phase(rawValue: Int(event.phase.rawValue)) ?? .none,
+                momentumPhase: ScrollZoom.MomentumPhase(rawValue: Int(event.momentumPhase.rawValue)) ?? .none
+            ))
+            guard case let .zoom(factor) = gestureDecision else { return }
+            applyZoom(factor, anchoredAt: convert(event.locationInWindow, from: nil))
+            isZoomScrolling = true
+            lastZoomScrollDelta = factor > 1 ? 1 : -1
+            reassertCursor()
+        case .ignore:
+            // A non-⌘ event while the gesture holds is its wind-down (⌘ let
+            // go mid-gesture): the gesture ends instead of panning. Momentum
+            // belongs to no live gesture — the gate refused it, so the tail
+            // of a zoom or a plain flick moves nothing and prolongs nothing.
+            if isZoomScrolling, !event.modifierFlags.contains(.command) { endZoomScroll() }
+        }
     }
 
     /// Trackpad pinch: magnification events carry a multiplicative factor

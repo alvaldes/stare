@@ -109,8 +109,32 @@ final class CaptureEditorZoomTests: XCTestCase {
     }
 
     /// A synthesized hardware-shaped scroll event, the way the board's phase
-    /// tests drive `scrollWheel`.
-    private func scrollEvent(deltaY: Int32, command: Bool) -> NSEvent? {
+    /// tests drive `scrollWheel`. The CG phase fields are probe-verified
+    /// (see `BoardScrollHardwarePhaseTests`): scroll phase 1/2/4/8 decode to
+    /// `.began`/`.changed`/`.ended`/`.cancelled`, momentum phase 1/2/3 to
+    /// begin/continued/end. The inversion flag has no CG field this SDK
+    /// names, so synthesized events never report
+    /// `isDirectionInvertedFromDevice`; the felt-direction rule is pinned at
+    /// the pure seam (`ScrollPan`) instead.
+    private enum CGScrollPhase {
+        static let began: Int64 = 1
+        static let changed: Int64 = 2
+        static let ended: Int64 = 4
+        static let cancelled: Int64 = 8
+    }
+    private enum CGMomentumPhase {
+        static let begin: Int64 = 1
+        static let continued: Int64 = 2
+        static let end: Int64 = 3
+    }
+
+    private func scrollEvent(
+        deltaY: Int32,
+        command: Bool,
+        scrollPhase: Int64? = nil,
+        momentumPhase: Int64? = nil,
+        atPoint: CGPoint? = nil
+    ) -> NSEvent? {
         guard let cg = CGEvent(
             scrollWheelEvent2Source: nil,
             units: .pixel,
@@ -120,6 +144,9 @@ final class CaptureEditorZoomTests: XCTestCase {
             wheel3: 0
         ) else { return nil }
         if command { cg.flags = .maskCommand }
+        if let scrollPhase { cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: scrollPhase) }
+        if let momentumPhase { cg.setIntegerValueField(.scrollWheelEventMomentumPhase, value: momentumPhase) }
+        if let atPoint { cg.location = atPoint }
         return NSEvent(cgEvent: cg)
     }
 
@@ -301,6 +328,37 @@ final class CaptureEditorZoomTests: XCTestCase {
         XCTAssertEqual(composed.width, 100, "the space drag must not have altered the picture")
         XCTAssertEqual(composed.height, 100)
         XCTAssertNil(NSBitmapImageRep(cgImage: composed).firstNonWhitePixel(), "nothing may be painted by a pan drag")
+    }
+
+    func testMomentumAfterACommandScrollZoomDoesNotPan() throws {
+        let image = try XCTUnwrap(Self.splitImage(width: 300, height: 100))
+        let editor = Self.makeEditor(image: image, size: CGSize(width: 300, height: 200))
+        editor.window.confineToPrimaryScreen()
+
+        // ⌘ + scroll zooms to the ceiling, anchored at the canvas centre so
+        // the zoomed pan sits interior to its clamp on both axes (the
+        // synthesized events' default location is off-canvas, which pins the
+        // pan at edges and would freeze any kick); then the closing `.ended`
+        // event tears the gesture down exactly as the trackpad delivers it.
+        let centre = CGPoint(x: 150, y: 100)
+        editor.canvas.scrollWheel(with: try XCTUnwrap(
+            scrollEvent(deltaY: 200, command: true, scrollPhase: CGScrollPhase.changed, atPoint: centre)))
+        editor.canvas.scrollWheel(with: try XCTUnwrap(
+            scrollEvent(deltaY: 200, command: true, scrollPhase: CGScrollPhase.ended, atPoint: centre)))
+        XCTAssertEqual(editor.canvas.viewportState.zoom, EditorViewport.maxZoom, "the zoom completed")
+        let atRest = editor.canvas.viewportState
+
+        // The momentum tail arrives with no ⌘ and the gesture already gone:
+        // raw feeding would kick the viewport right after the zoom finished.
+        // The zoom's clamp glues the covered y axis to the canvas edge its
+        // anchor pinned, so the kick is tested away from that glued edge —
+        // the one direction the clamp allows to move.
+        let forward = try XCTUnwrap(
+            scrollEvent(deltaY: -400, command: false, momentumPhase: CGMomentumPhase.continued))
+        editor.canvas.scrollWheel(with: forward)
+        XCTAssertEqual(
+            editor.canvas.viewportState, atRest,
+            "the momentum tail that follows the zoom's .ended belongs to no live gesture and must not kick the viewport")
     }
 
     // MARK: - The viewport is relative to the current fit
