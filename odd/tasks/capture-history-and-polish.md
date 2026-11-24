@@ -25,12 +25,12 @@ Branch `feat/capture-extras`, off `main` at `65c94a0`. Runner: `swift test` (one
 
 | ID | Specs | Task | Route | Commit |
 | --- | --- | --- | --- | --- |
-| T1 | S1 | Card keeps its pin and close, smaller plate, pinned cards hold their spot, captures stack | parent | — |
-| T2a | S2, S2a | Capture history on ⌥⇧I: persisted store (50), paste-style panel, closes drawing, floats over the board | worker | — |
-| T2b | S2, S2a | A chosen capture pastes into the open board as one page image layer, moved and resized with the editor's ⌥ gestures | worker | — |
-| T3 | S3 | Vertical bar sits the same distance from the side edge as the horizontal bar does from the top/bottom | parent | — |
-| T4 | S4 | Settings placement card spans the pane instead of stopping at 700 pt | parent | — |
-| T5 | S5 | Pointer highlighter preview is shorter | parent | — |
+| T1 | S1 | Card keeps its pin and close, smaller plate, pinned cards hold their spot, captures stack | parent | e6fcdec |
+| T2a | S2, S2a | Capture history on ⌥⇧I: persisted store (50), paste-style panel, closes drawing, floats over the board | worker | 797d9cd |
+| T2b | S2, S2a | A chosen capture pastes into the open board as one page image layer, moved and resized with the editor's ⌥ gestures | worker | 797d9cd |
+| T3 | S3 | Vertical bar sits the same distance from the side edge as the horizontal bar does from the top/bottom | parent | c594f15 |
+| T4 | S4 | Settings placement card spans the pane instead of stopping at 700 pt | parent | 797d9cd |
+| T5 | S5 | Pointer highlighter preview is shorter | parent | 17db96d |
 
 ## Log
 
@@ -49,3 +49,6 @@ Branch `feat/capture-extras`, off `main` at `65c94a0`. Runner: `swift test` (one
 - **L6** (evidence, T1): the card had no controls and a 260×170 thumbnail cap. It now carries a pin and a close on the plate, is 190×126 with a 6 pt backdrop, keeps its level above the palettes and the overlay, and a pinned card leaves the stack: it is never evicted by the cap and never pushed by a later capture. Undo/persistence of the pin is session-scoped on purpose. `CaptureCardTests` 7/7.
 - **L7** (known gap, needs the owner's word): the capture editor's own save/copy path never leaves `CaptureEditor.swift`, so an edited variant saved from the editor does not reach the history; the capture the editor received does, because `deliver` recorded it first. Closing it needs a seam in `CaptureEditor.swift`.
 - **L8** (known gap, reported by the worker): the board's image layer is not undoable — the board's journal is stroke-typed and an image op would mean touching `DrawingSession.swift`, which was outside that unit's surfaces.
+- **L9** (evidence, verification and the fixes it forced): an independent verifier reproduced eight findings against the first cut, six of them real and fixed before the commits — the panel's keyboard never reached the hosting view (`NSHostingView` declines first responder, so Esc, the arrows and ↵ were dead through the real event path), the store trusted `fileName` from the index and would read and delete outside its own folder on a hand-edited index, ↓/↑ walked the grid backwards, a board image hanging off the base was squeezed into the intersection instead of clipped, the cap was not enforced at load, and a zero-width screen docked the column dead centre. Each fix landed after a RED that reproduced the probe. New classes: `CaptureHistoryPanelKeyboardTests`, `CaptureHistoryIndexPathTests`, `BoardImageClipTests`, `ToolbarAnchorRegressionTests`.
+- **L10** (evidence, commits): `c594f15` (T3), `17db96d` (T5), `e6fcdec` (T1), `797d9cd` (T2a + T2b + T4 + docs). Full suite 619 tests, 0 failures, except `RedactionDispatchTests.testEveryPixelateBlockIsConstantInsideThePatch`, which fails in roughly one run in three on a tree this diff never touches (it passes 3/3 standalone and the class was green inside an earlier full run): a load-dependent pre-existing flake, reported as such rather than worked around.
+- **L11** (slice note): `797d9cd` carries T2a and T2b together (about 1,300 authored lines) because the pick route, the board's image layer and the controller that owns both share `OverlayController.swift`; splitting them would have left a commit that could not build. Delivery shape when publishing: T3, T5 and T1 are three small PRs of their own, and T2 is one PR of two review passes — the history (store, panel, hotkey) and the board's image layer.
