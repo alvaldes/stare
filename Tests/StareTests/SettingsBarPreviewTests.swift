@@ -129,21 +129,31 @@ final class SettingsBarPreviewTests: XCTestCase {
     /// saturated ink the bar carries (white and black read as grey, so the
     /// scan cannot see them). Pre-fix the stage scrolled instead of fitting
     /// and cut the bar's right end — the inks — off at the narrow width.
+    /// The two widths these tests render at: the pane's width at the window's
+    /// default size and at its minimum. Named because the fit ratio below is
+    /// derived from them, and a fixture change has to move both.
+    static let defaultCardsWidth: CGFloat = 766
+    static let minimumCardsWidth: CGFloat = 625
+
     func testTheMinimumWindowWidthKeepsEveryBarItem() throws {
-        let runsAtDefault = try Self.inkRuns(in: Self.renderPane(cardsWidth: 766, orientation: .horizontal))
-        let runsAtMinimum = try Self.inkRuns(in: Self.renderPane(cardsWidth: 625, orientation: .horizontal))
+        let runsAtDefault = try Self.inkRuns(in: Self.renderPane(cardsWidth: Self.defaultCardsWidth, orientation: .horizontal))
+        let runsAtMinimum = try Self.inkRuns(in: Self.renderPane(cardsWidth: Self.minimumCardsWidth, orientation: .horizontal))
 
         XCTAssertGreaterThanOrEqual(
             runsAtDefault.count, Self.saturatedInks.count + 1,
             "S2: the default width shows every coloured item the bar carries, and the marked tool's accent with them")
-        // A dropped item loses its whole run; a merge only loses the gap between
-        // two runs. Summing widths separates the two, where counting runs could not.
+        // A dropped item loses its whole run; a merge does not lose any width at
+        // all — the gap between two runs becomes part of the merged one, so the sum
+        // can only grow. The sum therefore has to match the default width scaled by
+        // the fit. The slack is antialiasing, measured: at the minimum width the
+        // inks summed 72.5 against a scaled 73.3, a 1.1% shortfall from rasterising
+        // smaller, so 2% leaves that floor and nothing else.
         let inkAtDefault = runsAtDefault.reduce(0) { $0 + $1.width }
         let inkAtMinimum = runsAtMinimum.reduce(0) { $0 + $1.width }
-        let fitted = (625.0 - SettingsMetrics.stageChrome)
-            / (766.0 - SettingsMetrics.stageChrome)
+        let fitted = (Self.minimumCardsWidth - SettingsMetrics.stageChrome)
+            / (Self.defaultCardsWidth - SettingsMetrics.stageChrome)
         XCTAssertGreaterThanOrEqual(
-            inkAtMinimum, inkAtDefault * fitted * 0.95,
+            inkAtMinimum, inkAtDefault * fitted * 0.98,
             "S2: the inks at the minimum width carry the default width's ink, scaled by the fit — nothing was cut")
     }
 
