@@ -379,8 +379,9 @@ final class PointerHighlightRendererTests: XCTestCase {
 
     /// The Settings preview's tile is a fixed canvas that must never grow with
     /// the style's size. These tests exercise the seam that tells the view how
-    /// to draw: 168 pt, matching `PointerPreviewView.tileSide`.
-    private let previewCanvasSide = 168.0
+    /// to draw: 120 pt since S5 (the tile was 168 pt and made the pane too
+    /// tall), matching `PointerPreviewView.tileSide`.
+    private let previewCanvasSide = 120.0
 
     /// Scale output is at most 1, and exactly 1 when the highlight already
     /// fits the canvas.
@@ -389,18 +390,22 @@ final class PointerHighlightRendererTests: XCTestCase {
             .extent(for: verifiedStyle().appearance(ink: .red), pulseScale: 1).width
         XCTAssertGreaterThan(side, 0)
         XCTAssertLessThanOrEqual(PointerHighlightRenderer.fitScale(extentSide: side, canvasSide: previewCanvasSide), 1)
-        XCTAssertEqual(
-            PointerHighlightRenderer.fitScale(extentSide: side, canvasSide: previewCanvasSide),
-            1, accuracy: 0.0001,
-            "the 72 pt default fits the preview canvas without scaling"
-        )
-        XCTAssertEqual(PointerHighlightRenderer.fitScale(extentSide: 100, canvasSide: 168), 1)
+        XCTAssertEqual(PointerHighlightRenderer.fitScale(extentSide: 100, canvasSide: previewCanvasSide), 1)
+        XCTAssertEqual(PointerHighlightRenderer.fitScale(extentSide: previewCanvasSide, canvasSide: previewCanvasSide), 1)
     }
 
-    /// A 240 pt highlight must scale below 1 while the 72 pt default stays 1,
-    /// and the scaled appearance's own extent must then cover exactly the
-    /// canvas the fit scale was computed against.
-    func test240PtScalesBelowOneWhile72PtStaysAtOne() {
+    /// A 240 pt highlight must scale below the 72 pt default's own scale, and
+    /// the scaled appearance's extent must then cover exactly the canvas the
+    /// fit scale was computed against. Since S5 the default is scaled too —
+    /// the canvas is shorter than its 161 pt extent — so the rule is the
+    /// ordering, not "the default stays at 1".
+    func test240PtScalesWellBelowTheDefaultOnTheShorterCanvas() {
+        let defaultSide = PointerHighlightRenderer
+            .extent(for: verifiedStyle().appearance(ink: .red), pulseScale: 1).width
+        let defaultScale = PointerHighlightRenderer
+            .fitScale(extentSide: defaultSide, canvasSide: previewCanvasSide)
+        XCTAssertGreaterThanOrEqual(defaultScale, 0.7, "the default must stay legible")
+
         var big = verifiedStyle()
         big.size = 240
         let bigSide = PointerHighlightRenderer
@@ -408,6 +413,7 @@ final class PointerHighlightRendererTests: XCTestCase {
         let bigScale = PointerHighlightRenderer
             .fitScale(extentSide: bigSide, canvasSide: previewCanvasSide)
         XCTAssertLessThan(bigScale, 1, "240 pt is too large for the fixed canvas")
+        XCTAssertLessThan(bigScale, defaultScale, "a bigger highlight is drawn smaller to fit the same tile")
 
         let scaledAppearance = big.appearance(ink: .red).scaled(by: bigScale)
         let scaledSide = PointerHighlightRenderer
@@ -460,7 +466,8 @@ final class PointerHighlightRendererTests: XCTestCase {
         )
         XCTAssertEqual(
             PointerHighlightRenderer.previewFitCaption(scale: bigScale, size: big.size),
-            "Shown at 35 % · 240 pt"
+            "Shown at \(Int((bigScale * 100).rounded())) % · 240 pt",
+            "the caption names the scale the view really draws with (120 pt tile since S5)"
         )
     }
 }

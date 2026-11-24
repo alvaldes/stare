@@ -84,12 +84,14 @@ struct PointerPreviewView: View {
     /// while drawing.
     let ink: Ink
 
-    /// Side of each preview tile, in points: a fixed canvas, deliberately
-    /// larger than the default 72 pt highlight's full extent (161 pt) so the
-    /// default draws at its real size, and every larger size scales down into
-    /// it instead of resizing the pane. The selftest reports it as
-    /// `previewTile=`.
-    static let tileSide: CGFloat = 168
+    /// Side of each preview tile, in points: a fixed square canvas (S5). It
+    /// used to be 168 pt — exactly the default 72 pt highlight's full extent
+    /// (161 pt) — which made the pane read as half empty; at 120 pt the tile
+    /// still holds the whole highlight, the default draws at 75 % of its size
+    /// and the caption names that percentage, and every larger size scales down
+    /// into the same square instead of resizing the pane. The selftest reports
+    /// it as `previewTile=`.
+    static let tileSide: CGFloat = 120
 
     var body: some View {
         VStack(spacing: 6) {
