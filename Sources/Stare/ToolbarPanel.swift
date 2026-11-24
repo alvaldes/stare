@@ -258,7 +258,7 @@ final class ToolbarPanel: NSPanel {
         guard newSize != frame.size else { return }
         guard let screen = screen ?? NSScreen.main ?? NSScreen.screens.first else { return }
         let anchor = savedAnchor()
-            ?? ToolbarGripperSpec.defaultAnchor(border: state.toolbarBorder)
+            ?? ToolbarGripperSpec.defaultAnchor(border: state.toolbarBorder, screenFrame: screen.frame)
         let rect = ToolbarGripperSpec.barRect(
             barSize: newSize,
             anchor: anchor,
@@ -289,7 +289,7 @@ final class ToolbarPanel: NSPanel {
         guard let target = targetScreen(for: placement) else { return }
 
         let anchor = savedAnchor()
-            ?? ToolbarGripperSpec.defaultAnchor(border: state.toolbarBorder)
+            ?? ToolbarGripperSpec.defaultAnchor(border: state.toolbarBorder, screenFrame: target.frame)
         let rect = ToolbarGripperSpec.barRect(
             barSize: frame.size,
             anchor: anchor,

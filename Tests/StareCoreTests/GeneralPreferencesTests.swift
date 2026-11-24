@@ -677,20 +677,29 @@ final class GeneralPreferencesTests: XCTestCase {
         // border-aware overload (T9/S12) must reproduce it for today's top
         // dock so the reset target never moves on its own.
         XCTAssertEqual(ToolbarGripperSpec.defaultAnchor, CGPoint(x: 0.5, y: 0.08))
-        XCTAssertEqual(ToolbarGripperSpec.defaultAnchor(border: .top), ToolbarGripperSpec.defaultAnchor)
+        XCTAssertEqual(ToolbarGripperSpec.defaultAnchor(border: .top, screenFrame: Self.screenFrame), ToolbarGripperSpec.defaultAnchor)
     }
 
     func testGripperSpecDefaultAnchorPerBorderIsSymmetricAndDistinct() {
-        let anchors = ToolbarBorder.allCases.map { ToolbarGripperSpec.defaultAnchor(border: $0) }
+        let anchors = ToolbarBorder.allCases.map {
+            ToolbarGripperSpec.defaultAnchor(border: $0, screenFrame: Self.screenFrame)
+        }
         // Four borders, four distinct anchors: top and bottom mirror on the
-        // vertical axis, left and right on the horizontal one.
-        XCTAssertEqual(Set(anchors), Set([
-            CGPoint(x: 0.5, y: 0.08),
-            CGPoint(x: 0.5, y: 0.92),
-            CGPoint(x: 0.08, y: 0.5),
-            CGPoint(x: 0.92, y: 0.5),
-        ]))
-        XCTAssertEqual(anchors.count, 4)
+        // vertical axis, left and right on the horizontal one (S3).
+        XCTAssertEqual(Set(anchors).count, 4)
+        for border in ToolbarBorder.allCases {
+            let anchor = ToolbarGripperSpec.defaultAnchor(border: border, screenFrame: Self.screenFrame)
+            switch border {
+            case .top: XCTAssertEqual(anchor, CGPoint(x: 0.5, y: 0.08))
+            case .bottom: XCTAssertEqual(anchor, CGPoint(x: 0.5, y: 0.92))
+            case .left, .right:
+                // The side inset is the absolute distance the row keeps from
+                // the top/bottom edge, read back as a fraction of the width.
+                let inset = 0.08 * Self.screenFrame.height / Self.screenFrame.width
+                XCTAssertEqual(anchor.x, border == .left ? inset : 1 - inset, accuracy: 1e-9)
+                XCTAssertEqual(anchor.y, 0.5)
+            }
+        }
     }
 
     // MARK: Toolbar docking geometry (T9/S12)
@@ -739,6 +748,46 @@ final class GeneralPreferencesTests: XCTestCase {
                 }
             }
         }
+    }
+
+    func testVerticalBarKeepsTheHorizontalBarsEdgeGap() {
+        // S3: the column sits exactly as far from the side edge as the row
+        // sits from the top/bottom edge. 8% of the width was a bigger number
+        // of points than 8% of the height, which is what pushed the column in.
+        let horizontal = ToolbarGripperSpec.resetRect(
+            barSize: Self.horizontalBarSize,
+            screenFrame: Self.screenFrame,
+            visibleFrame: Self.plainVisibleFrame,
+            border: .top
+        )
+        let vertical = ToolbarGripperSpec.resetRect(
+            barSize: Self.verticalBarSize,
+            screenFrame: Self.screenFrame,
+            visibleFrame: Self.plainVisibleFrame,
+            border: .left
+        )
+        XCTAssertEqual(
+            vertical.minX - Self.screenFrame.minX,
+            horizontal.minY - Self.screenFrame.minY,
+            accuracy: 0.5
+        )
+    }
+
+    func testRightDockedColumnMirrorsTheLeftOne() {
+        let left = ToolbarGripperSpec.resetRect(
+            barSize: Self.verticalBarSize,
+            screenFrame: Self.screenFrame,
+            visibleFrame: Self.plainVisibleFrame,
+            border: .left
+        )
+        let right = ToolbarGripperSpec.resetRect(
+            barSize: Self.verticalBarSize,
+            screenFrame: Self.screenFrame,
+            visibleFrame: Self.plainVisibleFrame,
+            border: .right
+        )
+        XCTAssertEqual(left.minX - Self.screenFrame.minX, Self.screenFrame.maxX - right.maxX, accuracy: 0.5)
+        XCTAssertEqual(left.minY, right.minY, accuracy: 0.5)
     }
 
     func testVerticalAndHorizontalResetRectsDifferWhereTheyMust() {

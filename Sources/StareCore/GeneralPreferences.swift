@@ -489,20 +489,37 @@ public enum ToolbarGripperSpec {
     /// The relative screen anchor a fresh install opens at — the reset target
     /// (S4): right-clicking the gripper clears the saved anchor, so the bar
     /// lands back here. This is exactly the anchor the top border keeps;
-    /// `defaultAnchor(border:)` is the orientation/border-aware form (S12).
+    /// `defaultAnchor(border:screenFrame:)` is the orientation/border-aware
+    /// form (S12).
     public static let defaultAnchor = CGPoint(x: 0.5, y: 0.08)
 
     /// The default anchor for a docked border (S12): the bar's centre sits 8%
-    /// in from the chosen edge of the screen frame and centred along it — the
-    /// same top-centre spot a fresh install has always opened at, mirrored
-    /// for the other three edges.
-    public static func defaultAnchor(border: ToolbarBorder) -> CGPoint {
+    /// in from the chosen edge and centred along it. The 8% is always read off
+    /// the screen HEIGHT, whichever border it is (S3): a horizontal bar is 8%
+    /// of the height below the top edge, and a vertical bar keeps that same
+    /// absolute distance from the side edge — 8% of the WIDTH is a bigger
+    /// number of points on a wide screen, which is what made the column read
+    /// further in than the row.
+    public static func defaultAnchor(border: ToolbarBorder, screenFrame: CGRect) -> CGPoint {
+        let crossInset = defaultAnchor.y
         switch border {
-        case .top: CGPoint(x: 0.5, y: 0.08)
-        case .bottom: CGPoint(x: 0.5, y: 0.92)
-        case .left: CGPoint(x: 0.08, y: 0.5)
-        case .right: CGPoint(x: 0.92, y: 0.5)
+        case .top: return CGPoint(x: 0.5, y: crossInset)
+        case .bottom: return CGPoint(x: 0.5, y: 1 - crossInset)
+        case .left: return CGPoint(x: sideFraction(screenFrame: screenFrame), y: 0.5)
+        case .right: return CGPoint(x: 1 - sideFraction(screenFrame: screenFrame), y: 0.5)
         }
+    }
+
+    /// The side inset a vertical border uses, as a fraction of the screen
+    /// WIDTH: the same absolute points the horizontal borders keep from the
+    /// top/bottom edge (S3). Never past the middle, so a screen too narrow to
+    /// hold 8% of its height still docks the column on its own side. A
+    /// zero-width screen (never a real screen) falls back the same way: the
+    /// cross-edge fraction itself, not the dead-centre x — the doc comment on
+    /// `defaultAnchor` promises the column keeps docking on its side.
+    static func sideFraction(screenFrame: CGRect) -> CGFloat {
+        guard screenFrame.width > 0 else { return defaultAnchor.y }
+        return min(defaultAnchor.y * screenFrame.height / screenFrame.width, 0.5)
     }
 
     /// The margin the palette keeps inside the visible frame when clamping.
@@ -537,6 +554,8 @@ public enum ToolbarGripperSpec {
     /// right-click clears the saved anchor, or when the Settings choice
     /// changes — docked at `border` for the given bar size. The orientation
     /// is honoured by the bar's own shape; the border alone picks the edge.
+    /// The cross-edge inset comes from `screenFrame`, so the gap is the same
+    /// number of points on every border (S3).
     public static func resetRect(
         barSize: CGSize,
         screenFrame: CGRect,
@@ -545,7 +564,7 @@ public enum ToolbarGripperSpec {
     ) -> CGRect {
         barRect(
             barSize: barSize,
-            anchor: defaultAnchor(border: border),
+            anchor: defaultAnchor(border: border, screenFrame: screenFrame),
             screenFrame: screenFrame,
             visibleFrame: visibleFrame
         )
