@@ -105,3 +105,8 @@ B3, B5 and B6 are defects in what T2b just shipped, not new wishes; B1, B2, B4, 
   sets `isBoardActive`, never `isActive`, so the cursor monitor was inert there), and a capture hands the
   keyboard back to the app the user came from instead of leaving Stare frontmost — the card is a
   non-activating panel, so it stays visible while the focus returns.
+  What pins the cursor one: `CardCursorRoutingTests` asks the controller's own
+  `cursorSkipsTheCard` in each mode, and reverting the guard to `isActive` alone makes
+  the board test fail — the check that this fix cannot silently regress. Both changes
+  still want the owner's eye on the next manual pass, which is the only place the arrow
+  and the returning keyboard can actually be seen.

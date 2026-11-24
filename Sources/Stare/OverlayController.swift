@@ -1080,7 +1080,7 @@ final class OverlayController {
         // The focus comes back with it: the card is a non-activating panel, so it
         // stays on screen while the app the user came from gets the keyboard
         // again. Leaving Stare frontmost was the bug this closed.
-        if isActive { deactivate() }
+        if isActive { deactivate(restoringFocus: true) }
     }
 
     /// Today's pasteboard write, extracted unchanged: both types, because
@@ -1650,6 +1650,19 @@ final class OverlayController {
         toolbarCursorMonitor = nil
     }
 
+    /// Whether the pointer over a capture card keeps the arrow, in either live
+    /// mode: the overlay sets its own crosshair and the board sets its tool
+    /// cursor, and over a card neither may win (B9). `openBoard` sets
+    /// `isBoardActive` and never `isActive`, which is why both modes count —
+    /// the board was the one that stayed wrong longest.
+    ///
+    /// Takes the pointer and the frames so a test can ask the question:
+    /// `NSEvent.mouseLocation` is not something a test can move.
+    func cursorSkipsTheCard(at pointer: CGPoint, cardFrames: [CGRect]) -> Bool {
+        guard isActive || isBoardActive else { return false }
+        return CardCursor.isOverCard(pointer, cardFrames: cardFrames)
+    }
+
     /// Watches the pointer for the capture cards (B9). The drawing layer sets
     /// one crosshair for a whole display, so a card's own tracking area never
     /// wins against it; re-answering the arrow on every event is what the bar's
@@ -1660,11 +1673,8 @@ final class OverlayController {
         cardCursorMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.mouseMoved, .mouseEntered, .cursorUpdate]
         ) { [weak self] event in
-            // Both modes count: `openBoard` sets `isBoardActive` and never
-            // `isActive`, so guarding on the overlay alone left the board
-            // without the arrow entirely.
-            guard let self, self.isActive || self.isBoardActive,
-                  CardCursor.isOverCard(NSEvent.mouseLocation, cardFrames: self.cards.visibleCardFrames)
+            guard let self,
+                  self.cursorSkipsTheCard(at: NSEvent.mouseLocation, cardFrames: self.cards.visibleCardFrames)
             else { return event }
             NSCursor.arrow.set()
             // Only this over-a-card branch swallows anything: the canvas handles a
