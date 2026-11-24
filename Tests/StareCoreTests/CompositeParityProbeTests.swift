@@ -294,4 +294,42 @@ final class CompositeParityProbeTests: XCTestCase {
         print("DIFFERENTIAL size=\(composited.width)x\(composited.height) sha256=\(digest)")
         XCTAssertEqual(digest.count, 64)
     }
+
+    // MARK: - T8b: the committed spotlight look, pinned by hash
+
+    /// The spotlight's committed look — the dim the human picked — must not
+    /// move a byte while the in-progress preview changes underneath it. The
+    /// digest is printed so it can be diffed against the same rendering
+    /// built from the previous sources: identical digests prove the committed
+    /// look is exactly what it was.
+    func testCommittedSpotlightLookHash() throws {
+        let width = 100, height = 80
+        let ctx = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        let spotlight = Stroke(
+            tool: try XCTUnwrap(Tool(rawValue: "spotlight"), "the spotlight tool must exist"),
+            ink: .red,
+            points: [CGPoint(x: 20, y: 15), CGPoint(x: 80, y: 65)]
+        )
+        // The default phase is the committed one — the phase the compositor
+        // and every committed caller take — so this renders the finished dim.
+        MarkRenderer.draw(stroke: spotlight, in: ctx)
+        let image = ctx.makeImage()!
+        var data = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        let reader = CGContext(
+            data: &data, width: image.width, height: image.height,
+            bitsPerComponent: 8, bytesPerRow: image.width * 4,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        reader.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        let digest = SHA256.hash(data: Data(data)).map { String(format: "%02x", $0) }.joined()
+        print("SPOTLIGHT-COMMITTED sha256=\(digest)")
+        XCTAssertEqual(digest.count, 64)
+    }
 }

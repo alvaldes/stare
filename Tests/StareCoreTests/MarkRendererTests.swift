@@ -18,7 +18,8 @@ final class MarkRendererTests: XCTestCase {
         of strokes: [Stroke],
         at point: CGPoint,
         in size: CGSize,
-        scale: CGFloat = 1
+        scale: CGFloat = 1,
+        phase: MarkRenderer.Phase = .committed
     ) -> (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) {
         let width = Int(size.width * scale), height = Int(size.height * scale)
         let ctx = CGContext(
@@ -33,7 +34,7 @@ final class MarkRendererTests: XCTestCase {
         ctx.scaleBy(x: scale, y: scale)
         ctx.setFillColor(CGColor(gray: 1, alpha: 1))
         ctx.fill(CGRect(origin: .zero, size: size))
-        MarkRenderer.draw(strokes: strokes, in: ctx)
+        MarkRenderer.draw(strokes: strokes, in: ctx, phase: phase)
         let image = ctx.makeImage()!
         var bytes = [UInt8](repeating: 0, count: width * height * 4)
         let reader = CGContext(
@@ -392,6 +393,110 @@ final class MarkRendererTests: XCTestCase {
         )
         assertApproximatelyEqual(
             colour(of: [stroke], at: CGPoint(x: 50, y: 40), in: Self.canvasSize),
+            (1, 1, 1, 1),
+            tolerance: 0.02
+        )
+    }
+
+    // MARK: - T8b: the in-progress spotlight previews as the ellipse outline
+
+    /// Renders `stroke` into a white RGBA bitmap of the given size and
+    /// answers every byte, so two renderings can be compared whole.
+    private func rasterBytes(
+        of stroke: Stroke,
+        phase: MarkRenderer.Phase = .committed,
+        in size: CGSize,
+        scale: CGFloat = 2
+    ) -> [UInt8] {
+        let width = Int(size.width * scale), height = Int(size.height * scale)
+        let ctx = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        ctx.scaleBy(x: scale, y: scale)
+        ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+        ctx.fill(CGRect(origin: .zero, size: size))
+        MarkRenderer.draw(stroke: stroke, in: ctx, phase: phase)
+        let image = ctx.makeImage()!
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        let reader = CGContext(
+            data: &bytes,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        reader.draw(image, in: CGRect(origin: .zero, size: CGSize(width: width, height: height)))
+        return bytes
+    }
+
+    private static let previewRect = (from: CGPoint(x: 20, y: 15), to: CGPoint(x: 80, y: 65))
+
+    /// The whole point of the split: while the mark is in hand the spotlight
+    /// previews exactly what the ellipse tool draws for the same drag — byte
+    /// for byte, because both go through the same geometry path with the
+    /// same outline, thickness and ink.
+    func testInProgressSpotlightDrawsExactlyWhatTheEllipseToolDraws() {
+        let points = [Self.previewRect.from, Self.previewRect.to]
+        let spotlight = Stroke(tool: .spotlight, ink: .red, points: points)
+        let ellipse = Stroke(tool: .ellipse, ink: .red, points: points)
+        XCTAssertEqual(
+            rasterBytes(of: spotlight, phase: .inProgress, in: Self.canvasSize),
+            rasterBytes(of: ellipse, in: Self.canvasSize),
+            "the in-progress spotlight must render byte for byte as the ellipse preview"
+        )
+    }
+
+    /// No dim anywhere while the stroke is in progress: far outside the
+    /// dragged region the canvas stays exactly bare — the phase the human
+    /// asked to remove was the mid-gesture dim. The outline itself still
+    /// carries the ink at its edge, like any ellipse preview.
+    func testInProgressSpotlightNeverDimsTheCanvas() {
+        let stroke = Stroke(
+            tool: .spotlight,
+            ink: .red,
+            points: [Self.previewRect.from, Self.previewRect.to]
+        )
+        // A corner well outside the region: pure canvas, no dim gradient.
+        assertApproximatelyEqual(
+            colour(of: [stroke], at: CGPoint(x: 5, y: 5), in: Self.canvasSize, scale: 1, phase: .inProgress),
+            (1, 1, 1, 1),
+            tolerance: 0.02
+        )
+        // The region interior: bare too — an outline preview, no wash, no dim.
+        assertApproximatelyEqual(
+            colour(of: [stroke], at: CGPoint(x: 50, y: 40), in: Self.canvasSize, scale: 1, phase: .inProgress),
+            (1, 1, 1, 1),
+            tolerance: 0.02
+        )
+        // Dead on the ellipse's edge on its own axis, the outline is the
+        // ellipse tool's full-opacity red ink, its shipped thickness.
+        let edge = colour(of: [stroke], at: CGPoint(x: 80, y: 40), in: Self.canvasSize, scale: 4, phase: .inProgress)
+        assertApproximatelyEqual(edge, (1, 0.23, 0.19, 1), tolerance: 0.05)
+    }
+
+    /// The other side of the explicit input, pinned so the committed look
+    /// cannot drift while the preview changes: a committed spotlight dims
+    /// the canvas to its settled floor weight (the look the human picked).
+    /// The floor probe is derived exactly as in the far-field test above —
+    /// the corner of a canvas that leaves more than a whole feather on every
+    /// side — so it rests past the ramp wherever the feather is tuned.
+    func testCommittedSpotlightStillDimsTheCanvas() throws {
+        let stroke = try spotlightStroke(from: Self.farFieldRect.from, to: Self.farFieldRect.to)
+        assertApproximatelyEqual(
+            colour(of: [stroke], at: CGPoint(x: 4, y: 4), in: Self.farFieldCanvas, scale: 1, phase: .committed),
+            dimmedWhite(spotlightDimAlpha),
+            tolerance: 0.03
+        )
+        assertApproximatelyEqual(
+            colour(of: [stroke], at: CGPoint(x: 90, y: 80), in: Self.farFieldCanvas, scale: 1, phase: .committed),
             (1, 1, 1, 1),
             tolerance: 0.02
         )

@@ -1894,7 +1894,10 @@ class OverlayView: NSView {
         }
 
         if let active = session.active {
-            render(active, in: context)
+            // T8b: the mark in hand is the only in-progress mark, and the
+            // phase is passed explicitly — the renderer never guesses it
+            // from the stroke's shape or point count.
+            render(active, in: context, phase: .inProgress)
         }
         if let preview = selectionPreview, !groupPreviews.contains(where: { $0.id == preview.id }) {
             render(preview, in: context)
@@ -2009,7 +2012,12 @@ class OverlayView: NSView {
         context.strokePath()
     }
 
-    private func render(_ stroke: Stroke, in context: CGContext, now: Date = Date()) {
+    private func render(
+        _ stroke: Stroke,
+        in context: CGContext,
+        now: Date = Date(),
+        phase: MarkRenderer.Phase = .committed
+    ) {
         if stroke.tool == .text {
             withMarkRotation(stroke, in: context) { drawText(stroke) }
             return
@@ -2019,7 +2027,20 @@ class OverlayView: NSView {
             return
         }
         if stroke.tool == .spotlight {
-            drawSpotlight(stroke, in: context)
+            if phase == .inProgress {
+                // T8b: while the drag is in hand the spotlight previews as
+                // the ellipse tool does — same outline, thickness and ink,
+                // no dim anywhere; the dim is only ever the committed look.
+                MarkRenderer.draw(
+                    stroke: stroke,
+                    in: context,
+                    opacity: stroke.opacity(at: now, laserLifetime: session.laserLifetime),
+                    canvas: viewTransform.rect(toPage: bounds),
+                    phase: .inProgress
+                )
+            } else {
+                drawSpotlight(stroke, in: context)
+            }
             return
         }
         MarkRenderer.draw(

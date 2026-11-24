@@ -4,6 +4,19 @@ import Foundation
 /// Draws the geometry of marks into any context. Pure rendering, shared by the
 /// overlay, the capture compositor and the self test, so all three agree.
 public enum MarkRenderer {
+    /// Whether a mark is still being dragged or already on the canvas (T8b).
+    /// One explicit input the caller passes — the overlay, which is the only
+    /// place that knows what is mid-gesture — never a guess from the mark's
+    /// shape or point count, and never stored on the mark: committed and
+    /// in-progress spotlights carry identical data and differ only in what
+    /// they paint while drawn.
+    public enum Phase: String, Sendable {
+        /// The mark is in hand: the overlay's live drag preview.
+        case inProgress
+        /// The mark is committed, or composed into a capture.
+        case committed
+    }
+
     /// The weight of a filled shape's ink wash (S15): translucent, so the
     /// content underneath stays readable while the shape reads as filled —
     /// the same principle the highlighter draws with.
@@ -24,12 +37,12 @@ public enum MarkRenderer {
     /// boundary never reads as an edge.
     private static let spotlightEaseSteps: [CGFloat] = [0.25, 0.5, 0.75]
 
-    public static func draw(strokes: [Stroke], in context: CGContext, canvas: CGRect? = nil) {
+    public static func draw(strokes: [Stroke], in context: CGContext, canvas: CGRect? = nil, phase: Phase = .committed) {
         context.saveGState()
         context.setLineCap(.round)
         context.setLineJoin(.round)
         for stroke in strokes {
-            draw(stroke: stroke, in: context, canvas: canvas)
+            draw(stroke: stroke, in: context, canvas: canvas, phase: phase)
         }
         context.restoreGState()
     }
@@ -39,13 +52,22 @@ public enum MarkRenderer {
     /// context's own clip bounds — right for a bare bitmap context and for a
     /// caller that already clipped to its canvas, and callers with a real
     /// surface rect (the overlay view, the compositor) pass it explicitly.
+    ///
+    /// `phase` (T8b) defaults to `.committed`, so every caller that does not
+    /// name it — the compositor, the editor, the committed overlay marks —
+    /// renders exactly as it always did.
     public static func draw(
         stroke: Stroke,
         in context: CGContext,
         opacity: CGFloat? = nil,
-        canvas: CGRect? = nil
+        canvas: CGRect? = nil,
+        phase: Phase = .committed
     ) {
         if stroke.tool == .spotlight {
+            guard phase == .committed else {
+                drawSpotlightPreview(stroke, in: context, opacity: opacity)
+                return
+            }
             drawSpotlight(
                 stroke,
                 canvas: canvas ?? context.boundingBoxOfClipPath,
@@ -130,6 +152,26 @@ public enum MarkRenderer {
             context.fillPath()
             return
         }
+    }
+
+    /// T8b: while the spotlight's drag is in progress the mark previews
+    /// exactly what the ellipse tool draws for the same drag — the same
+    /// outline, the same thickness and ink behaviour, and the dim nowhere —
+    /// by drawing through the ellipse preview's own path: the shared
+    /// geometry renderer, fed an ellipse built from the same drag points.
+    /// The finished spotlight look (the dim) belongs to the committed phase
+    /// and is drawn by `drawSpotlight`; the compositor, which only ever sees
+    /// committed marks, never takes this branch, so a capture always
+    /// carries the dim.
+    private static func drawSpotlightPreview(_ stroke: Stroke, in context: CGContext, opacity: CGFloat?) {
+        let outline = Stroke(
+            id: stroke.id,
+            tool: .ellipse,
+            ink: stroke.ink,
+            points: stroke.points,
+            rotation: stroke.rotation
+        )
+        draw(stroke: outline, in: context, opacity: opacity)
     }
 
     /// S15 slice B: the persistent spotlight. A dimming light, not a stroke:
