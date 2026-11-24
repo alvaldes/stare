@@ -95,3 +95,13 @@ B3, B5 and B6 are defects in what T2b just shipped, not new wishes; B1, B2, B4, 
   to the middle on every selection change, and `handleKey` carries the probe L13 asked for: with
   `STARE_HISTORY_KEY_PROBE=1` in the environment it logs keyCode, entry count and the selection before
   and after; off, it logs nothing, because a probe that ran always would grow the log on every arrow press.
+
+- **L16** (owner disposition, verbatim): "En el historial las flechas no mueven el foco en la captura para
+  seleccionar, pero esto no lo vamos a tratar ahora porque como aún hay que seguir trabajando en esta parte
+  del historial, no vamos a trabajar esto ahora sino cuando trabajemos esta feature."
+  So B10 stays open on purpose: the selection walks the model and the grid follows it, but the focus a user
+  reads as "the capture I am choosing" does not move with the arrows. It is the history feature's own work,
+  not a fix to bolt on now. Closed on the same pass: the board now keeps the arrow over a card (`openBoard`
+  sets `isBoardActive`, never `isActive`, so the cursor monitor was inert there), and a capture hands the
+  keyboard back to the app the user came from instead of leaving Stare frontmost — the card is a
+  non-activating panel, so it stays visible while the focus returns.

@@ -1076,7 +1076,11 @@ final class OverlayController {
         // asked for, so the overlay gives way instead of staying over the card it
         // just produced. Every capture path — display, area and window — delivers
         // through here, so the exit happens once and in one place.
-        if isActive { deactivate(restoringFocus: false) }
+        //
+        // The focus comes back with it: the card is a non-activating panel, so it
+        // stays on screen while the app the user came from gets the keyboard
+        // again. Leaving Stare frontmost was the bug this closed.
+        if isActive { deactivate() }
     }
 
     /// Today's pasteboard write, extracted unchanged: both types, because
@@ -1656,7 +1660,10 @@ final class OverlayController {
         cardCursorMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.mouseMoved, .mouseEntered, .cursorUpdate]
         ) { [weak self] event in
-            guard let self, self.isActive,
+            // Both modes count: `openBoard` sets `isBoardActive` and never
+            // `isActive`, so guarding on the overlay alone left the board
+            // without the arrow entirely.
+            guard let self, self.isActive || self.isBoardActive,
                   CardCursor.isOverCard(NSEvent.mouseLocation, cardFrames: self.cards.visibleCardFrames)
             else { return event }
             NSCursor.arrow.set()
