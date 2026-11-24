@@ -84,6 +84,27 @@ final class PinnedImageWindowTests: XCTestCase {
         XCTAssertEqual(coordinator.windows.count, 1, "the closed one leaves the coordinator")
     }
 
+    // MARK: - The corner placement (T4 pin fix)
+
+    func testAPinnedImageOpensBesideTheCaptureCardNotCentred() throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "the placement needs a real display")
+        let image = try XCTUnwrap(solidImage(160, 120))
+        let primary = try XCTUnwrap(NSScreen.screens.first)
+        coordinator.pin(image, on: primary)
+        let window = try XCTUnwrap(coordinator.windows.first)
+        let visible = primary.visibleFrame
+
+        // The card's corner inset + its widest plate + the gap kept between
+        // them: the pin's right edge sits left of the card slot, bottom edge
+        // on the card's own bottom margin — never the display's middle.
+        XCTAssertEqual(
+            window.frame.maxX,
+            visible.maxX - PinnedImageGeometry.cardCornerInset
+                - PinnedImageGeometry.cardSlotWidth - PinnedImageGeometry.pinCardGap,
+            accuracy: 1)
+        XCTAssertEqual(window.frame.minY, visible.minY + PinnedImageGeometry.cardCornerInset, accuracy: 1)
+    }
+
     // MARK: - The lock
 
     func testLockMakesTheWindowClickThroughAndUnlockRestoresIt() throws {
@@ -93,27 +114,14 @@ final class PinnedImageWindowTests: XCTestCase {
         let window = try XCTUnwrap(coordinator.windows.first)
         XCTAssertFalse(window.ignoresMouseEvents, "unlocked, it receives clicks")
 
-        let point = CGPoint(x: window.frame.midX, y: window.frame.midY)
-        coordinator.toggleLock(at: point)
+        // The 🔒 control on the pin itself toggles the lock — the keyboard
+        // shortcut around it is gone, the control is the affordance.
+        window.toggleLock()
         XCTAssertEqual(window.lockState, .locked, "locked, the body passes clicks to the app underneath")
 
-        coordinator.toggleLock(at: point)
+        window.toggleLock()
         XCTAssertFalse(window.ignoresMouseEvents)
         XCTAssertEqual(window.lockState, .floating)
-    }
-
-    func testTheLockToggleReachesTheFrontmostPinnedImageUnderThePointer() throws {
-        try XCTSkipIf(NSScreen.screens.isEmpty, "the toggle needs a real display")
-        let image = try XCTUnwrap(solidImage(120, 90))
-        coordinator.pin(image, on: NSScreen.screens.first)
-        coordinator.pin(image, on: NSScreen.screens.first)
-        let back = coordinator.windows[0]
-        let front = coordinator.windows[1]
-        let point = CGPoint(x: front.frame.midX, y: front.frame.midY)
-
-        coordinator.toggleLock(at: point)
-        XCTAssertEqual(front.lockState, .locked, "the frontmost window under the point locks")
-        XCTAssertEqual(back.lockState, .floating, "the window behind is untouched")
     }
 
     // MARK: - The ⌥⇧I toggle (T4 closing fix)
@@ -182,39 +190,81 @@ final class PinnedImageWindowTests: XCTestCase {
         XCTAssertEqual(coordinator.windows.count, 0, "the ✕ closes the locked pin — the reported trap")
     }
 
-    func testALockedPinnedImageKeepsItsControlsDrawnWithoutHover() throws {
-        try XCTSkipIf(NSScreen.screens.isEmpty, "the lock needs a real display")
+    // MARK: - The pinned badge and the always-visible controls (T4 pin fix)
+
+    /// Renders the view into a bitmap and counts dark pixels inside a
+    /// control's top-down rect — the honest observable of "stays visible":
+    /// a drawn control is a dark disc over the capture. Drawn by hand: the
+    /// view is layer-backed, so `cacheDisplay` never reaches `draw(_:)`.
+    private func darkPixelCount(in rect: CGRect, of view: NSView) throws -> Int {
+        let bounds = view.bounds
+        let rep = try XCTUnwrap(
+            NSBitmapImageRep(
+                bitmapDataPlanes: nil, pixelsWide: Int(bounds.width), pixelsHigh: Int(bounds.height),
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .calibratedRGB, bytesPerRow: 0, bitsPerPixel: 0),
+            "the bitmap needs real pixel dimensions")
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        let context = try XCTUnwrap(NSGraphicsContext(bitmapImageRep: rep))
+        NSGraphicsContext.current = context
+        // The view is flipped: AppKit hands `draw(_:)` a top-down context.
+        // The bitmap context counts from the bottom, so flip it to match.
+        context.cgContext.translateBy(x: 0, y: bounds.height)
+        context.cgContext.scaleBy(x: 1, y: -1)
+        view.draw(bounds)
+        var dark = 0
+        // The view is flipped: AppKit hands `draw(_:)` a top-down context and
+        // the manual flip above reproduces that, so a control at top-down y
+        // paints the bitmap row y — `colorAt` indexes rows from the top, the
+        // same convention.
+        for x in Int(rect.minX)...Int(rect.maxX) {
+            for dy in -(Int(rect.height / 2))...(Int(rect.height / 2)) {
+                guard let color = rep.colorAt(x: x, y: Int(rect.midY) + dy) else { continue }
+                let rgb = color.usingColorSpace(.sRGB)
+                let white = rgb.map { 0.299 * $0.redComponent + 0.587 * $0.greenComponent + 0.114 * $0.blueComponent } ?? 1
+                if white < 0.6 { dark += 1 }
+            }
+        }
+        return dark
+    }
+
+    func testTheControlsStayDrawnWithoutAnyHoverSoAPinIsNeverUncloseable() throws {
+        // The human's report: the pin read as something with no way to close
+        // it, because the ✕ (and the locked badge) only drew while the
+        // pointer hovered. The controls now draw always — floating, never
+        // hovered, locked, in every state — so closing is visible at a glance.
+        let image = try XCTUnwrap(solidImage(160, 120))
+        let view = PinnedImageView(frame: CGRect(x: 0, y: 0, width: 160, height: 120), image: image)
+        // Floating and never hovered: the pointer has not touched this view.
+        for kind in PinnedImageControls.Kind.allCases {
+            let rect = PinnedImageControls.rect(for: kind, in: view.bounds)
+            let dark = try darkPixelCount(in: rect, of: view)
+            XCTAssertGreaterThan(
+                dark, 30,
+                "\(kind.rawValue) must be drawn without any hover — an unhovered pin that hides its way out reads as uncloseable")
+        }
+    }
+
+    func testAPressedPinnedBadgeClosesThePinnedImage() throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "the badge needs a real display")
         let image = try XCTUnwrap(solidImage(120, 90))
         coordinator.pin(image, on: NSScreen.screens.first)
         let window = try XCTUnwrap(coordinator.windows.first)
         let view = try XCTUnwrap(window.pinnedView)
-        XCTAssertFalse(view.showsIdleControls, "floating, the controls are a hover affordance")
 
-        window.toggleLock()
-        XCTAssertTrue(
-            view.showsIdleControls,
-            "a click-through surface cannot be hovered, so while locked the controls stay drawn")
+        // Top-down control coordinates mapped onto the bottom-up window
+        // coordinates the events speak.
+        let pinRect = PinnedImageControls.rect(for: .pin, in: view.bounds)
+        let pinPoint = CGPoint(x: pinRect.midX, y: view.bounds.height - pinRect.midY)
+
+        view.mouseDown(with: mouseEvent(.leftMouseDown, at: pinPoint, window: window))
+        XCTAssertEqual(
+            coordinator.windows.count, 0,
+            "the pinned badge is the unpin affordance — pressing it closes the pin")
     }
 
     // MARK: - The no-op feedback (T4 closing fix)
-
-    func testALockToggleOverNoPinnedImageIsSaidInsteadOfSwallowed() throws {
-        try XCTSkipIf(NSScreen.screens.isEmpty, "the feedback needs a real display")
-        let image = try XCTUnwrap(solidImage(120, 90))
-        var reported: [PinnedImageFeedback] = []
-        coordinator.onFeedback = { reported.append($0) }
-
-        coordinator.pin(image, on: NSScreen.screens.first)
-        let frame = try XCTUnwrap(coordinator.windows.first).frame
-
-        coordinator.toggleLock(at: CGPoint(x: frame.maxX + 500, y: frame.midY))
-        XCTAssertEqual(
-            reported, [.noPinnedImageUnderPointer],
-            "⌥⇧L over nothing says so — never a dead key")
-
-        coordinator.toggleLock(at: CGPoint(x: frame.midX, y: frame.midY))
-        XCTAssertEqual(reported, [.noPinnedImageUnderPointer], "a hit stays quiet")
-    }
 
     func testAPinWithoutACaptureSaysNothingCapturedYet() {
         var reported: [PinnedImageFeedback] = []

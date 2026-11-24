@@ -3,10 +3,9 @@ import Foundation
 
 /// The pure decisions behind pinning the captured image (T4/S6): the window's
 /// initial size and placement, how scroll resizes it, how opacity steps, the
-/// click-through lock state machine, which pinned window a lock toggle
-/// reaches, and where the hover controls sit. The AppKit window is thin glue
-/// over this file — every determinable behaviour is decided here so it can be
-/// tested without a screen.
+/// click-through lock state machine, and where the controls sit. The AppKit
+/// window is thin glue over this file — every determinable behaviour is
+/// decided here so it can be tested without a screen.
 public enum PinnedImageGeometry {
     /// The largest size a pinned image opens at. A capture is display-sized
     /// pixels; floating it at one point per pixel would cover the screen.
@@ -40,11 +39,29 @@ public enum PinnedImageGeometry {
         )
     }
 
-    /// The initial origin: centred inside `bounds`, clamped so the whole
-    /// window stays there even when the bounds are smaller than the window.
+    /// The corner the capture card occupies, mirrored from the app target
+    /// (this core file cannot import it): `CaptureCardController.position`
+    /// insets the card by this much from the screen's edges, and
+    /// `CaptureCardView.thumbnailMaxSize` (260 × 170) plus the plate's 16pt
+    /// padding bounds the card's widest, tallest footprint. A pin offset by
+    /// the slot never covers the card, no matter how many cards are stacked.
+    public static let cardCornerInset: CGFloat = 20
+    public static let cardSlotWidth: CGFloat = 260 + 16
+    public static let cardSlotHeight: CGFloat = 170 + 16
+
+    /// The gap kept between a pin and the card's slot — the same gap the card
+    /// controller stacks its own cards with.
+    public static let pinCardGap: CGFloat = 10
+
+    /// The initial origin: against the capture card's corner — the same
+    /// bottom-right corner the card appears in, offset to the left of the
+    /// card's slot (the slot plus the gap) so the card and the pin are both
+    /// readable — clamped so the whole window stays there even when the
+    /// bounds cannot fit both. A pin is never centred on the display; it only
+    /// reaches the middle if the user drags it there.
     public static func initialOrigin(size: CGSize, in bounds: CGRect) -> CGPoint {
-        var x = bounds.midX - size.width / 2
-        var y = bounds.midY - size.height / 2
+        var x = bounds.maxX - cardCornerInset - cardSlotWidth - pinCardGap - size.width
+        var y = bounds.minY + cardCornerInset
         x = max(bounds.minX, min(x, bounds.maxX - size.width))
         y = max(bounds.minY, min(y, bounds.maxY - size.height))
         return CGPoint(x: x.rounded(), y: y.rounded())
@@ -95,9 +112,10 @@ public enum PinnedImageGeometry {
 
 /// The click-through lock of one pinned image (T4/S6). Floating, the image
 /// receives clicks, drags and scroll. Locked, the surface passes every
-/// mouse event through to the app underneath **except** the close and lock
-/// controls, which keep answering — the lock must be escapable with the
-/// pointer, so it never covers the ✕ or the 🔒. The same toggle unlocks.
+/// mouse event through to the app underneath **except** the pinned badge,
+/// close and lock controls, which keep answering — the lock must be
+/// escapable with the pointer, so it never covers its own way out. The same
+/// toggle unlocks.
 public enum PinnedImageLockState: Equatable, Sendable {
     case floating
     case locked
@@ -107,8 +125,8 @@ public enum PinnedImageLockState: Equatable, Sendable {
     }
 
     /// Whether a mouse point must reach the window's surface (T4 closing
-    /// fix): floating, every point does. Locked, only the two controls do —
-    /// the lock never covers its own way out, so a click-through image can
+    /// fix): floating, every point does. Locked, only the three controls do
+    /// — the lock never covers its own way out, so a click-through image can
     /// always be unlocked and closed with the pointer, and every other point
     /// falls through to the app underneath. The caller (the view's hit test)
     /// turns a false answer into click passthrough; `bounds` is the view's
@@ -123,30 +141,25 @@ public enum PinnedImageLockState: Equatable, Sendable {
     }
 }
 
-/// Which pinned window the lock toggle reaches: pinned windows share one
-/// window level, so the frontmost one is the most recently pinned, and the
-/// toggle hits the frontmost window whose frame contains the pointer.
-public enum PinnedImageFocus {
-    /// The index in `frames` of the topmost window under the point — the last
-    /// entry whose frame contains it, because later entries were pinned in
-    /// front — or nil when the point is over none of them and nothing may
-    /// change.
-    public static func topmostIndex(containing point: CGPoint, in frames: [CGRect]) -> Int? {
-        for index in stride(from: frames.count - 1, through: 0, by: -1) where frames[index].contains(point) {
-            return index
-        }
-        return nil
-    }
-}
+/// Which pinned window a lock toggle reaches: this indirection existed for
+/// the ⌥⇧L keyboard shortcut, which no longer exists (T4 pin fix) — the lock
+/// is the 🔒 control on each pin, and the window it locks is always its own.
+/// Removed with the shortcut.
 
-/// Where the pinned image's hover controls sit, in top-down view coordinates
-/// (the pinned view is flipped): a close control and a lock control in one
-/// row across the top-right corner. Also used for hit-testing in the view's
-/// mouse-down, so the visible button and the clickable area are one truth.
+/// Where the pinned image's controls sit, in top-down view coordinates
+/// (the pinned view is flipped): a pinned badge — the indicator that this
+/// floating thing is a pin and the affordance that unpins it, i.e. closes
+/// it — a lock control and a close control in one row across the top-right
+/// corner. All three draw always, never only on hover (T4 pin fix): a pin
+/// that hides its way out until the pointer arrives reads as uncloseable.
+/// Also used for hit-testing in the view's mouse-down and the locked
+/// surface's hit test, so the visible buttons and the clickable areas are
+/// one truth.
 public enum PinnedImageControls {
     public enum Kind: String, CaseIterable {
-        case close
+        case pin
         case lock
+        case close
     }
 
     /// The round control's side and its inset from the corner.
@@ -154,41 +167,45 @@ public enum PinnedImageControls {
     public static let cornerInset: CGFloat = 5
 
     /// The rect of `kind` inside `bounds`: close is the rightmost control,
-    /// lock sits to its left, both on the same row near the top.
+    /// lock sits to its left, the pinned badge to the lock's left — all on
+    /// the same row near the top.
     public static func rect(for kind: Kind, in bounds: CGRect) -> CGRect {
         let rowY = cornerInset
         let slot = controlSize + cornerInset
+        let indexFromRight: CGFloat
         switch kind {
-        case .close:
-            return CGRect(
-                x: bounds.maxX - cornerInset - controlSize,
-                y: rowY,
-                width: controlSize,
-                height: controlSize
-            )
-        case .lock:
-            return CGRect(
-                x: bounds.maxX - cornerInset - slot - controlSize,
-                y: rowY,
-                width: controlSize,
-                height: controlSize
-            )
+        case .close: indexFromRight = 0
+        case .lock: indexFromRight = 1
+        case .pin: indexFromRight = 2
         }
+        return CGRect(
+            x: bounds.maxX - cornerInset - indexFromRight * slot - controlSize,
+            y: rowY,
+            width: controlSize,
+            height: controlSize
+        )
     }
 
-    /// Both controls' rects, the complete clickable area of the surface. The
+    /// The controls' rects, the complete clickable area of the surface. The
     /// locked state's hit test admits exactly these and nothing else.
     public static func rects(in bounds: CGRect) -> [CGRect] {
         Kind.allCases.map { rect(for: $0, in: bounds) }
     }
 }
 
-/// The fixed bindings of the pinned image's own shortcuts (T4/S6). They are
+/// The fixed bindings of the pinned image's own shortcut (T4/S6). It is
 /// deliberately outside the persisted, remappable `HotkeyBindings` map: the
 /// four registered actions keep their Settings pane, and this feature decided
-/// against a new one. ⌥⇧I pins/dismisses per `PinnedImagePinRule`; ⌥⇧L
-/// toggles the lock of the pinned image under the pointer. Neither collides
-/// with ⌥⇧A, ⌥⇧M, ⌥⇧P, ⌥⇧W, ⌥S, ⇧S, S or the ⌥⇧O reserved for OCR.
+/// against a new one. ⌥⇧I pins/dismisses per `PinnedImagePinRule`.
+/// ⌥⇧L does not exist any more (T4 pin fix): the lock is the 🔒 control on
+/// the pin itself, which stays drawn and clickable even while locked, so the
+/// keyboard shortcut — its menu item and its registration went with it —
+/// had nothing to add. The `lock` entries below remain only because
+/// `Tests/StareCoreTests/TextRecognitionTests.swift` (the OCR surface, whose
+/// files are outside this task's edit surfaces) still lists the binding in
+/// its collision test; they are dead in Sources, pending that surface's
+/// rebase. Nothing collides: neither binding is ⌥⇧A, ⌥⇧M, ⌥⇧P, ⌥⇧W, ⌥S,
+/// ⇧S, S or the ⌥⇧O reserved for OCR.
 public enum PinnedImageHotkeyDefaults {
     public static let pin = HotkeyBinding(key: .i, modifiers: [.option, .shift])
     public static let pinDisplayName = "⌥⇧I"
@@ -226,13 +243,10 @@ public enum PinnedImagePinRule {
 /// Nothing here opens a window — the coordinator reports, the app layer
 /// decides where the pill shows.
 public enum PinnedImageFeedback: Equatable, Sendable {
-    case noPinnedImageUnderPointer
     case nothingCapturedYet
 
     public var title: String {
         switch self {
-        case .noPinnedImageUnderPointer:
-            "No pinned image under the pointer"
         case .nothingCapturedYet:
             "Nothing captured yet"
         }

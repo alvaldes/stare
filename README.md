@@ -110,19 +110,19 @@ reopen it any time from the menu bar with **Setup Guide…**.
 | Drawing | `D` arms the spotlight: drag a region and everything outside it dims — the region's ellipse stays clear and the dim fades away from it in one soft gradient, wider on a large region and tighter on a small one, settling at its deepest shade far from the light. While you are still dragging, the mark previews as a plain ellipse outline — the ellipse tool's own look, no dim on screen — and the dim paints the moment the mark is committed, so a capture always carries it. The spotlight is a mark like any other: undo, redo, the eraser, the pointer tool's move and the capture editor all treat it as one, it works on the whiteboard too, and it has no ink of its own — the number keys keep choosing inks while it is selected |
 | Whiteboard | `⌘←` `⌘→` change page (going past the last one adds a page) · `⌘B` flips the page between white and black · hold space and drag to pan (the pointer becomes a grabbing hand) · pinch, `⌘` + scroll or `⌘+`/`⌘−` zooms, `⌘0` resets pan and zoom |
 | Whiteboard | `S` captures the marks over the page colour, no Screen Recording needed · `Esc` closes the board and keeps the pages for the session |
-| Capture card | Hover keeps it on screen · click opens the editor · drag it into another app · the pin button in its corner floats the image as a borderless always-on-top window of its own: drag it anywhere, scroll to resize, ⌥-scroll to change its opacity, and each one closes with its ✕ (or `⌥⇧I`) — the pinned images stay on screen no matter what you open or close in Stare, and they never leave your machine |
+| Capture card | Hover keeps it on screen · click opens the editor · drag it into another app · the pin button in its corner floats the image as a borderless always-on-top window of its own, beside the card in the same screen corner — never in the middle of the display unless you drag it there: drag it anywhere, scroll to resize, ⌥-scroll to change its opacity, and its 📌, ✕ and 🔒 stay visible without hovering — 📌 (the pinned badge) and ✕ close it, 🔒 makes it click-through so you can work underneath it — and each one closes with its ✕ or its 📌 (or `⌥⇧I` takes the frontmost pin down); the pinned images stay on screen no matter what you open or close in Stare, and they never leave your machine |
 | Recognise text | Drag the area and the text it holds — and a QR code, if that is what you framed — goes straight to the clipboard: recognition runs on-device with Vision, nothing is uploaded, and everything proceeds without opening a drawing session; a missing Screen Recording grant, a selection with nothing in it, or a failed read each say so on screen instead of ever touching your clipboard |
-| Pinned image | `⌥⇧L` toggles the click-through lock of the image under the pointer: locked, every click lands in the app underneath — except the ✕ and 🔒 in its corner, which stay clickable and drawn so the lock can always be left; the same key unlocks it again, and pressing `⌥⇧L` over no pinned image says so on screen |
 | Editor | Same tools and inks · `⌘Z` undo · `⇧⌘Z` redo · `Esc` cancels a crop, then closes · an applied crop stays editable: drag its edges to adjust it, and `⌘Z` returns the previous crop |
 
 All of these — the four global shortcuts and each tool's key — can be
-rebound in Settings. Three shortcuts are fixed: `⌥⇧I` pins the latest
+rebound in Settings. Two shortcuts are fixed: `⌥⇧I` pins the latest
 capture — and takes the frontmost pin down again, so the keyboard can never
 stack what it cannot dismiss; the card's pin button is the way to keep
-several — `⌥⇧L` toggles its lock, and `⌥⇧O` recognises text and QR codes
-where you drag on-device. A fixed shortcut that cannot act right now — a
-lock toggle over no pin, a pin with nothing captured yet — says so on
-screen instead of being a silent dead key.
+several, and `⌥⇧O` recognises text and QR codes where you drag on-device.
+The pin's lock has no key: it is the 🔒 on the pin itself, which stays
+drawn and clickable even while locked. A fixed shortcut that cannot act
+right now — a pin with nothing captured yet — says so on screen instead of
+being a silent dead key.
 
 </details>
 

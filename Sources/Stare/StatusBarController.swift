@@ -35,9 +35,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     // The pinned image (T4/S6): floats the session's latest capture as a
     // borderless always-on-top window. Its own action, never the drawing pin.
     private let pinImageItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-    /// The two fixed global registrations of the pinned image (T4/S6), kept
-    /// here so they live and die with the status item: ⌥⇧I pins the latest
-    /// capture, ⌥⇧L toggles the lock of the pinned image under the pointer.
+    /// The one fixed global registration of the pinned image (T4/S6), kept
+    /// here so it lives and dies with the status item: ⌥⇧I pins the latest
+    /// capture. The lock has no shortcut — it is the 🔒 control on the pin
+    /// itself.
     private var pinnedImageHotkeys: [GlobalHotkey] = []
     /// The one fixed global registration of the OCR/QR gesture (T5/S7):
     /// ⌥⇧O opens its own selection surface, never the drawing overlay.
@@ -105,10 +106,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         pinImageItem.action = #selector(pinImage)
         pinImageItem.target = self
         menu.addItem(pinImageItem)
-        menu.addItem(menuItem(
-            title: "Toggle Image Lock  \(PinnedImageHotkeyDefaults.lockDisplayName)",
-            action: #selector(toggleImageLock)
-        ))
 
         menu.addItem(menuItem(
             title: "Recognise Text  \(TextRecognitionHotkeyDefaults.displayName)",
@@ -168,7 +165,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     /// Registers the OCR/QR gesture's one fixed shortcut (T5/S7). It sits
     /// outside the remappable four-action map by decision — no new Settings
     /// pane — registering directly through `GlobalHotkey`, exactly the way
-    /// the pinned image's fixed shortcuts do. ⌥⇧O was reserved for this
+    /// the pinned image's fixed shortcut does. ⌥⇧O was reserved for this
     /// feature by contract (`PinnedImageHotkeyDefaults`) and is pinned free
     /// against every other shortcut in the collision test. A refused
     /// registration is logged and leaves the app without that shortcut
@@ -180,22 +177,19 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         Diag.log("text recognition hotkey armed count=\(recognitionHotkey == nil ? 0 : 1)")
     }
 
-    /// Registers the pinned image's two fixed shortcuts (T4/S6). They sit
+    /// Registers the pinned image's one fixed shortcut (T4/S6). It sits
     /// outside the remappable four-action map by decision — no new Settings
-    /// pane — so they register directly, exactly the way the pre-Settings
-    /// hotkeys did. A refused registration is logged and leaves the app
-    /// without that shortcut instead of failing anything else.
+    /// pane — so it registers directly, the way the pre-Settings hotkeys did.
+    /// A refused registration is logged and leaves the app without that
+    /// shortcut instead of failing anything else.
     private func registerPinnedImageHotkeys() {
         pinnedImageHotkeys = [
             GlobalHotkey(binding: PinnedImageHotkeyDefaults.pin) {
                 PinnedImageCoordinator.shared.togglePin(from: CaptureHistory.shared)
             },
-            GlobalHotkey(binding: PinnedImageHotkeyDefaults.lock) {
-                PinnedImageCoordinator.shared.toggleLock(at: NSEvent.mouseLocation)
-            },
         ].compactMap { $0 }
         Diag.log(
-            "pin image hotkeys armed \(PinnedImageHotkeyDefaults.pinDisplayName) \(PinnedImageHotkeyDefaults.lockDisplayName) count=\(pinnedImageHotkeys.count)"
+            "pin image hotkey armed \(PinnedImageHotkeyDefaults.pinDisplayName) count=\(pinnedImageHotkeys.count)"
         )
     }
 
@@ -341,12 +335,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     /// ⌥⇧I hotkey run the same path.
     @objc private func pinImage() {
         PinnedImageCoordinator.shared.togglePin(from: CaptureHistory.shared)
-    }
-
-    /// T4/S6: toggles the click-through lock of the pinned image the pointer
-    /// is over — the one the user is looking at and working underneath.
-    @objc private func toggleImageLock() {
-        PinnedImageCoordinator.shared.toggleLock(at: NSEvent.mouseLocation)
     }
 
     /// T5/S7: the menu entry runs the same gesture the ⌥⇧O hotkey does.

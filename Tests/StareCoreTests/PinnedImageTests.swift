@@ -41,13 +41,58 @@ final class PinnedImageTests: XCTestCase {
 
     // MARK: - Initial placement
 
-    func testInitialOriginCentersTheWindowInsideTheScreen() {
+    // T4 corner fix: the human's report was that a pin centred on the display
+    // "queda raro". The rule now: a pin opens against the same bottom-right
+    // corner the capture card occupies, offset from the card's slot so both
+    // are readable — it only reaches the middle of the display if the user
+    // drags it there.
+    func testInitialOriginNestsThePinBesideTheCaptureCardCorner() {
         let origin = PinnedImageGeometry.initialOrigin(
             size: CGSize(width: 300, height: 200),
             in: CGRect(x: 0, y: 0, width: 1000, height: 800)
         )
-        XCTAssertEqual(origin.x, 350)
-        XCTAssertEqual(origin.y, 300)
+        // The card's corner inset plus its widest plate plus the gap kept
+        // between the two — the pin's right edge sits left of that slot.
+        XCTAssertEqual(
+            origin.x,
+            1000 - PinnedImageGeometry.cardCornerInset - PinnedImageGeometry.cardSlotWidth
+                - PinnedImageGeometry.pinCardGap - 300)
+        // The bottom edge aligns with the card's own bottom margin.
+        XCTAssertEqual(origin.y, PinnedImageGeometry.cardCornerInset)
+    }
+
+    func testInitialOriginKeepsTheCornerRuleOnADisplayThatDoesNotStartAtTheOrigin() {
+        // A second display's visible frame has nonzero insets; the rule is
+        // about the corner, not about a zero origin.
+        let origin = PinnedImageGeometry.initialOrigin(
+            size: CGSize(width: 200, height: 150),
+            in: CGRect(x: 1440, y: 30, width: 1000, height: 800)
+        )
+        XCTAssertEqual(
+            origin.x,
+            1440 + 1000 - PinnedImageGeometry.cardCornerInset
+                - PinnedImageGeometry.cardSlotWidth - PinnedImageGeometry.pinCardGap - 200)
+        XCTAssertEqual(origin.y, 30 + PinnedImageGeometry.cardCornerInset)
+    }
+
+    func testTheInitialPlacementNeverCoversTheCaptureCardSlot() {
+        let bounds = CGRect(x: 100, y: 50, width: 1400, height: 900)
+        let size = CGSize(width: 400, height: 300)
+        let frame = CGRect(
+            origin: PinnedImageGeometry.initialOrigin(size: size, in: bounds),
+            size: size)
+        // The widest card the controller can show, at the corner the
+        // controller nests it in: inset from the edges, its own height.
+        let cardSlot = CGRect(
+            origin: CGPoint(
+                x: bounds.maxX - PinnedImageGeometry.cardCornerInset - PinnedImageGeometry.cardSlotWidth,
+                y: bounds.minY + PinnedImageGeometry.cardCornerInset),
+            size: CGSize(
+                width: PinnedImageGeometry.cardSlotWidth,
+                height: PinnedImageGeometry.cardSlotHeight))
+        XCTAssertFalse(
+            frame.intersects(cardSlot),
+            "\(frame) covers the card slot \(cardSlot) — the pin must sit beside it, both readable")
     }
 
     func testInitialOriginStaysInsideTheScreen() {
@@ -122,7 +167,7 @@ final class PinnedImageTests: XCTestCase {
     func testLockTogglesBetweenFloatingAndLocked() {
         var lock = PinnedImageLockState.floating
         lock = lock.toggled
-        XCTAssertEqual(lock, .locked, "⌥⇧L over the pin locks it")
+        XCTAssertEqual(lock, .locked, "the 🔒 control locks it")
         lock = lock.toggled
         XCTAssertEqual(lock, .floating, "the same toggle unlocks it")
     }
@@ -174,64 +219,49 @@ final class PinnedImageTests: XCTestCase {
     // MARK: - The no-op feedback (T4 closing fix)
 
     func testThePinShortcutsSaySomethingWhenTheyCannotAct() {
-        XCTAssertEqual(
-            PinnedImageFeedback.noPinnedImageUnderPointer.title,
-            "No pinned image under the pointer")
         XCTAssertEqual(PinnedImageFeedback.nothingCapturedYet.title, "Nothing captured yet")
-    }
-
-    // MARK: - Which window a lock toggle reaches
-
-    func testTheLockToggleReachesTheTopmostWindowUnderThePointer() {
-        let frames = [
-            CGRect(x: 0, y: 0, width: 400, height: 300),
-            CGRect(x: 50, y: 50, width: 400, height: 300),
-        ]
-        // The later window is the frontmost one; it wins the point.
-        XCTAssertEqual(
-            PinnedImageFocus.topmostIndex(containing: CGPoint(x: 100, y: 100), in: frames), 1)
-        XCTAssertEqual(
-            PinnedImageFocus.topmostIndex(containing: CGPoint(x: 10, y: 10), in: frames), 0)
-        XCTAssertNil(
-            PinnedImageFocus.topmostIndex(containing: CGPoint(x: 900, y: 900), in: frames),
-            "a point over no pinned image toggles nothing")
     }
 
     // MARK: - Hover controls
 
-    func testTheLockAndCloseControlsSitInTheTopRightCornerInsideTheWindow() {
+    func testThePinBadgeLockAndCloseControlsSitInARowInsideTheWindow() {
         let bounds = CGRect(x: 0, y: 0, width: 300, height: 220)
         let close = PinnedImageControls.rect(for: .close, in: bounds)
         let lock = PinnedImageControls.rect(for: .lock, in: bounds)
-        for rect in [close, lock] {
+        let pin = PinnedImageControls.rect(for: .pin, in: bounds)
+        XCTAssertTrue(
+            PinnedImageControls.Kind.allCases.contains(.pin),
+            "a pinned image announces itself with its own badge")
+        for rect in [close, lock, pin] {
             XCTAssertTrue(bounds.insetBy(dx: -1, dy: -1).contains(rect), "\(rect) outside \(bounds)")
         }
         XCTAssertLessThan(
             lock.maxX, close.minX + 1,
             "the lock control sits to the left of the close control, same row")
+        XCTAssertLessThan(
+            pin.maxX, lock.minX + 1,
+            "the pinned badge sits to the left of the lock control, same row")
         XCTAssertEqual(lock.minY, close.minY)
+        XCTAssertEqual(pin.minY, close.minY)
     }
 
     // MARK: - Hotkey defaults
 
     func testThePinnedImageShortcutsDoNotCollideWithEveryExistingOne() {
-        // The two new fixed bindings: ⌥⇧I pins the latest capture, ⌥⇧L toggles
-        // the lock of the pinned image under the pointer.
+        // The one fixed binding: ⌥⇧I pins the latest capture. The lock has no
+        // keyboard shortcut any more — the 🔒 control on each pin is the
+        // affordance — so ⌥⇧L is simply free again.
         XCTAssertEqual(PinnedImageHotkeyDefaults.pin.key, .i)
         XCTAssertEqual(PinnedImageHotkeyDefaults.pin.modifiers, [.option, .shift])
-        XCTAssertEqual(PinnedImageHotkeyDefaults.lock.key, .l)
-        XCTAssertEqual(PinnedImageHotkeyDefaults.lock.modifiers, [.option, .shift])
 
         // The four registered global actions can never share a binding with
-        // the new ones.
+        // the pinned one.
         for action in HotkeyAction.allCases {
             XCTAssertNotEqual(PinnedImageHotkeyDefaults.pin, action.defaultBinding)
-            XCTAssertNotEqual(PinnedImageHotkeyDefaults.lock, action.defaultBinding)
         }
-        // ⌥⇧O is reserved for OCR later; the single-key capture flow (S, ⇧S,
+        // ⌥⇧O is reserved for OCR; the single-key capture flow (S, ⇧S,
         // ⌥S) has no modifiers this design would accept, so the collision
         // check that matters beside the four actions is O itself.
         XCTAssertNotEqual(PinnedImageHotkeyDefaults.pin.key, .o)
-        XCTAssertNotEqual(PinnedImageHotkeyDefaults.lock.key, .o)
     }
 }
