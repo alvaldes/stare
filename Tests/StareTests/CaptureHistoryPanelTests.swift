@@ -163,12 +163,15 @@ final class CaptureHistoryPanelTests: XCTestCase {
 
         panel.showPanel()
 
-        defer { panel.hide() }
-        guard let screen = NSScreen.main else {
-            XCTFail("guard already skipped the test")
-            return
-        }
-        XCTAssertTrue(screen.frame.contains(panel.frame), "the panel opens inside the primary screen")
+        let pointer = NSEvent.mouseLocation
+        // The panel centres on the screen under the pointer, so that is the one
+        // to measure against — on a multi-display desk it is often not the
+        // primary, and asserting the primary made this test fail there.
+        let target = NSScreen.screens.first { $0.frame.contains(pointer) }
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        let screen = try XCTUnwrap(target)
+        XCTAssertTrue(screen.frame.contains(panel.frame), "the panel opens inside the screen under the pointer")
     }
 
     // MARK: Pick route through the overlay (board open without a board view)

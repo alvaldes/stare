@@ -129,7 +129,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         registerRecognitionHotkey()
 
-        // T4 closing fix: a pin shortcut that cannot act says so, the same
+        // T4 closing fix: a pin action that cannot act says so, the same
         // way the capture paths already do with their hint pill. The
         // coordinator only reports; the pill's placement is UI, so it is
         // decided here — on the display the pointer is on.
@@ -138,12 +138,12 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         }
     }
 
-    /// The pinned-image shortcuts' visible refusal (T4 closing fix): the
-    /// same dark pill the OCR gesture reports through, centred on the
-    /// display the pointer is on. It closes itself after three and a half
-    /// seconds, exactly like that gesture's.
+    /// The pinned-image action's visible refusal (T4 closing fix): the same
+    /// dark pill the OCR gesture reports through, centred on the display the
+    /// pointer is on. It closes itself after three and a half seconds, exactly
+    /// like that gesture's.
     private func showPinnedImageFeedback(_ feedback: PinnedImageFeedback) {
-        // The hotkey path arrives on the main queue (`DispatchQueue.main.async`
+        // The action arrives on the main queue (`DispatchQueue.main.async`
         // in `GlobalHotkey`) and the menu path is main by construction, so the
         // hint window creation is main-thread by both routes.
         MainActor.assumeIsolated {

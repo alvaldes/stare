@@ -193,16 +193,6 @@ public enum PinnedImageControls {
     }
 }
 
-/// The fixed bindings of the pinned image's own shortcut (T4/S6). It is
-/// deliberately outside the persisted, remappable `HotkeyBindings` map: the
-/// four registered actions keep their Settings pane, and this feature decided
-/// against a new one. ⌥⇧I pins/dismisses per `PinnedImagePinRule`.
-/// ⌥⇧L does not exist any more (T4 pin fix): the lock is the 🔒 control on
-/// the pin itself, which stays drawn and clickable even while locked, so the
-/// keyboard shortcut — its menu item, its registration and its two dead
-/// constants here (T5 follow-up) — had nothing to add. Nothing collides:
-/// neither binding is ⌥⇧A, ⌥⇧M, ⌥⇧P, ⌥⇧W, ⌥S, ⇧S, S or the ⌥⇧O reserved for
-/// OCR.
 /// What the menu's Pin Image action does on a press (T4 closing fix): pressing
 /// it twice must never hold a stack nobody can take down. The rule is one
 /// action, one pin lifecycle — the first press pins the session's latest

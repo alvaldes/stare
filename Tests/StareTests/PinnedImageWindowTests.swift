@@ -345,6 +345,18 @@ final class PinnedImageWindowTests: XCTestCase {
         XCTAssertEqual(pinnedImages.count, 1, "the pin button floats the image")
         XCTAssertEqual(opened, 0, "the pin button never opens the editor")
 
+        // The control's own place and click area, which performClick bypasses:
+        // no sibling may cover the button's centre, and the controls must ride
+        // the plate's top-right corner.
+        let centre = NSPoint(x: pinButton.frame.midX, y: pinButton.frame.midY)
+        let covering = view.subviews.last { !$0.isHidden && $0.frame.contains(centre) }
+        XCTAssertTrue(
+            covering === pinButton,
+            "a press at the control's centre must land on the control, not on whatever sits over it"
+        )
+        XCTAssertGreaterThan(pinButton.frame.midX, view.bounds.midX, "the controls ride the plate's right edge")
+        XCTAssertLessThan(pinButton.frame.midY, view.bounds.midY, "and its top edge")
+
         view.mouseDown(with: mouseEvent(.leftMouseDown, at: CGPoint(x: view.bounds.midX, y: view.bounds.midY), window: cardWindow))
         XCTAssertEqual(opened, 1, "a click anywhere else keeps opening the editor")
         XCTAssertEqual(pinnedImages.count, 1)
@@ -367,10 +379,14 @@ final class PinnedImageWindowTests: XCTestCase {
         controller.pinLatestCapture()
         XCTAssertEqual(controller.pinnedImageCount, 1, "the latest capture floats")
 
-        if let primary = NSScreen.screens.first {
-            let window = try XCTUnwrap(controller.pinnedImages.windows.first)
-            XCTAssertTrue(primary.visibleFrame.contains(window.frame), "\(window.frame) outside \(primary.visibleFrame)")
-        }
+        let pinnedWindow = try XCTUnwrap(controller.pinnedImages.windows.first)
+        // The pin lands on the screen the capture was pinned on, which on a
+        // multi-display desk is often not the primary one: ask whether some
+        // screen holds it instead of assuming the first.
+        XCTAssertTrue(
+            NSScreen.screens.contains { $0.visibleFrame.contains(pinnedWindow.frame) },
+            "\(pinnedWindow.frame) outside every screen's visible frame"
+        )
 
         // The drawing session's exits never touch the pinned image: the
         // coordinator's windows are not the canvases.
