@@ -269,3 +269,7 @@ L21. **Libro de commits de la sesión hermana**, con tarea y `S#` en la misma l�
 - T12 (S19): `502a5e2` (modelo y geometría) + `2ba387f` (superficie del editor) + `c3f4b63` (pegar desde el portapapeles). Completa.
 
 L22. **Las doce tareas están cerradas.** Ocho en esta rama (T1, T2a, T2b-a, T2b-b, T3, T4, T5, T7, T8a, T8b) y cuatro en las ramas de la hermana (T6, T9, T10, T11, T12). Nada pendiente de implementación en ninguna de las dos sesiones; lo que queda es el pase manual del humano y su palabra para integrar y publicar. Ninguna rama se pushea ni se mergea sin eso: push y merge son decisiones suyas, no de las sesiones.
+
+L23. **Integración hecha con instrucción explícita del humano**: `main` pasó de `2b9c66c` a `c394634` por fast-forward sobre `feat/capture-parity` (48 commits). El build instalado es, por lo tanto, `main`. Los cuatro checks manuales del humano pasaron: 1.2, 1.4, 2.2 y 2.3.
+
+**Lo único que queda, y no es de esta rama**: las dos ramas de la sesión hermana sobre la `main` nueva — `feat/capture-filenames` (`4a0a152`, base `ae2d799`) con un conflicto esperado en `CHANGELOG.md`, y `feat/capture-extras` (`65c94a0`, base `2b9c66c`) con los siete de S25, cuyo único conflicto real es el orden en `Stroke.init` y en el mapeo persistido, que se re-aplica a mano. Esa sesión se comprometió a resolverlos y mostrar los diffs. El último mensaje hacia ella **no fue aceptado por el canal**, así que esta línea es su aviso: quien lea esto primero tiene que relayarle que `main` se movió y que sus dos rebases son lo único pendiente.
