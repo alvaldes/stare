@@ -247,21 +247,16 @@ final class PinnedImageTests: XCTestCase {
 
     // MARK: - Hotkey defaults
 
-    func testThePinnedImageShortcutsDoNotCollideWithEveryExistingOne() {
-        // The one fixed binding: ⌥⇧I pins the latest capture. The lock has no
-        // keyboard shortcut any more — the 🔒 control on each pin is the
-        // affordance — so ⌥⇧L is simply free again.
-        XCTAssertEqual(PinnedImageHotkeyDefaults.pin.key, .i)
-        XCTAssertEqual(PinnedImageHotkeyDefaults.pin.modifiers, [.option, .shift])
-
-        // The four registered global actions can never share a binding with
-        // the pinned one.
-        for action in HotkeyAction.allCases {
-            XCTAssertNotEqual(PinnedImageHotkeyDefaults.pin, action.defaultBinding)
+    func testTheCaptureHistoryOwnsTheOneFixedShortcutThePinUsedToHave() {
+        // ⌥⇧I opens the capture history now. The pin registers no global key of
+        // its own any more — the card's pin button and the menu's Pin Image are
+        // its path — so nothing else may claim the binding the history holds.
+        let optionShiftI = HotkeyBinding(key: .i, modifiers: [.option, .shift])
+        XCTAssertEqual(HotkeyAction.captureHistory.defaultBinding, optionShiftI)
+        for action in HotkeyAction.allCases where action != .captureHistory {
+            XCTAssertNotEqual(action.defaultBinding, optionShiftI)
         }
-        // ⌥⇧O is reserved for OCR; the single-key capture flow (S, ⇧S,
-        // ⌥S) has no modifiers this design would accept, so the collision
-        // check that matters beside the four actions is O itself.
-        XCTAssertNotEqual(PinnedImageHotkeyDefaults.pin.key, .o)
+        // ⌥⇧O stays reserved for the OCR gesture.
+        XCTAssertNotEqual(HotkeyAction.captureHistory.defaultBinding.key, .o)
     }
 }

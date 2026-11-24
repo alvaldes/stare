@@ -146,7 +146,7 @@ final class TextRecognitionTests: XCTestCase {
             HotkeyAction.pointerHighlight.defaultBinding, // ⌥⇧M
             HotkeyAction.pin.defaultBinding, // ⌥⇧P
             HotkeyAction.whiteboard.defaultBinding, // ⌥⇧W
-            PinnedImageHotkeyDefaults.pin, // ⌥⇧I
+            HotkeyAction.captureHistory.defaultBinding, // ⌥⇧I
             HotkeyBinding(key: .s, modifiers: [.option]), // ⌥S
             HotkeyBinding(key: .s, modifiers: [.shift]), // ⇧S
             HotkeyBinding(key: .s, modifiers: [.option, .shift]), // ⌥⇧S

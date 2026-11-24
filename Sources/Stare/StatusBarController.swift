@@ -35,11 +35,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     // The pinned image (T4/S6): floats the session's latest capture as a
     // borderless always-on-top window. Its own action, never the drawing pin.
     private let pinImageItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-    /// The one fixed global registration of the pinned image (T4/S6), kept
-    /// here so it lives and dies with the status item: ⌥⇧I pins the latest
-    /// capture. The lock has no shortcut — it is the 🔒 control on the pin
-    /// itself.
-    private var pinnedImageHotkeys: [GlobalHotkey] = []
     /// The one fixed global registration of the OCR/QR gesture (T5/S7):
     /// ⌥⇧O opens its own selection surface, never the drawing overlay.
     private var recognitionHotkey: GlobalHotkey?
@@ -102,7 +97,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         pinItem.target = self
         menu.addItem(pinItem)
 
-        pinImageItem.title = "Pin Image  \(PinnedImageHotkeyDefaults.pinDisplayName)"
+        pinImageItem.title = "Pin Image"
         pinImageItem.action = #selector(pinImage)
         pinImageItem.target = self
         menu.addItem(pinImageItem)
@@ -132,7 +127,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         menu.delegate = self
         statusItem.menu = menu
 
-        registerPinnedImageHotkeys()
         registerRecognitionHotkey()
 
         // T4 closing fix: a pin shortcut that cannot act says so, the same
@@ -166,7 +160,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     /// outside the remappable four-action map by decision — no new Settings
     /// pane — registering directly through `GlobalHotkey`, exactly the way
     /// the pinned image's fixed shortcut does. ⌥⇧O was reserved for this
-    /// feature by contract (`PinnedImageHotkeyDefaults`) and is pinned free
+    /// feature by contract and is pinned free
     /// against every other shortcut in the collision test. A refused
     /// registration is logged and leaves the app without that shortcut
     /// instead of failing anything else.
@@ -177,23 +171,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         Diag.log("text recognition hotkey armed count=\(recognitionHotkey == nil ? 0 : 1)")
     }
 
-    /// Registers the pinned image's one fixed shortcut (T4/S6). It sits
-    /// outside the remappable four-action map by decision — no new Settings
-    /// pane — so it registers directly, the way the pre-Settings hotkeys did.
-    /// A refused registration is logged and leaves the app without that
-    /// shortcut instead of failing anything else.
-    private func registerPinnedImageHotkeys() {
-        pinnedImageHotkeys = [
-            GlobalHotkey(binding: PinnedImageHotkeyDefaults.pin) {
-                PinnedImageCoordinator.shared.togglePin(from: CaptureHistory.shared)
-            },
-        ].compactMap { $0 }
-        Diag.log(
-            "pin image hotkey armed \(PinnedImageHotkeyDefaults.pinDisplayName) count=\(pinnedImageHotkeys.count)"
-        )
-    }
-
-    /// The pin is toggled by a global hotkey too, so the checkmark is read when
+    /// The pin is toggled from the menu, so the checkmark is read when
     /// the menu opens instead of being kept in sync by hand.
     func menuWillOpen(_ menu: NSMenu) {
         pinItem.state = isPinned() ? .on : .off

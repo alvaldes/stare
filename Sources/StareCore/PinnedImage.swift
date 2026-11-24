@@ -203,18 +203,14 @@ public enum PinnedImageControls {
 /// constants here (T5 follow-up) — had nothing to add. Nothing collides:
 /// neither binding is ⌥⇧A, ⌥⇧M, ⌥⇧P, ⌥⇧W, ⌥S, ⇧S, S or the ⌥⇧O reserved for
 /// OCR.
-public enum PinnedImageHotkeyDefaults {
-    public static let pin = HotkeyBinding(key: .i, modifiers: [.option, .shift])
-    public static let pinDisplayName = "⌥⇧I"
-}
-
-/// What ⌥⇧I does on a press (T4 closing fix): a keyboard user pressing the
-/// same key twice must never hold a stack they cannot take down. The rule
-/// is one key, one pin lifecycle — the first press pins the session's
-/// latest capture, the next press takes the frontmost pinned image down,
-/// exactly the open/close pairing every other surface key of this app has
-/// (⌥⇧A opens, Esc closes; ⌥⇧P toggles). Deliberately keeping two pins is
-/// still one click away, on the capture card's pin button.
+/// What the menu's Pin Image action does on a press (T4 closing fix): pressing
+/// it twice must never hold a stack nobody can take down. The rule is one
+/// action, one pin lifecycle — the first press pins the session's latest
+/// capture, the next takes the frontmost pinned image down, exactly the
+/// open/close pairing every other surface of this app has (⌥⇧A opens, Esc
+/// closes; ⌥⇧P toggles). Deliberately keeping two pins is still one click
+/// away, on the capture card's pin button. The global ⌥⇧I this used to own now
+/// opens the capture history, so the menu and the card are the whole path.
 public enum PinnedImagePinAction: Equatable, Sendable {
     case pin
     case dismissTopmost

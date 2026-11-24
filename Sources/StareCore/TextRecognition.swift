@@ -9,7 +9,7 @@ import Foundation
 /// Vision recognition is on-device by construction (S8).
 ///
 /// Nothing collides with anything else this app answers to. The pinned-image
-/// contract already reserved ⌥⇧O for OCR (`PinnedImageHotkeyDefaults`); this
+/// contract already reserved ⌥⇧O for OCR; this
 /// feature takes it, and the collision test in `TextRecognitionTests` pins
 /// that it stays free.
 public enum TextRecognitionHotkeyDefaults {
