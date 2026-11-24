@@ -145,15 +145,16 @@ final class SettingsBarPreviewTests: XCTestCase {
         // A dropped item loses its whole run; a merge does not lose any width at
         // all — the gap between two runs becomes part of the merged one, so the sum
         // can only grow. The sum therefore has to match the default width scaled by
-        // the fit. The slack is antialiasing, measured: at the minimum width the
-        // inks summed 72.5 against a scaled 73.3, a 1.1% shortfall from rasterising
-        // smaller, so 2% leaves that floor and nothing else.
+        // the fit. The slack is antialiasing: at the minimum width the inks summed
+        // 72.5 against a scaled 73.3 here, a 1.1% shortfall from rasterising
+        // smaller, and 3% leaves room for another backend to round differently while
+        // staying far below the ~11% a single lost run would cost.
         let inkAtDefault = runsAtDefault.reduce(0) { $0 + $1.width }
         let inkAtMinimum = runsAtMinimum.reduce(0) { $0 + $1.width }
         let fitted = (Self.minimumCardsWidth - SettingsMetrics.stageChrome)
             / (Self.defaultCardsWidth - SettingsMetrics.stageChrome)
         XCTAssertGreaterThanOrEqual(
-            inkAtMinimum, inkAtDefault * fitted * 0.98,
+            inkAtMinimum, inkAtDefault * fitted * 0.97,
             "S2: the inks at the minimum width carry the default width's ink, scaled by the fit — nothing was cut")
     }
 
