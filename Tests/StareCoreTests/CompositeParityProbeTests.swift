@@ -198,9 +198,9 @@ final class CompositeParityProbeTests: XCTestCase {
     }
 
     /// The dim must actually reach the capture: the region interior stays
-    /// bare, the far corner carries the full dim weight, and the soft rim
-    /// halfway between the two holds the halfway value — the same numbers
-    /// the renderer tests pin.
+    /// bare, the far corner carries the full dim weight, the falloff is
+    /// gentle just outside the boundary, and halfway along the feather it
+    /// holds half the weight — the same numbers the renderer tests pin.
     func testCompositorCarriesTheSpotlightDim() throws {
         let width = 120, height = 90
         let base = try XCTUnwrap(makeBase(width: width, height: height))
@@ -217,8 +217,10 @@ final class CompositeParityProbeTests: XCTestCase {
                        "the region interior must stay bare")
         XCTAssertEqual(channel(at: CGPoint(x: 5, y: 85)), 1 - 0.55, accuracy: 0.03,
                        "the far corner must carry the dim weight")
-        XCTAssertEqual(channel(at: CGPoint(x: 93, y: 45)), 1 - 0.275, accuracy: 0.04,
-                       "halfway across the soft rim the dim is half weight")
+        XCTAssertGreaterThan(channel(at: CGPoint(x: 93, y: 45)), 1 - 0.55 * 0.15,
+                             "just outside the boundary the dim must stay gentle")
+        XCTAssertEqual(channel(at: CGPoint(x: 102, y: 45)), 1 - 0.55 * 0.5, accuracy: 0.05,
+                       "halfway along the feather the dim is half weight")
     }
 
     /// The compositor's whole-canvas dim needs the base's own size: a probe

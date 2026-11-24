@@ -8,17 +8,21 @@ public enum MarkRenderer {
     /// content underneath stays readable while the shape reads as filled —
     /// the same principle the highlighter draws with.
     private static let shapeFillOpacity: CGFloat = 0.3
-    /// The dim weight outside a spotlight's region (S15 slice B): one
-    /// decision, shared by the overlay preview and the compositor, so the
-    /// capture shows exactly what the live layer showed.
+    /// The dim weight the spotlight settles at far from the region (S15
+    /// slice B): one decision, shared by the overlay preview and the
+    /// compositor, so the capture shows exactly what the live layer showed.
     private static let spotlightDimAlpha: CGFloat = 0.55
-    /// The soft rim lives just outside the dragged rectangle: the region's
-    /// own inscribed ellipse stays fully clear, the dim ramps up from its
-    /// edge to this multiple of the region's radii, and stays constant
-    /// beyond. The silhouette is the pointer highlight's spotlight idea — a
-    /// radial falloff — fitted to the mark's region geometry; the pointer
-    /// mode itself is never wired into the mark path.
-    private static let spotlightRimFactor: CGFloat = 1.2
+    /// The spotlight's feather: the distance past the lit boundary at which
+    /// the dim reaches its deepest weight, as a fraction of the region's
+    /// radii. A constant in the region's own metric, so its real width grows
+    /// and shrinks with the region — a large area fades wide and ambient, a
+    /// small one stays crisp. Tuned once for the eye; render candidates to
+    /// compare by passing `feather:`.
+    public static let spotlightFeather: CGFloat = 0.8
+    /// Samples of the eased falloff across one feather: the smoothstep curve
+    /// `t²(3 − 2t)`, so the ramp starts and ends with zero slope and the
+    /// boundary never reads as an edge.
+    private static let spotlightEaseSteps: [CGFloat] = [0.25, 0.5, 0.75]
 
     public static func draw(strokes: [Stroke], in context: CGContext, canvas: CGRect? = nil) {
         context.saveGState()
@@ -128,17 +132,30 @@ public enum MarkRenderer {
         }
     }
 
-    /// S15 slice B: the persistent spotlight. A dimming mask, not a stroke:
-    /// the dragged rectangle's inscribed ellipse stays fully clear, the dim
-    /// ramps up over a soft rim just outside it, and everything beyond the
-    /// rim dims at the fixed weight. The mark's ink is ignored — a spotlight
-    /// has no colour of its own — and the dim always covers the whole canvas
-    /// even when the mark itself is rotated: only the hole turns with the
-    /// mark, never the shroud.
+    /// S15 slice B: the persistent spotlight. A dimming light, not a stroke:
+    /// one silhouette — the dragged rectangle's inscribed ellipse, the shape
+    /// a beam of light makes — and the dim falls off from its edge in a
+    /// single radial gradient, across the whole canvas at once. There is no
+    /// second geometry and no shroud fill: inside the boundary the gradient
+    /// paints at alpha zero (the content beneath keeps its exact
+    /// brightness), the dim eases out over a feather that is a fraction of
+    /// the region's radii — so its width grows with the region — and rests
+    /// at the deepest weight beyond. The mark's ink is ignored — a
+    /// spotlight has no colour of its own — and the dim always covers the
+    /// whole canvas even when the mark itself is rotated: only the lit
+    /// window turns with the mark, never the falloff.
+    ///
+    /// Per frame this is one gradient allocation and one gradient fill over
+    /// the canvas — strictly less work than the shroud fill plus gradient it
+    /// replaced.
+    ///
+    /// `feather` overrides `spotlightFeather` for look comparisons; the
+    /// overlay and the compositor never pass it, so what they draw agrees.
     public static func drawSpotlight(
         _ stroke: Stroke,
         canvas: CGRect,
-        in context: CGContext
+        in context: CGContext,
+        feather: CGFloat? = nil
     ) {
         guard let first = stroke.points.first, let last = stroke.points.last else { return }
         let rect = PathBuilder.normalizedRect(from: first, to: last)
@@ -147,63 +164,89 @@ public enum MarkRenderer {
         let rotation = stroke.rotation
         let rotate = Stroke.rotationTransform(around: stroke.anchor, by: rotation)
 
-        // The reach ellipse: the region's ellipse grown by the rim. The dim
-        // fill covers the whole canvas minus that hole; the canvas rect
-        // stays in the context's own space, only the hole follows the mark.
-        let reach = rect.insetBy(
-            dx: -rect.width * (spotlightRimFactor - 1) / 2,
-            dy: -rect.height * (spotlightRimFactor - 1) / 2
-        )
-        let hole = CGMutablePath()
-        hole.addEllipse(in: reach)
-        let shroud = CGMutablePath()
-        shroud.addRect(canvas)
-        if rotation != 0 {
-            var transform = rotate
-            shroud.addPath(hole.copy(using: &transform) ?? hole)
-        } else {
-            shroud.addPath(hole)
-        }
-        context.addPath(shroud)
-        context.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: spotlightDimAlpha))
-        context.fillPath(using: .evenOdd)
+        // One silhouette, drawn as one gradient: pixels at normalized
+        // distance ≤ 1 from the centre stay clear, the dim eases to its
+        // deepest weight a feather of the radii away, and holds it beyond.
+        // The metric is the lit ellipse's own — semi-axes from the dragged
+        // rectangle — so each pixel's distance answers in the light's
+        // proportions.
+        let semiWidth = rect.width / 2
+        let semiHeight = rect.height / 2
+        let centre = CGPoint(x: rect.midX, y: rect.midY)
 
-        // The soft rim: a radial gradient from fully clear at the region's
-        // ellipse to the dim weight at the reach, drawn in a space scaled to
-        // the reach so the falloff follows the region's proportions. Past
-        // the reach the shroud owns the dim, so the gradient must stop
-        // there: extending it would double-paint the far field.
-        //
+        // The farthest canvas corner from the lit centre, in the light's
+        // metric: it bounds the gradient's radius span, so the stops can be
+        // placed in pixel distances without the span stretching past what
+        // the surface needs. An unbounded canvas (a caller without its own
+        // clip rect) has no finite corner to measure — the gradient then
+        // only has to reach past the feather, because beyond its last stop
+        // the far field is the deepest dim no matter how far out the clip
+        // goes.
+        let featherFactor = max(0.001, feather ?? spotlightFeather)
+        let inverse = rotate.inverted()
+        var reach: CGFloat = 0
+        var unbounded = false
+        for corner in [
+            CGPoint(x: canvas.minX, y: canvas.minY),
+            CGPoint(x: canvas.maxX, y: canvas.minY),
+            CGPoint(x: canvas.maxX, y: canvas.maxY),
+            CGPoint(x: canvas.minX, y: canvas.maxY),
+        ] {
+            let local = corner.applying(inverse)
+            let dx = (local.x - centre.x) / semiWidth
+            let dy = (local.y - centre.y) / semiHeight
+            guard dx.isFinite, dy.isFinite else {
+                unbounded = true
+                continue
+            }
+            reach = max(reach, (dx * dx + dy * dy).squareRoot())
+        }
+        if unbounded || reach > 1 {
+            reach = max(reach, 1 + featherFactor)
+        } else {
+            return // every corner sits inside the lit window: nothing to dim
+        }
+
+        // The feather clamps into the room the canvas leaves past the
+        // boundary, so a surface barely larger than the region still gets a
+        // complete, eased ramp instead of one cut off by the gradient's end.
+        let featherWidth = max(0.001, min(featherFactor, (reach - 1) * 0.98))
+        var locations: [CGFloat] = [0, 1 / reach]
+        var alphas: [CGFloat] = [0, 0]
+        for step in spotlightEaseSteps {
+            let eased = step * step * (3 - 2 * step)
+            locations.append((1 + step * featherWidth) / reach)
+            alphas.append(spotlightDimAlpha * eased)
+        }
+        locations.append(min(1, (1 + featherWidth) / reach))
+        alphas.append(spotlightDimAlpha)
+        guard let gradient = CGGradient(
+            colorsSpace: CGColorSpaceCreateDeviceRGB(),
+            colors: alphas.map {
+                CGColor(srgbRed: 0, green: 0, blue: 0, alpha: $0)
+            } as CFArray,
+            locations: locations
+        ) else { return }
+
         // The gradient sits under the mark's own rotation — its rings are
         // elliptical about the centre, so turning the context turns them
-        // with the region. At the reach it holds exactly the dim weight the
-        // shroud paints beyond, so the two can never seam.
+        // with the region — and paints the entire clipped canvas: extending
+        // past the end radius blankets the far field in the deepest dim, so
+        // no second fill ever seams against it.
         context.saveGState()
         if rotation != 0 {
             context.concatenate(rotate)
         }
-        context.translateBy(x: reach.midX, y: reach.midY)
-        context.scaleBy(x: reach.width / 2, y: reach.height / 2)
-        let colors = [
-            CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0),
-            CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0),
-            CGColor(srgbRed: 0, green: 0, blue: 0, alpha: spotlightDimAlpha),
-        ] as CFArray
-        let locations: [CGFloat] = [0, 1 / spotlightRimFactor, 1]
-        if let gradient = CGGradient(
-            colorsSpace: CGColorSpaceCreateDeviceRGB(),
-            colors: colors,
-            locations: locations
-        ) {
-            context.drawRadialGradient(
-                gradient,
-                startCenter: .zero,
-                startRadius: 0,
-                endCenter: .zero,
-                endRadius: 1,
-                options: []
-            )
-        }
+        context.translateBy(x: centre.x, y: centre.y)
+        context.scaleBy(x: semiWidth, y: semiHeight)
+        context.drawRadialGradient(
+            gradient,
+            startCenter: .zero,
+            startRadius: 0,
+            endCenter: .zero,
+            endRadius: reach,
+            options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
+        )
         context.restoreGState()
     }
 }

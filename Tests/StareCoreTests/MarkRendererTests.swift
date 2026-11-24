@@ -193,12 +193,18 @@ final class MarkRendererTests: XCTestCase {
         XCTAssertEqual(ArrowHeadStyle(rawValue: "filled"), .filled)
     }
 
-    // MARK: - Spotlight (S15 slice B)
+    // MARK: - Spotlight (S15 slice B): the light look
 
-    /// The spotlight weight outside the region (S15 slice B): one decision
-    /// shared by the overlay preview and the compositor, so both read the
-    /// same values back.
+    /// The dim weight the spotlight reaches far from the region (S15 slice
+    /// B): one decision shared by the overlay preview and the compositor.
     private var spotlightDimAlpha: CGFloat { 0.55 }
+
+    /// The feather: the distance from the region's boundary at which the dim
+    /// reaches its deepest weight, expressed as a fraction of the region's
+    /// radii. A constant in the region's own metric, so its real width grows
+    /// and shrinks with the region — a large area gets a wide, ambient
+    /// falloff, a small one stays crisp.
+    private var spotlightFeather: CGFloat { 0.8 }
 
     /// Black at `alpha` over the white canvas.
     private func dimmedWhite(_ alpha: CGFloat) -> (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) {
@@ -222,9 +228,15 @@ final class MarkRendererTests: XCTestCase {
 
     private static let spotlightRect = (from: CGPoint(x: 20, y: 15), to: CGPoint(x: 80, y: 65))
 
+    /// A canvas large enough to probe the whole falloff: the shipped feather
+    /// reaches 1.8 × the region's boundary radius, past the default canvas.
+    private static let falloffCanvas = CGSize(width: 160, height: 120)
+
     /// The lit window is the dragged rectangle's inscribed ellipse: the
     /// centre stays bare and a probe just inside the ellipse's edge on the
-    /// rectangle's own axis stays clear too.
+    /// rectangle's own axis stays clear too. Inside the region the spotlight
+    /// paints with alpha zero, so the content beneath keeps its own exactly
+    /// brightness.
     func testSpotlightKeepsTheRegionInteriorClear() throws {
         let stroke = try spotlightStroke(from: Self.spotlightRect.from, to: Self.spotlightRect.to)
         for point in [CGPoint(x: 50, y: 40), CGPoint(x: 79, y: 40), CGPoint(x: 50, y: 16)] {
@@ -233,8 +245,8 @@ final class MarkRendererTests: XCTestCase {
         }
     }
 
-    /// Everything beyond the soft rim dims at the fixed weight, no matter
-    /// how far out — the far corner reads exactly like the near rim's end.
+    /// Everything far from the region rests at the deepest dim weight — the
+    /// dim floor away from the light, no matter how far out.
     func testSpotlightDimsEverythingOutsideTheRegion() throws {
         let stroke = try spotlightStroke(from: Self.spotlightRect.from, to: Self.spotlightRect.to)
         for point in [CGPoint(x: 5, y: 5), CGPoint(x: 95, y: 75), CGPoint(x: 5, y: 75)] {
@@ -243,14 +255,72 @@ final class MarkRendererTests: XCTestCase {
         }
     }
 
-    /// The rim ramps from fully clear at the region's ellipse to the dim
-    /// weight at the reach: halfway along that band (a probe at 11/12 of the
-    /// reach radius, on the rectangle's axis) the dim is half weight.
-    func testSpotlightRampRisesAcrossTheSoftRim() throws {
+    /// The falloff eases out of the boundary gently: right outside the
+    /// region's edge the dim is a small fraction of its weight, not a step.
+    /// At 10% of the boundary radius past the edge the eased ramp has only
+    /// covered smoothstep(0.125) ≈ 4% of the way.
+    func testSpotlightFalloffIsGentleJustOutsideTheBoundary() throws {
         let stroke = try spotlightStroke(from: Self.spotlightRect.from, to: Self.spotlightRect.to)
-        let pixel = colour(of: [stroke], at: CGPoint(x: 83, y: 40), in: Self.canvasSize)
-        let halfwayAlpha = spotlightDimAlpha * 0.5
-        assertApproximatelyEqual(pixel, dimmedWhite(halfwayAlpha), tolerance: 0.04)
+        let pixel = colour(of: [stroke], at: CGPoint(x: 83, y: 40), in: Self.falloffCanvas)
+        XCTAssertGreaterThan(pixel.red, 1 - spotlightDimAlpha * 0.15,
+                             "just outside the boundary the dim must stay gentle, got \(pixel.red)")
+    }
+
+    /// The ramp reaches only half the weight halfway along its feather: the
+    /// falloff is eased symmetrically (smoothstep), so a large region's
+    /// boundary never reads as a line — dim starts high near the light.
+    func testSpotlightRampHalfwayHoldsHalfTheWeight() throws {
+        let stroke = try spotlightStroke(from: Self.spotlightRect.from, to: Self.spotlightRect.to)
+        // d = 1 + 0.4 on the x axis: halfway along the 0.8 feather.
+        let pixel = colour(of: [stroke], at: CGPoint(x: 92, y: 40), in: Self.falloffCanvas)
+        assertApproximatelyEqual(pixel, dimmedWhite(spotlightDimAlpha * 0.5), tolerance: 0.05)
+    }
+
+    /// The dim only ever climbs as the probe walks away from the boundary:
+    /// monotone falloff, no local bright or dark bands between the light and
+    /// the far field.
+    func testSpotlightDimRisesMonotonicallyAwayFromTheBoundary() throws {
+        let stroke = try spotlightStroke(from: Self.spotlightRect.from, to: Self.spotlightRect.to)
+        let xs: [CGFloat] = [78, 80, 82, 85, 88, 91, 94, 97, 100, 104, 108]
+        let dimmings = xs.map { 1 - colour(of: [stroke], at: CGPoint(x: $0, y: 40), in: Self.falloffCanvas).red }
+        for (before, after) in zip(dimmings, dimmings.dropFirst()) {
+            XCTAssertGreaterThan(after, before - 0.02,
+                                 "the dim must not brighten walking away from the boundary")
+        }
+    }
+
+    /// No discontinuity across the boundary: sampled densely on both sides
+    /// of the light's edge, the dim never steps by more than a small
+    /// fraction of its weight within half a point — the boundary is a
+    /// gradient, never an edge.
+    func testSpotlightFalloffIsContinuousAcrossTheBoundary() throws {
+        let stroke = try spotlightStroke(from: Self.spotlightRect.from, to: Self.spotlightRect.to)
+        var probes: [CGFloat] = []
+        var x: CGFloat = 76
+        while x <= 88 {
+            probes.append(x)
+            x += 0.5
+        }
+        let dimmings = probes.map { 1 - colour(of: [stroke], at: CGPoint(x: $0, y: 40), in: Self.falloffCanvas).red }
+        for (before, after) in zip(dimmings, dimmings.dropFirst()) {
+            XCTAssertLessThanOrEqual(abs(after - before), 0.15,
+                                     "the dim must not step across the boundary")
+        }
+    }
+
+    /// The feather is proportional to the region: two same-aspect regions at
+    /// 1× and 2× size show the same dim at the same relative distance past
+    /// their boundaries, because the ramp width is a fraction of the radii —
+    /// a big region spreads its falloff, a small one keeps it tight.
+    func testSpotlightFeatherGrowsWithTheRegion() throws {
+        let canvas = CGSize(width: 200, height: 160)
+        let small = try spotlightStroke(from: CGPoint(x: 70, y: 55), to: CGPoint(x: 130, y: 105))
+        let large = try spotlightStroke(from: CGPoint(x: 40, y: 30), to: CGPoint(x: 160, y: 130))
+        // d = 1.3 on each region's x axis: 30% past the boundary radius.
+        let smallProbe = colour(of: [small], at: CGPoint(x: 139, y: 80), in: canvas).red
+        let largeProbe = colour(of: [large], at: CGPoint(x: 178, y: 80), in: canvas).red
+        XCTAssertEqual(smallProbe, largeProbe, accuracy: 0.04,
+                       "the falloff must scale with the region, not hold a fixed pt width")
     }
 
     /// A spotlight has no ink of its own: the dim is identical whatever ink
@@ -267,8 +337,9 @@ final class MarkRendererTests: XCTestCase {
         }
     }
 
-    /// The dim always covers the whole canvas, even when the mark itself is
-    /// rotated: only the hole turns with the mark, never the shroud.
+    /// The dim always covers the whole canvas, and the falloff far from the
+    /// region rests at the deepest weight, even when the mark itself is
+    /// rotated: only the lit window turns with the mark, never the shroud.
     func testRotatedSpotlightStillDimsTheWholeCanvas() throws {
         let stroke = try spotlightStroke(
             from: Self.spotlightRect.from,
