@@ -1690,11 +1690,17 @@ final class OverlayController {
                 at: NSEvent.mouseLocation, cardFrames: self.cards.visibleCardFrames
             )
             guard overCard else { return event }
+            // A move that already belongs to a card window stays where it is: the
+            // card's own hover is a consumer of moves too. What is dropped is the
+            // move that would land on the canvas *because* the card does not take
+            // mouse-moved events, which is the one that re-asserts the tool cursor.
+            let fromACard = self.cards.openCards.contains { $0 === event.window }
             if Self.cursorProbeEnabled {
                 Diag.log(
-                    "card cursor type=\(event.type.rawValue) swallow=\(Self.swallowsPointerEvent(event.type, overCard: true)) window=\(event.window === self.cards.openCards.first ? "card" : "other")"
+                    "card cursor type=\(event.type.rawValue) swallow=\(!fromACard && Self.swallowsPointerEvent(event.type, overCard: true)) window=\(fromACard ? "card" : "other")"
                 )
             }
+            guard !fromACard else { return event }
             NSCursor.arrow.set()
             // Both the move and the cursor update have to be dropped: the canvas
             // re-asserts its tool cursor on either, and dropping only the update
