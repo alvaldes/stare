@@ -200,7 +200,9 @@ public enum PinnedImageControls {
 /// open/close pairing every other surface of this app has (⌥⇧A opens, Esc
 /// closes; ⌥⇧P toggles). Deliberately keeping two pins is still one click
 /// away, on the capture card's pin button. The global ⌥⇧I this used to own now
-/// opens the capture history, so the menu and the card are the whole path.
+/// opens the capture history, so the menu and the card are the whole path. The
+/// bindings that were retired with it, and why, are recorded in
+/// odd/tasks/capture-history-and-polish.md (L14).
 public enum PinnedImagePinAction: Equatable, Sendable {
     case pin
     case dismissTopmost

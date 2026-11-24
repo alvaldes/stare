@@ -92,5 +92,6 @@ B3, B5 and B6 are defects in what T2b just shipped, not new wishes; B1, B2, B4, 
   **B10** was not routing: `handleKey` maps 123/126/124/125 and two tests already drive those codes
   through `panel.sendEvent`, so the model moved and Return picked what nobody could see. The grid did
   not follow the selection, so it walked out of the viewport. The panel now scrolls the selected cell
-  to the middle on every selection change, and `handleKey` logs keyCode, entry count and the selection
-  before and after, which is the probe L13 asked for and the thing to read on the next manual pass.
+  to the middle on every selection change, and `handleKey` carries the probe L13 asked for: with
+  `STARE_HISTORY_KEY_PROBE=1` in the environment it logs keyCode, entry count and the selection before
+  and after; off, it logs nothing, because a probe that ran always would grow the log on every arrow press.

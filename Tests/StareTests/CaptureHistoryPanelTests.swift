@@ -163,6 +163,7 @@ final class CaptureHistoryPanelTests: XCTestCase {
 
         panel.showPanel()
 
+        defer { panel.hide() }
         let pointer = NSEvent.mouseLocation
         // The panel centres on the screen under the pointer, so that is the one
         // to measure against — on a multi-display desk it is often not the

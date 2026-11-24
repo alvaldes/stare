@@ -1644,7 +1644,8 @@ final class OverlayController {
     /// Watches the pointer for the capture cards (B9). The drawing layer sets
     /// one crosshair for a whole display, so a card's own tracking area never
     /// wins against it; re-answering the arrow on every event is what the bar's
-    /// monitor already does for its own cursor. `CardCursor` owns the rule.
+    /// monitor already does for its own cursor. `CardCursor` owns the rule and
+    /// this monitor only feeds it the pointer and the visible card frames.
     private func installCardCursorMonitor() {
         guard cardCursorMonitor == nil else { return }
         cardCursorMonitor = NSEvent.addLocalMonitorForEvents(

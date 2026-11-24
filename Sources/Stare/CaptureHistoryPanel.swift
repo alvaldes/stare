@@ -116,17 +116,23 @@ final class CaptureHistoryPanel: NSPanel {
     /// older captures, because the grid reads newest first), Return picks.
     /// Anything with Command or Control is somebody else's and passes through.
     /// Returns whether the event was consumed.
+    /// The B10 probe, off unless asked for: `STARE_HISTORY_KEY_PROBE=1` in the
+    /// environment makes every key the panel receives log the code, the entry
+    /// count and the selection before and after. A probe that ran always would
+    /// grow the log on every arrow press for the rest of the app's life.
+    static let keyProbeEnabled = ProcessInfo.processInfo.environment["STARE_HISTORY_KEY_PROBE"] == "1"
+
     func handleKey(_ event: NSEvent) -> Bool {
         // Command and Control belong to the app's menus and its own shortcuts.
         guard event.modifierFlags.intersection([.command, .control]).isEmpty else { return false }
-        // The recorded probe for B10: what arrives, and where the selection was
-        // before and after. Kept as a Diag line so the next manual pass can read
-        // it instead of theorising about key mappings.
-        Diag.log(
-            "history key keyCode=\(event.keyCode) entries=\(model.entries.count) before=\(model.selectedIndex.map(String.init) ?? "nil")"
-        )
+        let probeIndex = model.selectedIndex.map(String.init) ?? "nil"
+        if Self.keyProbeEnabled {
+            Diag.log("history key keyCode=\(event.keyCode) entries=\(model.entries.count) before=\(probeIndex)")
+        }
         defer {
-            Diag.log("history key keyCode=\(event.keyCode) after=\(model.selectedIndex.map(String.init) ?? "nil")")
+            if Self.keyProbeEnabled {
+                Diag.log("history key keyCode=\(event.keyCode) after=\(model.selectedIndex.map(String.init) ?? "nil")")
+            }
         }
         switch event.keyCode {
         case 53: // Esc
