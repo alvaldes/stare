@@ -88,7 +88,7 @@ reopen it any time from the menu bar with **Setup Guide…**.
 | `⌥⇧W` | Open the whiteboard |
 | `⌥⇧M` | Point at things with the pointer highlight |
 | `⌥⇧P` | Pin your marks so clicks pass through |
-| `⌥⇧I` | Pin the latest capture as a floating image (draggable, resizable, lockable) — press it again to take the pin down |
+| `⌥⇧I` | Open the capture history — pick one to copy it to the clipboard; with the whiteboard open, the pick pastes it onto the current page instead |
 | `⌥⇧O` | Recognise the text and QR code in an area you drag — on-device, straight to the clipboard; the screen dims the moment you press, the pointer becomes the same crosshair the area capture uses, and a magnifier follows the drag so the exact pixel edge is visible; `Esc` or a second press cancels it |
 | `P` `H` `A` `L` `R` `O` | Pen, highlighter, arrow, line, rectangle, ellipse |
 | `T` `C` `B` `D` `F` `E` | Text, numbered step, blur, spotlight, laser, eraser |
@@ -111,15 +111,17 @@ reopen it any time from the menu bar with **Setup Guide…**.
 | Drawing | `D` arms the spotlight: drag a region and everything outside it dims — the region's ellipse stays clear and the dim fades away from it in one soft gradient, wider on a large region and tighter on a small one, settling at its deepest shade far from the light. While you are still dragging, the mark previews as a plain ellipse outline — the ellipse tool's own look, no dim on screen — and the dim paints the moment the mark is committed, so a capture always carries it. The spotlight is a mark like any other: undo, redo, the eraser, the pointer tool's move and the capture editor all treat it as one, it works on the whiteboard too, and it has no ink of its own — the number keys keep choosing inks while it is selected |
 | Whiteboard | `⌘←` `⌘→` change page (going past the last one adds a page) · `⌘B` flips the page between white and black · hold space and drag to pan (the pointer becomes a grabbing hand) · pinch, `⌘` + scroll or `⌘+`/`⌘−` zooms, `⌘0` resets pan and zoom |
 | Whiteboard | `S` captures the marks over the page colour, no Screen Recording needed · `Esc` closes the board and keeps the pages for the session |
-| Capture card | Hover keeps it on screen · click opens the editor · drag it into another app · the pin button in its corner floats the image as a borderless always-on-top window of its own, beside the card in the same screen corner — never in the middle of the display unless you drag it there: drag it anywhere, scroll to resize, ⌥-scroll to change its opacity, and its 📌, ✕ and 🔒 stay visible without hovering — 📌 (the pinned badge) and ✕ close it, 🔒 makes it click-through so you can work underneath it — and each one closes with its ✕ or its 📌 (or `⌥⇧I` takes the frontmost pin down); the pinned images stay on screen no matter what you open or close in Stare, and they never leave your machine |
+| Capture card | Hover keeps it on screen · the pin keeps the card there for good and out of the stack, and floats the image as a borderless always-on-top window of its own, beside the card in the same screen corner — never in the middle of the display unless you drag it there: drag it anywhere, scroll to resize, ⌥-scroll to change its opacity, and its 📌, ✕ and 🔒 stay visible without hovering — 📌 (the pinned badge) and ✕ close it, 🔒 makes it click-through so you can work underneath it · the close takes the card away · click opens the editor · drag it into another app · the pinned images stay on screen no matter what you open or close in Stare, and they never leave your machine |
 | Recognise text | Drag the area and the text it holds — and a QR code, if that is what you framed — goes straight to the clipboard: recognition runs on-device with Vision, nothing is uploaded, and everything proceeds without opening a drawing session; the pointer is the crosshair for the whole gesture (it comes back whatever way the gesture ends) and a magnifier follows the drag, showing the display as the gesture opened so the exact pixel edge is visible the way the ⇧S area drag's magnifier does; a missing Screen Recording grant, a selection with nothing in it, or a failed read each say so on screen instead of ever touching your clipboard |
+| Whiteboard | A capture picked in the history (`⌥⇧I`) pastes onto the current page — one image per page, a new paste replaces it — and it pans and zooms with the page, shows in captures and under blur marks, and lives for the session (never written to disk) · hold `⌥` and drag to move it or a corner to resize it, `⌫` removes it after an `⌥`-click selects it |
+| Capture history | Arrows move between captures · `↵` picks one (copies it to the clipboard) · `Esc` closes · Clear empties it |
 | Editor | Same tools and inks · `⌘Z` undo · `⇧⌘Z` redo · zoom and pan to annotate a fine detail: `⌘+`/`⌘−` zoom, `⌘0` resets to the fit, `⌘` + scroll or pinch zooms about the pointer, plain scroll or space-drag pans (the pointer becomes a hand) · tool keys never change · `Esc` cancels a crop, then closes · an applied crop stays editable: drag its edges to adjust it, and `⌘Z` returns the previous crop · drop or paste an image onto the window to stack it over the capture: hold `⌥` and drag to move it or a corner to resize it, `⌥`-click selects it, `⌫` removes it, `[` and `]` restack it, and what the canvas shows is exactly what saves — every step is one `⌘Z` (or `⇧⌘Z`) away |
 
 All of these — the four global shortcuts and each tool's key — can be
-rebound in Settings. Two shortcuts are fixed: `⌥⇧I` pins the latest
-capture — and takes the frontmost pin down again, so the keyboard can never
-stack what it cannot dismiss; the card's pin button is the way to keep
-several, and `⌥⇧O` recognises text and QR codes where you drag on-device.
+rebound in Settings. The card's own pin button is what floats a capture and
+keeps it on screen — press it again to take it down — while `⌥⇧I` opens the
+capture history and `⌥⇧O` recognises text and QR codes where you drag
+on-device.
 The pin's lock has no key: it is the 🔒 on the pin itself, which stays
 drawn and clickable even while locked. A fixed shortcut that cannot act
 right now — a pin with nothing captured yet — says so on screen instead of
@@ -135,7 +137,7 @@ applies immediately. The sections:
 
 - **General** — the drawing frame, which displays to draw on, where the palette opens, the toolbar's orientation and which screen edge it docks to, which tools it shows and in which order, how long the laser lasts, whether marks and board pages survive quitting Stare (until the machine restarts, on by default), launch at login, and update checks.
 - **Tools** — the ink drawing starts with, a shortcut for each tool, what a blur mark paints over what it covers (the audited gaussian blur or a randomized pixelate), and the palette's position reset.
-- **Shortcuts** — the four global shortcuts (`⌥⇧A`, `⌥⇧M`, `⌥⇧P`, `⌥⇧W`) with a key recorder and conflict checks.
+- **Shortcuts** — the five global shortcuts (`⌥⇧A`, `⌥⇧M`, `⌥⇧P`, `⌥⇧W`, `⌥⇧I`) with a key recorder and conflict checks.
 - **Pointer Highlight** — the style of the `⌥⇧M` highlight: five shapes (Ring, Squircle, Rhombus, Dot, Spotlight), size up to 240 pt, band width, border style (Solid or Dashed), opacity, glow, the click animation (Scale or Rotate), colour and idle fade, with a live preview drawn by the same renderer the overlay uses.
 - **Capture** — where captures go (the clipboard or a folder), the file format for folder saves, the file-name prefix and a name template for folder saves — leave the template empty for the prefix-based name, or build it from the tokens `{date}` (2026-11-21), `{time}` (14-05-33), `{app}` (the app you captured) and `{display}` (the display you captured); literal text may use letters, numbers, hyphen, underscore and dot, the extension (`.png`/`.jpg`) is added automatically, and an unknown token, an unsafe character, or an app or display name that isn't there falls back to the prefix-based name — no template can move the file out of the destination folder — whether a save is downscaled — off by default: a Retina capture can be written at its logical size (1×) or scaled down to a maximum width, the file only, never an upscale, and the clipboard always carries the full capture — whether a save carries a backdrop — off by default: optional padding (a transparent margin in pixels, 0–128), rounded corners (0–64, never more than half the capture) and a fixed soft shadow around the capture, composed before any downscale so the padding is never resampled on its own, the file only, and the clipboard always carries the capture exactly as it was — and the History pane: every capture the session delivered, newest first, each reopening in the editor by an Open click. The history is kept in memory only — nothing is saved to disk, and quitting Stare forgets it.
 - **Whiteboard** — the page colour a new board opens with — White, Black or System, which opens pages white in light mode and black in dark mode — how many pages it opens with, which displays the board covers (every one or only the active display), and whether its border is drawn.
@@ -143,7 +145,12 @@ applies immediately. The sections:
 - **About** — the version and one line about the app.
 
 All preferences persist together in one stored document, so an existing
-install keeps the pointer settings it already had.
+install keeps the pointer settings it already had. The capture history
+(`⌥⇧I`) keeps the newest 50 captures as PNG files in its own folder in
+Application Support (`…/Stare/CaptureHistory`), and the panel's **Clear**
+deletes them with the index. An image pasted from the history onto the
+whiteboard is the one exception to what comes back: like the pages it lives
+for the session only and is never written to disk.
 
 ## Questions
 
@@ -167,8 +174,10 @@ in it.
 <details>
 <summary>Where do my captures go?</summary>
 
-Each capture appears as a card in the corner of the screen. Copy it, save it,
-or drag it into another app. Stare does not upload anything.
+Each capture appears as a small card in the corner of the screen. Click it to
+open the editor, drag it into another app, or pin it: a pinned card stays
+exactly where you left it while later captures stack next to it, and the close
+button dismisses it. Stare does not upload anything.
 
 </details>
 

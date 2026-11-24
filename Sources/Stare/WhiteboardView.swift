@@ -128,6 +128,8 @@ class WhiteboardView: OverlayView {
         let transform: BoardTransform
         let scale: CGFloat
         let size: CGSize
+        let imageID: UUID?
+        let imageRect: CGRect?
     }
 
     /// Cache of the beneath image: dragging a blur mark repaints per frame,
@@ -135,11 +137,15 @@ class WhiteboardView: OverlayView {
     /// background, pan, scale or size change — all of which are in the key.
     private var beneathCache: (key: BeneathKey, image: CGImage)?
 
-    /// The page as it is rendered beneath `stroke`: page colour plus every
-    /// committed mark before it in draw order (the mark being dragged sits
-    /// above everything already committed). The pan is applied here the same
-    /// way the capture applies it, so the image covers view space and the
-    /// view's crop lands where the board shows the patch.
+    /// The page as it is rendered beneath `stroke`: page colour, the page's
+    /// image layer (T2b/S2) and every committed mark before it in draw order
+    /// (the mark being dragged sits above everything already committed). The
+    /// layer is composited into the base before the marks, exactly the way the
+    /// board capture does it, so the live view and the capture agree by
+    /// construction and a blur mark diffuses the image the way it diffuses
+    /// marks. The pan is applied here the same way the capture applies it, so
+    /// the image covers view space and the view's crop lands where the board
+    /// shows the patch.
     private func boardContentBeneath(_ stroke: Stroke) -> CGImage? {
         let committed = session.strokes
         let beneath: [Stroke]
@@ -153,27 +159,35 @@ class WhiteboardView: OverlayView {
         guard bounds.width >= 1, bounds.height >= 1 else { return nil }
         let scale = boardBlurScale
         let isDark = isDarkAppearance
+        let page = board.currentPage
         let key = BeneathKey(
             strokes: beneath,
-            background: board.currentPage.background,
+            background: page.background,
             isDark: isDark,
-            transform: board.currentPage.transform,
+            transform: page.transform,
             scale: scale,
-            size: bounds.size
+            size: bounds.size,
+            // Identity and rect, never the pixels: the cache is compared per
+            // paint, and CGImage equality is not per-frame work.
+            imageID: page.image?.id,
+            imageRect: page.image?.rect
         )
         if let cached = beneathCache, cached.key == key { return cached.image }
-        guard let base = board.currentPage.background.captureBase(
+        guard let base = page.background.captureBase(
             width: Int(bounds.width * scale),
             height: Int(bounds.height * scale),
             isDark: isDark
         ) else { return nil }
+        // The image layer is part of the content beneath every mark: into the
+        // base, before the marks composite, exactly as the capture does it.
+        let based = page.image?.composited(over: base, transform: page.transform, scale: scale) ?? base
         guard let image = MarkCompositor.composite(
             marks: beneath,
-            over: base,
+            over: based,
             scale: scale,
             diffusesContent: true,
-            offset: board.currentPage.offset,
-            zoom: board.currentPage.zoom
+            offset: page.offset,
+            zoom: page.zoom
         ) else { return nil }
         beneathCache = (key, image)
         return image
@@ -203,10 +217,33 @@ class WhiteboardView: OverlayView {
     /// under every mark (this runs before `drawMarks`), and their colour reads
     /// on a white and a black page and on a system-following one. Only the
     /// dirty rect's dots are enumerated, so a per-frame paint stays cheap.
+    /// Then the page's image layer (T2b/S2), above the colour and the grid and
+    /// beneath the marks — content, not chrome.
     override func drawBackground(in context: CGContext, dirty dirtyRect: NSRect) {
         context.setFillColor(board.currentPage.background.cgColor(isDark: isDarkAppearance))
         context.fill(bounds)
         drawDotGrid(in: context, dirty: dirtyRect)
+        drawPageImage(in: context)
+    }
+
+    /// The page's image layer in view space, through the page transform like
+    /// the marks — the view is flipped, so the top-left rect draws directly.
+    /// The dashed outline is the layer's selection chrome: view-only, never
+    /// captured (the capture composites the layer through
+    /// `BoardImage.composited`, not through this paint).
+    private func drawPageImage(in context: CGContext) {
+        guard let layer = board.currentPage.image else { return }
+        let rect = layer.viewRect(for: viewTransform)
+        guard rect.intersects(bounds) else { return }
+        context.draw(layer.image, in: rect)
+        if isBoardImageSelected {
+            context.saveGState()
+            context.setStrokeColor(CGColor(srgbRed: 0.25, green: 0.55, blue: 1, alpha: 1))
+            context.setLineWidth(1.5)
+            context.setLineDash(phase: 0, lengths: [4, 3])
+            context.stroke(rect.insetBy(dx: -1, dy: -1))
+            context.restoreGState()
+        }
     }
 
     private func drawDotGrid(in context: CGContext, dirty dirtyRect: NSRect) {
@@ -349,6 +386,72 @@ class WhiteboardView: OverlayView {
         Diag.log("board pan+zoom reset page=\(board.currentIndex + 1)")
     }
 
+    // MARK: - The page image layer (T2b/S2)
+
+    /// A capture picked in the history while the board is open: it becomes the
+    /// current page's image layer, centred in the visible area and clamped by
+    /// the model (`WhiteboardPages.paste`). The new layer takes the selection
+    /// so ⌫ can act on it right away — the editor's paste convention.
+    func pasteImage(_ image: CGImage) {
+        guard let layer = board.paste(image, inView: bounds) else {
+            Diag.log("board image paste refused \(image.width)x\(image.height)")
+            return
+        }
+        isBoardImageSelected = true
+        imageGesture = nil
+        needsDisplay = true
+        Diag.log("board image pasted \(image.width)x\(image.height) rect=\(layer.rect) page=\(board.currentIndex + 1)")
+    }
+
+    /// Whether the current page's image layer takes the keys and gestures.
+    private var isBoardImageSelected = false
+
+    /// The running image gesture: the interior move-s, a corner grip resize-s
+    /// — the capture editor's own ⌥ conventions, driven by the same grip and
+    /// resize rules (`EditorCropRule`) the editor drives its layers with.
+    private enum ImageGesture {
+        case move(grab: CGPoint)
+        case resize(handle: CropHandle, startViewRect: CGRect)
+    }
+
+    private var imageGesture: ImageGesture?
+
+    /// The page-space rect the gesture clamps against: the visible area where
+    /// the drag began, held fixed so the layer can never land off it.
+    private var imageGestureCanvas: CGRect = .zero
+
+    /// A ⌥ press over the layer claims it (the editor's convention): the grip
+    /// resize-s, the interior move-s, and the layer takes the selection so the
+    /// keys can act on it. A click with no layer under it falls through to
+    /// drawing — a board user's ⌥-click has no meaning anywhere else.
+    private func grabBoardImage(at viewPoint: CGPoint) -> Bool {
+        guard let layer = board.currentPage.image else { return false }
+        let viewRect = layer.viewRect(for: viewTransform)
+        let reach = EditorCropRule.defaultHandleReach
+        guard viewRect.insetBy(dx: -reach, dy: -reach).contains(viewPoint) else { return false }
+        isBoardImageSelected = true
+        imageGestureCanvas = viewTransform.rect(toPage: bounds)
+        if let handle = EditorCropRule.handle(at: viewPoint, on: viewRect) {
+            imageGesture = .resize(handle: handle, startViewRect: viewRect)
+        } else {
+            imageGesture = .move(grab: viewTransform.point(toPage: viewPoint))
+        }
+        needsDisplay = true
+        return true
+    }
+
+    /// ⌫ / Delete with the layer selected (and no mark selection to take it
+    /// first): the page's image layer goes away. The mark selection keeps its
+    /// documented ⌫ behaviour whenever it exists.
+    private func deleteBoardImageIfSelected() -> Bool {
+        guard isBoardImageSelected, selectedMarkIDs.isEmpty else { return false }
+        guard board.removePageImage() else { return false }
+        isBoardImageSelected = false
+        needsDisplay = true
+        Diag.log("board image deleted page=\(board.currentIndex + 1)")
+        return true
+    }
+
     // MARK: - Zooming (T5/S5)
 
     /// One zoom step from the keyboard: the same anchored zoom the pinch
@@ -408,8 +511,12 @@ class WhiteboardView: OverlayView {
 
     private func loadCurrentPage() {
         // The presented page changed: nothing of the old page's selection may
-        // survive, or handles would grab at marks that are not on the canvas.
+        // survive, or handles would grab at marks that are not on the canvas —
+        // and the image layer's selection and gesture die with it too, since
+        // the layer itself stays on its own page.
         clearSelection()
+        isBoardImageSelected = false
+        imageGesture = nil
         session = board.currentPage.session
         committedBounds.removeAll()
         needsDisplay = true
@@ -708,6 +815,9 @@ class WhiteboardView: OverlayView {
         lastPanPoint = nil
         isZoomScrolling = false
         scrollZoomGesture = ScrollZoom.Gesture()
+        // The image layer's in-flight state dies with the window too.
+        isBoardImageSelected = false
+        imageGesture = nil
     }
 
     // MARK: - Panning the endless canvas
@@ -730,6 +840,10 @@ class WhiteboardView: OverlayView {
             reassertCursor() // pan drag starts → closed hand (S3)
             return
         }
+        // ⌥ claims the page's image layer (T2b/S4): the editor's convention.
+        if event.modifierFlags.contains(.option), !event.modifierFlags.contains(.command) {
+            if grabBoardImage(at: convert(event.locationInWindow, from: nil)) { return }
+        }
         super.mouseDown(with: event)
     }
 
@@ -742,10 +856,39 @@ class WhiteboardView: OverlayView {
             lastPanPoint = point
             return
         }
+        // The image gesture's live application: the whole drag is ONE value
+        // change on the layer, applied per event and clamped by the model.
+        if let gesture = imageGesture, board.currentPage.image != nil {
+            let viewPoint = convert(event.locationInWindow, from: nil)
+            switch gesture {
+            case let .move(grab):
+                let pagePoint = viewTransform.point(toPage: viewPoint)
+                board.movePageImage(
+                    by: CGSize(width: pagePoint.x - grab.x, height: pagePoint.y - grab.y),
+                    clampedTo: imageGestureCanvas
+                )
+            case let .resize(handle, startViewRect):
+                // The resize runs in view space — the grip rules are the
+                // editor's — and lands clamped in page space.
+                let region = EditorCropRule.region(
+                    from: startViewRect, dragging: handle, to: viewPoint, in: bounds)
+                board.placePageImage(at: viewTransform.rect(toPage: region), clampedTo: imageGestureCanvas)
+            }
+            needsDisplay = true
+            return
+        }
         super.mouseDragged(with: event)
     }
 
     override func mouseUp(with event: NSEvent) {
+        if imageGesture != nil {
+            // The gesture is over: the value change already sits on the layer
+            // (applied live and clamped by the model). No journal step here —
+            // see the undo note on `deleteBoardImageIfSelected`.
+            imageGesture = nil
+            needsDisplay = true
+            return
+        }
         let wasPanning = isPanning
         if event.buttonNumber == 2 {
             isMiddlePanning = false
@@ -770,6 +913,9 @@ class WhiteboardView: OverlayView {
             return
         }
         let modifiers = event.modifierFlags
+        // ⌫ — with the page's image layer selected (and no mark selection to
+        // take the key first), the layer goes away.
+        if event.keyCode == 51 || event.keyCode == 117, deleteBoardImageIfSelected() { return }
         // ⌥← / ⌥→ reorder the current page inside the board.
         if modifiers.contains(.option), !modifiers.contains(.command) {
             switch event.charactersIgnoringModifiers {

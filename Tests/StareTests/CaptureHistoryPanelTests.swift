@@ -1,0 +1,249 @@
+import AppKit
+import SwiftUI
+import XCTest
+
+@testable import Stare
+
+/// Tests for the capture history panel (S2/S2a): the model's ordering, empty
+/// state and keyboard routing, the pick seam (default clipboard, injectable
+/// for T2b), and the panel's level above every other Stare surface.
+@MainActor
+final class CaptureHistoryPanelTests: XCTestCase {
+    private var temporaryDirectories: [URL] = []
+
+    override func tearDown() {
+        for directory in temporaryDirectories {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        temporaryDirectories = []
+        super.tearDown()
+    }
+
+    // MARK: Helpers
+
+    private func makeStoreDirectory() -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("stare-history-panel-tests-\(UUID().uuidString)", isDirectory: true)
+        try! FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        temporaryDirectories.append(directory)
+        return directory
+    }
+
+    private func makeImage(width: Int = 8, height: Int = 6) -> CGImage {
+        let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()!
+    }
+
+    private func makeStore(entries: Int = 0) -> CaptureHistoryStore {
+        let store = CaptureHistoryStore(directory: makeStoreDirectory())
+        for index in 0..<entries {
+            _ = store.add(makeImage(width: 10 + index, height: 8), date: Date(timeIntervalSince1970: TimeInterval(index + 1)))
+        }
+        return store
+    }
+
+    // MARK: Ordering and empty state
+
+    func testThePanelModelShowsNewestFirstAndStartsSelectedOnTheNewest() {
+        let store = makeStore(entries: 3)
+        let model = CaptureHistoryPanelModel(store: store, onPick: { _ in }, onClose: {})
+
+        model.refresh()
+
+        XCTAssertFalse(model.isEmpty)
+        XCTAssertEqual(model.entries.map(\.pixelWidth), [12, 11, 10], "newest capture first")
+        XCTAssertEqual(model.selectedIndex, 0)
+        XCTAssertEqual(model.selectedEntry?.pixelWidth, 12)
+    }
+
+    func testThePanelModelReportsAnEmptyStateWithNothingStored() {
+        let model = CaptureHistoryPanelModel(store: makeStore(), onPick: { _ in }, onClose: {})
+
+        model.refresh()
+
+        XCTAssertTrue(model.isEmpty)
+        XCTAssertNil(model.selectedIndex)
+        XCTAssertNil(model.selectedEntry)
+    }
+
+    // MARK: Keyboard navigation
+
+    func testArrowNavigationMovesTheSelectionAndClampsAtTheEnds() {
+        let model = CaptureHistoryPanelModel(store: makeStore(entries: 3), onPick: { _ in }, onClose: {})
+        model.refresh()
+
+        model.moveSelection(1)
+        XCTAssertEqual(model.selectedIndex, 1)
+        model.moveSelection(1)
+        model.moveSelection(1)
+        XCTAssertEqual(model.selectedIndex, 2, "the move clamps at the oldest entry")
+        model.moveSelection(-1)
+        XCTAssertEqual(model.selectedIndex, 1)
+        model.moveSelection(-1)
+        model.moveSelection(-1)
+        XCTAssertEqual(model.selectedIndex, 0, "the move clamps at the newest entry")
+    }
+
+    func testKeyboardNavigationDoesNothingOnAnEmptyHistory() {
+        let model = CaptureHistoryPanelModel(store: makeStore(), onPick: { _ in }, onClose: {})
+        model.refresh()
+
+        model.moveSelection(1)
+        model.pickSelected()
+
+        XCTAssertNil(model.selectedIndex)
+    }
+
+    // MARK: Picking
+
+    func testReturnPicksTheSelectedCaptureAndClosesThePanel() {
+        let store = makeStore(entries: 2)
+        var picked: CGImage?
+        var closeCount = 0
+        let model = CaptureHistoryPanelModel(
+            store: store,
+            onPick: { picked = $0 },
+            onClose: { closeCount += 1 }
+        )
+        model.refresh()
+        model.moveSelection(1)
+
+        model.pickSelected()
+
+        XCTAssertEqual(picked?.width, 10, "the selection's own capture (the older one) is picked, not the newest")
+        XCTAssertEqual(closeCount, 1)
+    }
+
+    func testTheDefaultDeliveryCopiesPNGAndTIFFToThePasteboard() {
+        NSPasteboard.general.clearContents()
+        CaptureHistoryPanel.copyToPasteboard(makeImage())
+
+        XCTAssertTrue(NSPasteboard.general.types?.contains(.png) ?? false)
+        XCTAssertTrue(NSPasteboard.general.types?.contains(.tiff) ?? false)
+    }
+
+    // MARK: Clear
+
+    func testThePanelClearButtonEmptiesTheModelAndTheStore() {
+        let store = makeStore(entries: 2)
+        let model = CaptureHistoryPanelModel(store: store, onPick: { _ in }, onClose: {})
+        model.refresh()
+
+        model.clearHistory()
+
+        XCTAssertTrue(model.isEmpty)
+        XCTAssertTrue(store.entries.isEmpty)
+        XCTAssertNil(model.selectedIndex)
+    }
+
+    // MARK: Level above every Stare surface
+
+    func testThePanelSitsAboveTheBoardTheToolbarAndTheCaptureCards() {
+        // Overlay/board windows: .screenSaver; the toolbar: +1; cards: +2.
+        let cardLevel = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 2)
+        XCTAssertGreaterThan(CaptureHistoryPanel.panelLevel.rawValue, cardLevel.rawValue)
+    }
+
+    // MARK: Placement
+
+    func testThePanelCentersOnTheScreenUnderThePointer() throws {
+        try XCTSkipIf(NSScreen.main == nil, "no primary screen in this environment")
+        let store = makeStore(entries: 1)
+        let panel = CaptureHistoryPanel(store: store)
+
+        panel.showPanel()
+
+        defer { panel.hide() }
+        guard let screen = NSScreen.main else {
+            XCTFail("guard already skipped the test")
+            return
+        }
+        XCTAssertTrue(screen.frame.contains(panel.frame), "the panel opens inside the primary screen")
+    }
+
+    // MARK: Pick route through the overlay (board open without a board view)
+
+    /// A real OverlayController with a real board, mirroring
+    /// WhiteboardClearRoutingTests' harness: the pick route runs through the
+    /// controller, which is what the panel's `onPick` calls. The view
+    /// returned is the one the controller's pick resolves — the board canvas
+    /// under the pointer, or the first live one, exactly `selfTestViews`'
+    /// order.
+    private func makeBoardController() throws -> (controller: OverlayController, view: WhiteboardView) {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "no screens: the board canvases need one")
+        // xctest runs without an initialized NSApplication: the controller's
+        // board lifecycle talks to NSApp, so create it here first.
+        _ = NSApplication.shared
+        let controller = OverlayController(captureService: CaptureService())
+        controller.toggleBoard()
+        guard controller.isBoardActive,
+              let boardView = controller.selfTestViews.compactMap({ $0 as? WhiteboardView }).first(where: {
+                  $0.window?.frame.contains(NSEvent.mouseLocation) == true
+              }) ?? controller.selfTestViews.compactMap({ $0 as? WhiteboardView }).first
+        else {
+            controller.toggleBoard()
+            throw XCTSkip("board canvas could not be created")
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        return (controller, boardView)
+    }
+
+    func testAPickWhileTheBoardIsOpenPastesOntoThePageAndNeverTouchesThePasteboard() throws {
+        let (controller, view) = try makeBoardController()
+        defer { controller.toggleBoard() }
+        NSPasteboard.general.clearContents()
+
+        controller.deliverHistoryPick(makeImage(width: 30, height: 20))
+
+        XCTAssertNotNil(view.board.currentPage.image, "the pick pastes the capture as the page's image layer")
+        XCTAssertFalse(
+            NSPasteboard.general.types?.contains(.png) ?? false,
+            "the board paste never also writes the clipboard"
+        )
+    }
+
+    func testAPickWithNoBoardOpenCopiesToThePasteboard() throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "no screens: the controller needs one")
+        _ = NSApplication.shared
+        let controller = OverlayController(captureService: CaptureService())
+        NSPasteboard.general.clearContents()
+
+        controller.deliverHistoryPick(makeImage())
+
+        XCTAssertTrue(NSPasteboard.general.types?.contains(.png) ?? false)
+    }
+
+    func testHidingTheCaptureHistoryHandsKeyFocusBackToTheSurfaceThatWasWorkingBeforeIt() throws {
+        let (controller, view) = try makeBoardController()
+        defer { controller.toggleBoard() }
+        guard let boardPanel = view.window else {
+            throw XCTSkip("the board canvas has no window")
+        }
+        XCTAssertEqual(boardPanel.firstResponder, view, "the board canvas owns focus before the history opens")
+
+        controller.toggleCaptureHistory()
+        XCTAssertTrue(controller.isCaptureHistoryVisible)
+        // Esc through the panel's real event path: it hides the panel and the
+        // focus comes back to the board canvas.
+        let escape = NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: controller.captureHistoryPanel.windowNumber, context: nil,
+            characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 53
+        )!
+        controller.captureHistoryPanel.sendEvent(escape)
+
+        XCTAssertFalse(controller.isCaptureHistoryVisible, "Esc closes the panel")
+        XCTAssertEqual(boardPanel.firstResponder, view, "the surface that was working before the panel is first responder again")
+    }
+}

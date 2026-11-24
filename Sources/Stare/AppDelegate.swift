@@ -139,6 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .pointerHighlight: { [weak self] in self?.overlay.togglePointer() },
             .pin: { [weak self] in self?.overlay.togglePin() },
             .whiteboard: { [weak self] in self?.overlay.toggleBoard() },
+            .captureHistory: { [weak self] in self?.overlay.toggleCaptureHistory() },
         ]
         var refused: (action: HotkeyAction, binding: HotkeyBinding)?
         for action in HotkeyAction.allCases {

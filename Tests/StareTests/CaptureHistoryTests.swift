@@ -131,5 +131,169 @@ final class CaptureHistoryPaneTests: XCTestCase {
         XCTAssertEqual(opened.count, 2)
         XCTAssertTrue(opened[0] === composed)
         XCTAssertTrue(opened[1] === composed)
+
+import AppKit
+import XCTest
+
+@testable import Stare
+
+/// Tests for the persisted capture history store (S2/S2a): Application
+/// Support layout, newest 50, newest-first order, clearing deletes the files,
+/// and a corrupt or partial index never breaks a fresh load.
+final class CaptureHistoryTests: XCTestCase {
+    private var temporaryDirectories: [URL] = []
+
+    override func tearDown() {
+        for directory in temporaryDirectories {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        temporaryDirectories = []
+        super.tearDown()
     }
-}
+
+    // MARK: Helpers
+
+    private func makeStoreDirectory() -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("stare-history-tests-\(UUID().uuidString)", isDirectory: true)
+        try! FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        temporaryDirectories.append(directory)
+        return directory
+    }
+
+    private func makeImage(width: Int = 8, height: Int = 6) -> CGImage {
+        let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()!
+    }
+
+    private func capturesDirectory(of directory: URL) -> URL {
+        directory.appendingPathComponent("captures", isDirectory: true)
+    }
+
+    private func indexURL(of directory: URL) -> URL {
+        directory.appendingPathComponent("index.json")
+    }
+
+    private func storedFileNames(in directory: URL) -> Set<String> {
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: capturesDirectory(of: directory).path)) ?? []
+        return Set(files)
+    }
+
+    // MARK: Order
+
+    func testEntriesAreNewestFirst() {
+        let directory = makeStoreDirectory()
+        let store = CaptureHistoryStore(directory: directory)
+
+        let first = store.add(makeImage(), date: Date(timeIntervalSince1970: 100))
+        let second = store.add(makeImage(), date: Date(timeIntervalSince1970: 200))
+        let third = store.add(makeImage(), date: Date(timeIntervalSince1970: 300))
+
+        XCTAssertEqual(store.entries.map(\.id), [third.id, second.id, first.id])
+    }
+
+    // MARK: Cap
+
+    func testStoreKeepsOnlyTheNewest50AndDeletesEvictedFiles() {
+        let directory = makeStoreDirectory()
+        let store = CaptureHistoryStore(directory: directory)
+
+        var added: [PersistedCaptureEntry] = []
+        for index in 0..<55 {
+            added.append(store.add(makeImage(width: 4 + index % 3, height: 5), date: Date(timeIntervalSince1970: TimeInterval(index))))
+        }
+
+        XCTAssertEqual(store.entries.count, 50)
+        // The newest 50 survive: the first five adds are evicted, the rest
+        // stay, newest first.
+        XCTAssertEqual(store.entries.map(\.id), added[5...].reversed().map(\.id))
+        XCTAssertEqual(storedFileNames(in: directory), Set(store.entries.map(\.fileName)))
+    }
+
+    // MARK: Clear
+
+    func testClearEmptiesTheEntriesAndDeletesTheStoredFiles() {
+        let directory = makeStoreDirectory()
+        let store = CaptureHistoryStore(directory: directory)
+        _ = store.add(makeImage(), date: Date(timeIntervalSince1970: 1))
+        _ = store.add(makeImage(), date: Date(timeIntervalSince1970: 2))
+
+        store.clear()
+
+        XCTAssertTrue(store.entries.isEmpty)
+        XCTAssertTrue(storedFileNames(in: directory).isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: indexURL(of: directory).path))
+    }
+
+    // MARK: Persistence
+
+    func testAFreshStoreInstanceSeesThePersistedEntriesAndImages() {
+        let directory = makeStoreDirectory()
+        let first = CaptureHistoryStore(directory: directory)
+        let older = first.add(makeImage(width: 10, height: 4), date: Date(timeIntervalSince1970: 1))
+        let newer = first.add(makeImage(width: 6, height: 12), date: Date(timeIntervalSince1970: 2))
+
+        let second = CaptureHistoryStore(directory: directory)
+
+        XCTAssertEqual(second.entries.map(\.id), [newer.id, older.id])
+        XCTAssertEqual(second.entries.map(\.pixelWidth), [6, 10])
+        XCTAssertEqual(second.entries.map(\.pixelHeight), [12, 4])
+        XCTAssertEqual(second.image(for: newer)?.width, 6)
+        XCTAssertEqual(second.image(for: older)?.height, 4)
+    }
+
+    // MARK: Corrupt or partial index
+
+    func testACorruptIndexLoadsAsEmptyAndTheStoreKeepsWorking() {
+        let directory = makeStoreDirectory()
+        _ = CaptureHistoryStore(directory: directory).add(makeImage(), date: Date(timeIntervalSince1970: 1))
+        try! Data("not an index".utf8).write(to: indexURL(of: directory))
+
+        let fresh = CaptureHistoryStore(directory: directory)
+
+        XCTAssertTrue(fresh.entries.isEmpty)
+        // The store keeps working: the next add rebuilds a valid index.
+        _ = fresh.add(makeImage(), date: Date(timeIntervalSince1970: 2))
+        XCTAssertEqual(CaptureHistoryStore(directory: directory).entries.count, 1)
+    }
+
+    func testEntriesWhoseFileIsMissingAreDroppedOnLoad() {
+        let directory = makeStoreDirectory()
+        let store = CaptureHistoryStore(directory: directory)
+        let older = store.add(makeImage(), date: Date(timeIntervalSince1970: 1))
+        _ = store.add(makeImage(), date: Date(timeIntervalSince1970: 2))
+        try! FileManager.default.removeItem(at: capturesDirectory(of: directory).appendingPathComponent(older.fileName))
+
+        let fresh = CaptureHistoryStore(directory: directory)
+
+        XCTAssertEqual(fresh.entries.count, 1)
+        XCTAssertEqual(fresh.entries.first?.date.timeIntervalSince1970, 2)
+    }
+
+    // MARK: Write failure never breaks the capture
+
+    func testAWriteFailureKeepsTheCaptureInMemoryForTheSessionAndLogsIt() {
+        let directory = makeStoreDirectory()
+        // Make the captures folder unusable: a regular file sits where the
+        // folder would be, so every PNG write fails.
+        try! Data().write(to: capturesDirectory(of: directory))
+
+        let store = CaptureHistoryStore(directory: directory)
+        let entry = store.add(makeImage(), date: Date(timeIntervalSince1970: 1))
+
+        // The capture stays in memory for the session: the panel can still
+        // show and hand it out.
+        XCTAssertEqual(store.entries.map(\.id), [entry.id])
+        XCTAssertNotNil(store.image(for: entry))
+        // Nothing was persisted: a fresh store sees nothing.
+        XCTAssertTrue(CaptureHistoryStore(directory: directory).entries.isEmpty)

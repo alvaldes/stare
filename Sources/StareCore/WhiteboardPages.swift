@@ -440,6 +440,13 @@ public struct BoardPage: Equatable, Sendable {
     /// Screen zoom of this page's canvas (T5/S5): `view = (page − offset) × zoom`.
     /// A view that never zooms keeps 1, where the mapping is the old rule.
     public var zoom: CGFloat
+    /// The page's ONE image layer (T2b/S2): a capture pasted from the history
+    /// (`⌥⇧I` with the board open). It draws above the page colour and beneath
+    /// the marks, in page space through `BoardImage`, so it pans and zooms
+    /// with the page, and every capture and blur includes it. One image per
+    /// page: pasting again replaces it. A session value like the pages
+    /// themselves — never written to the boot archive (see `persisted`).
+    public var image: BoardImage?
 
     /// The page's full view mapping, in one place: everything that maps between
     /// page space and view space reads this.
@@ -451,12 +458,14 @@ public struct BoardPage: Equatable, Sendable {
         session: DrawingSession = DrawingSession(),
         background: BoardBackground = .white,
         offset: CGSize = .zero,
-        zoom: CGFloat = 1
+        zoom: CGFloat = 1,
+        image: BoardImage? = nil
     ) {
         self.session = session
         self.background = background
         self.offset = offset
         self.zoom = zoom
+        self.image = image
     }
 }
 
@@ -602,12 +611,63 @@ public final class WhiteboardPages {
         pages[currentIndex].offset = .zero
         pages[currentIndex].zoom = 1
     }
+
+    // MARK: - The page image layer (T2b/S2)
+
+    /// Pastes `image` as the current page's image layer: centred in the
+    /// visible view area at the image's own pixel size, clamped into that
+    /// area by the editor's own clamp (`BoardImage.pasted`), stored in page
+    /// space so it pans and zooms with the page. One image per page: any
+    /// layer the page already carried is replaced. Returns the new layer, or
+    /// nil for a degenerate image.
+    @discardableResult
+    public func paste(_ image: CGImage, inView visibleViewRect: CGRect) -> BoardImage? {
+        guard image.width > 0, image.height > 0 else { return nil }
+        let layer = BoardImage.pasted(image, inView: visibleViewRect, transform: pages[currentIndex].transform)
+        pages[currentIndex].image = layer
+        return layer
+    }
+
+    /// Moves the current page's image layer by `delta` page points, clamped
+    /// into `visible` — the page-space rect the gesture clamps against (the
+    /// visible area, captured when the drag began). Returns whether it moved.
+    @discardableResult
+    public func movePageImage(by delta: CGSize, clampedTo visible: CGRect) -> Bool {
+        guard let layer = pages[currentIndex].image else { return false }
+        let destination = layer.rect.applying(CGAffineTransform(translationX: delta.width, y: delta.height))
+        return placePageImage(at: destination, clampedTo: visible)
+    }
+
+    /// Replaces the current page image layer's placement outright — a corner
+    /// resize drag's live application, or a move's destination — clamped into
+    /// `visible` by the same clamp a paste uses. Returns whether the page had
+    /// an image to place and the placement changed anything.
+    @discardableResult
+    public func placePageImage(at rect: CGRect, clampedTo visible: CGRect) -> Bool {
+        guard let layer = pages[currentIndex].image else { return false }
+        var updated = layer
+        updated.rect = CanvasComposition.clampedPlacement(rect, in: visible)
+        guard updated != layer else { return false }
+        pages[currentIndex].image = updated
+        return true
+    }
+
+    /// ⌫ — removes the current page's image layer. Returns whether there was
+    /// one to remove.
+    @discardableResult
+    public func removePageImage() -> Bool {
+        guard pages[currentIndex].image != nil else { return false }
+        pages[currentIndex].image = nil
+        return true
+    }
 }
 
 /// The persisted form of one board page (T10/S11): the page's marks (see
 /// `DrawingSession.persistedStrokes` — already without transient laser marks),
 /// its background, its pan offset and its zoom. The background rides as its
-/// raw value via `Codable`.
+/// raw value via `Codable`. The page's image layer (T2b/S2) is deliberately
+/// NOT here: it lives as long as the session, like the pages, and is never
+/// written to disk.
 public struct PersistedBoardPage: Codable, Equatable, Sendable {
     public var strokes: [PersistedStroke]
     public var background: BoardBackground

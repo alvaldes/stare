@@ -24,11 +24,13 @@ user gets.
 - Capture: a backdrop on folder saves, off by default — optional padding, rounded corners and a fixed soft shadow around the capture in Settings → Capture; the backdrop is composed before any downscale so the padding is never resampled on its own, sizes are clamped so a silly value can neither blank the capture nor grow the file enormous, and the clipboard always carries the capture exactly as it was
 - Settings: regrouped into Capture, Draw, Pointer, Board and System, with the bar, the overlay and the laser on panes of their own instead of inside General
 - Settings: the pointer highlight and the bar are previewed in a fixed stage above the controls, so a change is visible while you make it
+- Settings: the pointer preview is shorter, and the bar's Placement card fills the pane instead of stopping short of its right edge
 - Drawing: `⌘Z` brings back everything `Escape` cleared, and `⇧⌘Z` clears it again
 - Drawing: every tool shows its own cursor
 - Drawing: a blur mark can pixelate instead — one Redaction choice in Settings → Tools, and everything the mark touches saves exactly what it shows
 - Pointer tool: drag a box to select everything under it, `⇧`-click to add or remove a mark, and move the whole selection as one undoable step
 - Toolbar: a `⠇⠇` grip moves the bar and right-click puts it back
+- Toolbar: a vertical bar sits as far from the side edge as a horizontal one does from the top or bottom
 - Pointer Highlight: a fresh install starts on the rhombus with a dashed border, a fixed purple and 100 pt
 - Marks and board pages now survive quitting Stare and leaving the modes, until the machine restarts, with a Settings switch for the old ephemeral behaviour
 - Capture editor: choosing the crop only stages a rectangle — move or resize it as long as you like, then `↵` cuts it; `Esc` drops it and `⌘Z` returns the previous crop
@@ -62,6 +64,7 @@ user gets.
 
 - New logo: the open nib in the menu bar and as the app icon
 - Whiteboard: endless white and black pages, `⌥⇧W` to open, `⌘←`/`⌘→` to flip, pan with space or middle-drag
+- Whiteboard: with the board open, picking a capture in the history (`⌥⇧I`) pastes it onto the current page instead of copying — one image per page, it pans and zooms with the page, shows in captures and under blur marks, `⌥`-drag moves or resizes it and `⌫` removes it, and it lives for the session without ever being written to disk
 - Pin: `⌥⇧P` keeps the marks on screen while clicks pass through to the apps underneath
 - Redo: `⇧⌘Z` across displays, next to undo in the palette
 - Blur tool: `B` blurs the captured pixels of the area under the marks (needs Screen Recording; on the whiteboard it shows a neutral fallback)
@@ -75,3 +78,6 @@ user gets.
 - Eight inks, undo, and per-tool shortcuts
 - Capture the screen or an area with the marks composed in, and paste it anywhere from the capture card
 - Edit a capture in the built-in editor, with the same tools, inks and crop
+
+- Capture card: smaller, with a pin that keeps it exactly where you left it — later captures stack next to it instead of pushing it, and the cap that closes old cards never touches a pinned one — and a close that takes it away
+- Capture history: `⌥⇧I` opens a paste-style panel of your newest 50 captures — arrows to move, `↵` to copy one to the clipboard, Clear to empty it — and it stays on disk (Application Support) until you clear it, with the drawing mode yielding to the panel while the whiteboard keeps running under it

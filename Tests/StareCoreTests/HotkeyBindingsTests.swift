@@ -65,11 +65,42 @@ final class HotkeyBindingsTests: XCTestCase {
     }
 
     func testEveryActionIsPresentInStandard() {
-        XCTAssertEqual(HotkeyAction.allCases.count, 4)
+        XCTAssertEqual(HotkeyAction.allCases.count, 5)
         for action in HotkeyAction.allCases {
             XCTAssertEqual(HotkeyBindings.standard[action], action.defaultBinding)
             XCTAssertFalse(action.title.isEmpty)
         }
+    }
+
+    // MARK: The capture-history hotkey (T2a/S2)
+
+    func testCaptureHistoryDefaultsToOptionShiftI() {
+        let standard = HotkeyBindings.standard
+        XCTAssertEqual(
+            standard[.captureHistory],
+            HotkeyBinding(key: .i, modifiers: [.option, .shift]),
+            "the fifth hotkey ships as ⌥⇧I"
+        )
+        // It must not fight the existing defaults: every action still binds
+        // a pairwise distinct binding.
+        let values = HotkeyAction.allCases.map { standard[$0] }
+        XCTAssertEqual(Set(values).count, HotkeyAction.allCases.count)
+    }
+
+    func testAnOldStoredBlobWithoutTheCaptureHistoryKeyDecodesWithTheDefault() throws {
+        // A preferences blob written before the capture-history action
+        // existed: the four old keys only.
+        let json = """
+        {
+          "drawOverlay": {"key": "a", "modifiers": 10},
+          "pointerHighlight": {"key": "m", "modifiers": 10},
+          "pin": {"key": "p", "modifiers": 10},
+          "whiteboard": {"key": "w", "modifiers": 10}
+        }
+        """
+        let decoded = try JSONDecoder().decode(HotkeyBindings.self, from: Data(json.utf8))
+
+        XCTAssertEqual(decoded[.captureHistory], HotkeyAction.captureHistory.defaultBinding)
     }
 
     // MARK: Validation and refusal

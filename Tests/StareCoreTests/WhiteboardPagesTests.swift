@@ -804,4 +804,118 @@ final class WhiteboardPagesTests: XCTestCase {
         let decoded = try JSONDecoder().decode(PersistedBoardPage.self, from: data)
         XCTAssertEqual(decoded, page)
     }
+
+    // MARK: - T2b/S2: the page image layer
+
+    private func solidImage(_ width: Int, _ height: Int, _ red: CGFloat, _ green: CGFloat, _ blue: CGFloat) -> CGImage {
+        let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        context.setFillColor(CGColor(srgbRed: red, green: green, blue: blue, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()!
+    }
+
+    /// One image per page: a paste sets it, a second paste replaces it, and
+    /// every page keeps its own — coming back to a page finds its layer again.
+    func testPasteReplacesThePagesImageAndEveryPageKeepsItsOwn() {
+        let board = WhiteboardPages()
+        let first = solidImage(100, 80, 1, 0, 0)
+        let layer1 = board.paste(first, inView: CGRect(x: 0, y: 0, width: 800, height: 600))
+        XCTAssertNotNil(layer1)
+        XCTAssertEqual(board.currentPage.image, layer1)
+
+        let second = solidImage(100, 80, 0, 1, 0)
+        let layer2 = board.paste(second, inView: CGRect(x: 0, y: 0, width: 800, height: 600))
+        XCTAssertNotEqual(layer2?.id, layer1?.id, "the replacement is a new layer, not a mutation of the old one")
+        XCTAssertEqual(board.currentPage.image, layer2, "a new paste replaces the page's image")
+
+        board.selectNext()
+        XCTAssertNil(board.currentPage.image, "the layer is per page: a new one starts without it")
+        let layer3 = board.paste(second, inView: CGRect(x: 0, y: 0, width: 800, height: 600))
+        XCTAssertNotNil(layer3)
+        board.selectPrevious()
+        XCTAssertEqual(board.currentPage.image, layer2, "coming back to a page must not lose its layer")
+        board.selectNext()
+        XCTAssertEqual(board.currentPage.image, layer3)
+    }
+
+    func testTheImageLayerTravelsWithItsPageThroughReorderAndDelete() {
+        let board = WhiteboardPages()
+        let layer1 = board.paste(solidImage(100, 80, 1, 0, 0), inView: CGRect(x: 0, y: 0, width: 800, height: 600))
+        board.selectNext()
+        let layer2 = board.paste(solidImage(100, 80, 0, 1, 0), inView: CGRect(x: 0, y: 0, width: 800, height: 600))
+
+        board.selectPrevious()
+        XCTAssertTrue(board.moveCurrentPageRight(), "page 1 swaps with page 2")
+        XCTAssertEqual(board.currentIndex, 1)
+        XCTAssertEqual(board.currentPage.image, layer1, "the layer travels with its page")
+        XCTAssertEqual(board.pages[0].image, layer2)
+
+        XCTAssertTrue(board.deleteCurrentPage())
+        XCTAssertEqual(board.pages[0].image, layer2, "deleting a page leaves the other pages' layers alone")
+    }
+
+    func testMovePageImageClampsIntoTheVisibleRect() {
+        let board = WhiteboardPages()
+        let visible = CGRect(x: 0, y: 0, width: 800, height: 600)
+        _ = board.paste(solidImage(100, 80, 1, 0, 0), inView: visible)
+
+        // Dragging far past the right edge keeps a grabbable strip in reach.
+        XCTAssertTrue(board.movePageImage(by: CGSize(width: 500, height: 0), clampedTo: visible))
+        let rect = board.currentPage.image!.rect
+        XCTAssertEqual(rect.minX, visible.maxX - CanvasComposition.minimumGrabSide, accuracy: 0.01)
+        XCTAssertEqual(rect.minY, 260, accuracy: 0.01, "the other axis is untouched")
+        XCTAssertEqual(rect.width, 100, accuracy: 0.01, "a move never resizes")
+    }
+
+    func testPlacePageImageClampsTheResizeIntoTheVisibleRect() {
+        let board = WhiteboardPages()
+        let visible = CGRect(x: 0, y: 0, width: 800, height: 600)
+        _ = board.paste(solidImage(100, 80, 1, 0, 0), inView: visible)
+
+        // A corner drag that would put the layer off the page lands it
+        // clamped back inside.
+        XCTAssertTrue(board.placePageImage(at: CGRect(x: 900, y: 0, width: 100, height: 80), clampedTo: visible))
+        XCTAssertEqual(board.currentPage.image!.rect, CanvasComposition.clampedPlacement(
+            CGRect(x: 900, y: 0, width: 100, height: 80), in: visible
+        ))
+        XCTAssertEqual(board.currentPage.image!.rect.minX, visible.maxX - CanvasComposition.minimumGrabSide, accuracy: 0.01)
+    }
+
+    func testMoveAndPlaceAndRemoveRefuseWhenThePageHasNoImage() {
+        let board = WhiteboardPages()
+        let visible = CGRect(x: 0, y: 0, width: 800, height: 600)
+        XCTAssertFalse(board.movePageImage(by: CGSize(width: 10, height: 10), clampedTo: visible))
+        XCTAssertFalse(board.placePageImage(at: CGRect(x: 0, y: 0, width: 10, height: 10), clampedTo: visible))
+        XCTAssertFalse(board.removePageImage())
+
+        _ = board.paste(solidImage(10, 10, 1, 0, 0), inView: visible)
+        XCTAssertTrue(board.removePageImage())
+        XCTAssertNil(board.currentPage.image)
+        XCTAssertFalse(board.removePageImage(), "a second ⌫ has nothing left to remove")
+    }
+
+    /// Rule 6: the image layer lives as long as the session, like the pages —
+    /// it is never written to the boot archive.
+    func testPersistedBoardExcludesTheImageLayer() {
+        let board = WhiteboardPages()
+        board.adopt(drawnSession())
+        board.pan(by: CGSize(width: 12, height: 34))
+        _ = board.paste(solidImage(100, 80, 1, 0, 0), inView: CGRect(x: 0, y: 0, width: 800, height: 600))
+
+        let restored = WhiteboardPages(restoring: board.persistedBoard(), fallbackBackground: .white)
+        XCTAssertEqual(restored.pages.count, board.count, "the pages come back as always")
+        XCTAssertEqual(restored.currentPage.offset, board.currentPage.offset, "the pan comes back as always")
+        XCTAssertFalse(restored.currentPage.session.isEmpty, "the marks come back as always")
+        for page in restored.pages {
+            XCTAssertNil(page.image, "the image layer is a session value: the archive never stores it")
+        }
+    }
 }

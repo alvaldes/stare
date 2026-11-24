@@ -712,13 +712,12 @@ struct BarPane: View {
                 poolCard
             }
         } cards: {
+            // The placement card is the pool's sibling directly above it, so
+            // it takes the pane's whole width too (S4): the single-column cap
+            // stopped it 700 pt in and left the pane's right edge bare.
             VStack(spacing: SettingsMetrics.cardSpacing) {
                 placementCard
             }
-            // The bar is the stage above; the cards beside it are ordinary
-            // rows, so they take the same single-column cap as every other
-            // non-columnar pane.
-            .settingsSingleColumn()
         }
     }
 
@@ -1118,8 +1117,8 @@ private struct ToolsPane: View {
 
 // MARK: - Shortcuts
 
-/// The four global hotkeys (T9/S6): each row shows its binding and offers
-/// Record. The captured binding goes through `HotkeyBindings.assigning` —
+/// The five global hotkeys (T9/S6, T2a/S2): each row shows its binding and
+/// offers Record. The captured binding goes through `HotkeyBindings.assigning` —
 /// conflicts with another action and modifier-less keys refuse visibly — and
 /// then through the AppDelegate's registration path, which reports a system
 /// rejection (usually another app owning the shortcut) while the previous
@@ -1214,6 +1213,7 @@ private struct ShortcutsPane: View {
         case .pointerHighlight: "Shows the highlight that follows the pointer."
         case .pin: "Keeps the drawing on screen while you work in other apps."
         case .whiteboard: "Opens the opaque whiteboard."
+        case .captureHistory: "Opens the capture history; picking one copies it to the clipboard."
         }
     }
 }
@@ -1260,8 +1260,8 @@ private struct MarkerPane: View {
 
     /// The pane's stage (S4): the live preview sits pinned above the cards
     /// instead of ending the pane below them, so every size and colour change
-    /// is visible the moment it is made. The tiles keep the 168-point canvas
-    /// the preview has always shown.
+    /// is visible the moment it is made. The tiles keep the shorter
+    /// 120-point canvas (`PointerPreviewView.tileSide`).
     private var pointerStage: some View {
         SettingsStage(
             label: "Live preview",

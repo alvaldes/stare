@@ -132,12 +132,14 @@ public struct HotkeyBinding: Codable, Hashable, Sendable {
 }
 
 /// A global hotkey the app registers. The defaults reproduce today's
-/// bindings exactly (S7): ⌥⇧A draw, ⌥⇧M pointer, ⌥⇧P pin, ⌥⇧W whiteboard.
+/// bindings exactly (S7): ⌥⇧A draw, ⌥⇧M pointer, ⌥⇧P pin, ⌥⇧W whiteboard —
+/// plus ⌥⇧I for the capture history (T2a/S2).
 public enum HotkeyAction: String, Codable, CaseIterable, Sendable {
     case drawOverlay
     case pointerHighlight
     case pin
     case whiteboard
+    case captureHistory
 
     /// Human-readable name shown in Settings.
     public var title: String {
@@ -146,17 +148,19 @@ public enum HotkeyAction: String, Codable, CaseIterable, Sendable {
         case .pointerHighlight: "Pointer Highlight"
         case .pin: "Pin"
         case .whiteboard: "Whiteboard"
+        case .captureHistory: "Capture History"
         }
     }
 
     /// The binding the app ships with, identical to today's hard-coded
-    /// ⌥⇧A / ⌥⇧M / ⌥⇧P / ⌥⇧W.
+    /// ⌥⇧A / ⌥⇧M / ⌥⇧P / ⌥⇧W, plus ⌥⇧I for the capture history (T2a/S2).
     public var defaultBinding: HotkeyBinding {
         switch self {
         case .drawOverlay: HotkeyBinding(key: .a, modifiers: [.option, .shift])
         case .pointerHighlight: HotkeyBinding(key: .m, modifiers: [.option, .shift])
         case .pin: HotkeyBinding(key: .p, modifiers: [.option, .shift])
         case .whiteboard: HotkeyBinding(key: .w, modifiers: [.option, .shift])
+        case .captureHistory: HotkeyBinding(key: .i, modifiers: [.option, .shift])
         }
     }
 }
@@ -213,7 +217,7 @@ public struct HotkeyBindings: Codable, Equatable, Sendable {
     }
 
     private enum ActionKey: String, CodingKey {
-        case drawOverlay, pointerHighlight, pin, whiteboard
+        case drawOverlay, pointerHighlight, pin, whiteboard, captureHistory
     }
 
     /// Encodes each action's binding at the top level, the shape

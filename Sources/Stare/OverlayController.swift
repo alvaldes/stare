@@ -212,6 +212,15 @@ final class OverlayController {
     /// default so the pane can read what the overlay recorded (S4); detached
     /// instances keep tests off it.
     private let history: CaptureHistory
+    /// The persisted capture history (T2a/S2a) and its paste-style panel.
+    /// The panel's pick routes through `deliverHistoryPick`, the seam T2b
+    /// extends with a whiteboard route. Internal so the tests can drive the
+    /// panel's real event path and observe where its hiding sends focus.
+    private let captureHistoryStore = CaptureHistoryStore()
+    private(set) lazy var captureHistoryPanel = CaptureHistoryPanel(
+        store: captureHistoryStore,
+        onPick: { [weak self] image in self?.deliverHistoryPick(image) }
+    )
     private var cancellables: Set<AnyCancellable> = []
     private var keyMonitor: Any?
     private var pointerTimer: Timer?
@@ -242,6 +251,9 @@ final class OverlayController {
         } ?? { editor.open(image: $0, capture: $1, redactionStyle: $2) }
         self.state = EditorState(preferences: preferences)
         wireEditor()
+        // The panel's hiding hands key focus back to whatever was working
+        // before it: the open board's canvas, or the app underneath.
+        captureHistoryPanel.onHidden = { [weak self] in self?.captureHistoryPanelDidHide() }
         // Interest is asked from the canvases, so it is whatever the sessions
         // actually hold: only capture while the drawing overlay is active and
         // at least one display has a visible blur mark. The board never asks
@@ -459,6 +471,56 @@ final class OverlayController {
 
     func toggle() {
         if isActive { deactivate() } else { activate() }
+    }
+
+    // MARK: Capture history (T2a/S2)
+
+    /// Whether the capture history panel is on screen.
+    var isCaptureHistoryVisible: Bool { captureHistoryPanel.isVisible }
+
+    /// ⌥⇧I: opens and closes the capture history. An open drawing session
+    /// yields to the panel — it is closed first (S2) — while the whiteboard
+    /// stays: the panel floats above it and the board keeps its pages and
+    /// marks.
+    func toggleCaptureHistory() {
+        if captureHistoryPanel.isVisible {
+            captureHistoryPanel.hide()
+            return
+        }
+        if isActive { deactivate(restoringFocus: false) }
+        captureHistoryPanel.showPanel()
+        Diag.log("capture history visible entries=\(captureHistoryStore.entries.count)")
+    }
+    /// What picking a history item does with its image (T2b/S2): while the
+    /// whiteboard is open the pick pastes the capture onto the board's current
+    /// page as its image layer; otherwise the clipboard, the same PNG + TIFF
+    /// write the capture tail uses. The decision itself is the pure
+    /// `HistoryPickDestination`, so the routing is testable without windows.
+    /// While the board is open but has no view under the pick (a rebuild in
+    /// flight), the pick falls back to the clipboard instead of being
+    /// silently dropped. Internal for the tests, which drive it directly.
+    func deliverHistoryPick(_ image: CGImage) {
+        let boardView = isBoardActive ? boardCanvasUnderPointer()?.boardView : nil
+        switch HistoryPickDestination.destination(isBoardActive: isBoardActive, hasBoardView: boardView != nil) {
+        case .whiteboardPage:
+            boardView?.pasteImage(image)
+        case .clipboard:
+            copy(image, to: NSPasteboard.general)
+        }
+    }
+
+    /// The capture history panel hid (pick, Esc, the toggle-off): return key
+    /// focus to the surface that was working before it — the open board's
+    /// canvas, or the app underneath.
+    private func captureHistoryPanelDidHide() {
+        if isBoardActive {
+            for canvas in boardCanvases.values {
+                canvas.panel.makeFirstResponder(canvas.view)
+            }
+            boardCanvasUnderPointer()?.panel.makeKey()
+        } else {
+            restoreFrontmostApplication()
+        }
     }
 
     /// Leaves the marks on screen and stops taking input, so the next click lands
@@ -915,9 +977,18 @@ final class OverlayController {
             Diag.log("board capture failed: background base image")
             return
         }
+        // The page's image layer (T2b/S2) is part of everything the board
+        // shows: composited into the base beneath the marks, at exactly the
+        // pixels the view shows it at — the same page transform and scale the
+        // marks move by below.
+        let withImage = boardView.board.currentPage.image?.composited(
+            over: base,
+            transform: boardView.board.currentPage.transform,
+            scale: scale
+        ) ?? base
         guard let composed = MarkCompositor.composite(
             marks: canvas.view.session.strokes,
-            over: base,
+            over: withImage,
             scale: scale,
             diffusesContent: true,
             // The marks are stored in page space; the capture copies what the
@@ -952,6 +1023,11 @@ final class OverlayController {
         let preference = capturePreference()
         // One instant for the name and the pill, so they always agree.
         let date = Date()
+        // The history holds what the user actually got (T2a): every finished
+        // capture funnels through here, whatever destination the preference
+        // chose. A store write failure never breaks the capture — the store
+        // keeps it in memory for the session and logs.
+        captureHistoryStore.add(result, date: date)
         if case .folder = preference.destination, preference.destination.isUsablePath {
             // {app} must name what was captured, never Stare itself: during a capture from
             // the whiteboard or straight after the overlay opens, Stare can be the
