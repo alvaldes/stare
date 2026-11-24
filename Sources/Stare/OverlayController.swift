@@ -1657,6 +1657,14 @@ final class OverlayController {
         overCard && (type == .cursorUpdate || type == .mouseMoved)
     }
 
+    /// Whether an event came from one of the cards, which are windows of ours.
+    /// A move with no window at all is not a card's — it takes the same path as
+    /// a canvas move, so the swallow keeps holding for synthesized events.
+    static func isCardWindow(_ window: NSWindow?, cards: [CaptureCard]) -> Bool {
+        guard let window else { return false }
+        return cards.contains { $0 === window }
+    }
+
     /// The B9 probe, off unless asked for: `STARE_CURSOR_PROBE=1` logs what the
     /// monitor saw and decided while the pointer is over a card. Two blind passes
     /// at this cursor were enough; the next one reads instead of guessing.
@@ -1694,7 +1702,7 @@ final class OverlayController {
             // card's own hover is a consumer of moves too. What is dropped is the
             // move that would land on the canvas *because* the card does not take
             // mouse-moved events, which is the one that re-asserts the tool cursor.
-            let fromACard = self.cards.openCards.contains { $0 === event.window }
+            let fromACard = Self.isCardWindow(event.window, cards: self.cards.openCards)
             if Self.cursorProbeEnabled {
                 Diag.log(
                     "card cursor type=\(event.type.rawValue) swallow=\(!fromACard && Self.swallowsPointerEvent(event.type, overCard: true)) window=\(fromACard ? "card" : "other")"

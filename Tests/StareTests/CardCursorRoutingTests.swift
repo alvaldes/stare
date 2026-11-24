@@ -88,4 +88,27 @@ final class CardCursorRoutingTests: XCTestCase {
             XCTAssertFalse(OverlayController.swallowsPointerEvent(type, overCard: false))
         }
     }
+
+    /// A move with no window is not a card's, so it has to take the swallow path
+    /// like any canvas move: that is what keeps the arrow for synthesized events.
+    func testAWindowlessMoveIsNotACardMove() {
+        XCTAssertFalse(
+            OverlayController.isCardWindow(nil, cards: []),
+            "no window means no card, so the canvas-side path runs"
+        )
+        XCTAssertTrue(
+            OverlayController.swallowsPointerEvent(.mouseMoved, overCard: true),
+            "and that path swallows the move"
+        )
+    }
+
+    func testAWindowThatIsNotACardIsNotACardMove() throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "no screen in this environment")
+        let stranger = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 40, height: 40),
+            styleMask: [.borderless], backing: .buffered, defer: true
+        )
+        defer { stranger.close() }
+        XCTAssertFalse(OverlayController.isCardWindow(stranger, cards: []))
+    }
 }
