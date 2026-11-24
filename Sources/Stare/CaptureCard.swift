@@ -1,10 +1,20 @@
 import AppKit
 
-/// A capture, shown as a card in the corner: hover extends its life, click copies
-/// again, and it can be dragged straight into another app.
+/// A capture, shown as a card in the corner: hover extends its life, click opens
+/// the editor, the pin fixes it in place, the close dismisses it, and it can be
+/// dragged straight into another app (S1).
 final class CaptureCard: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
+
+    private let cardView: CaptureCardView
+
+    /// S1: a pinned card stops counting for the stack and ignores its dismiss
+    /// timer, so it stays exactly where the user left it.
+    var isPinned: Bool {
+        get { cardView.isPinned }
+        set { cardView.isPinned = newValue }
+    }
 
     init(
         image: CGImage,
@@ -13,6 +23,18 @@ final class CaptureCard: NSPanel {
         onPinRequested: @escaping (CGImage, NSScreen?) -> Void
     ) {
         let size = CaptureCardView.preferredSize(for: image)
+        let view = CaptureCardView(
+            image: image,
+            onOpen: { onOpen(image) },
+            onClose: {
+                onDismiss()
+            }
+        )
+        // T4/S6: the pin action carries the image and the card's own screen,
+        // resolved where it actually happens — on the card. The same press also
+        // flips the card's own pinned state (S1), so the plate's mark and the
+        // cap follow the pin instead of being a second, silent story.
+        cardView = view
         super.init(
             contentRect: CGRect(origin: .zero, size: size),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -20,6 +42,8 @@ final class CaptureCard: NSPanel {
             defer: false
         )
 
+        // Above the drawing layer and the palettes: a capture card is a result
+        // the user asked for, so nothing Stare draws may cover it (S1).
         level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 2)
         collectionBehavior = [.fullScreenAuxiliary, .stationary, .ignoresCycle]
         isOpaque = false
@@ -30,35 +54,68 @@ final class CaptureCard: NSPanel {
         animationBehavior = .none
         becomesKeyOnlyIfNeeded = true
 
-        let view = CaptureCardView(
-            image: image,
-            onOpen: { onOpen(image) },
-            onClose: { [weak self] in
-                self?.close()
-                onDismiss()
-            }
-        )
-        // T4/S6: the pin action carries the image and the card's own screen,
-        // resolved where it actually happens — on the card.
+        contentView = view
+        setContentSize(size)
+
+        // Wired after `super.init`: the closure reads the card's own screen, so
+        // it cannot exist before the panel does.
         view.onPin = { [weak self] in
             guard let self else { return }
             onPinRequested(image, self.screen)
         }
-        contentView = view
-        setContentSize(size)
     }
 }
 
+/// The card's plate: the thumbnail with the pin and close controls on its top
+/// right corner, all of it one drag source for dragging into another app.
 final class CaptureCardView: NSView, NSDraggingSource {
-    static let thumbnailMaxSize = CGSize(width: 260, height: 170)
+    /// S1: the card shrank. It used to cap the thumbnail at 260×170 with an 8 pt
+    /// backdrop, which made a small result look like a window; 190×126 keeps the
+    /// capture readable and the card a card.
+    static let thumbnailMaxSize = CGSize(width: 190, height: 126)
+    /// Backdrop kept around the thumbnail, in points.
+    static let plateInset: CGFloat = 6
+    /// A tall or small capture never makes the plate narrower than this.
+    static let minimumContentWidth: CGFloat = 132
+
     static let dismissDelay: TimeInterval = 5
     static let hoverDismissDelay: TimeInterval = 3
+
+    static let pinButtonIdentifier = "captureCard.pin"
+    static let closeButtonIdentifier = "captureCard.close"
 
     private let image: CGImage
     private let onOpen: () -> Void
     private let onClose: () -> Void
+    private let pinButton: CaptureCardControlButton
+    private let closeButton: CaptureCardControlButton
     private var dismissTimer: Timer?
+    private var hasBeenHovered = false
     private var isHovered = false
+
+    /// S1: pinned means the timer never takes it away and the controller never
+    /// moves it. The pin's symbol and the plate's accent follow the state.
+    var isPinned = false {
+        didSet {
+            guard isPinned != oldValue else { return }
+            pinButton.isPinned = isPinned
+            needsDisplay = true
+            rescheduleDismiss()
+            Diag.log("card pinned=\(isPinned)")
+        }
+    }
+
+    /// When the card may take itself away, and for how long: pinned never, hover
+    /// never, and a card the pointer has left gets the shorter grace. A pure
+    /// policy so the timer and its tests read the same rule.
+    static func autoDismissDelay(
+        isPinned: Bool,
+        isHovered: Bool,
+        hasBeenHovered: Bool
+    ) -> TimeInterval? {
+        if isPinned || isHovered { return nil }
+        return hasBeenHovered ? hoverDismissDelay : dismissDelay
+    }
 
     static func preferredSize(for image: CGImage) -> CGSize {
         let imageSize = CGSize(width: image.width, height: image.height)
@@ -71,21 +128,40 @@ final class CaptureCardView: NSView, NSDraggingSource {
             width: (imageSize.width * scale).rounded(),
             height: (imageSize.height * scale).rounded()
         )
-        return CGSize(width: max(thumbnail.width, 160) + 16, height: thumbnail.height + 16)
+        return CGSize(
+            width: max(thumbnail.width, minimumContentWidth) + plateInset * 2,
+            height: thumbnail.height + plateInset * 2
+        )
     }
 
-    /// The pin button's rect, in the card's own top-down coordinates: a round
-    /// 16pt control at the top-right corner of the plate, over the thumbnail.
-    /// One truth for the drawing and the hit test.
-    static func pinButtonRect(in bounds: NSRect) -> NSRect {
-        let size: CGFloat = 16
-        let inset: CGFloat = 6
-        return NSRect(
-            x: bounds.maxX - inset - size,
-            y: inset,
-            width: size,
-            height: size
+    init(image: CGImage, onOpen: @escaping () -> Void, onClose: @escaping () -> Void) {
+        self.image = image
+        self.onOpen = onOpen
+        self.onClose = onClose
+        pinButton = CaptureCardControlButton(
+            symbol: "pin",
+            accessibilityLabel: "Pin the card open",
+            identifier: Self.pinButtonIdentifier
         )
+        closeButton = CaptureCardControlButton(
+            symbol: "xmark",
+            accessibilityLabel: "Close the card",
+            identifier: Self.closeButtonIdentifier
+        )
+        super.init(frame: CGRect(origin: .zero, size: Self.preferredSize(for: image)))
+        wantsLayer = true
+        layer?.cornerRadius = 10
+        layer?.masksToBounds = true
+
+        pinButton.target = self
+        pinButton.action = #selector(togglePin)
+        closeButton.target = self
+        closeButton.action = #selector(closeTapped)
+        addSubview(pinButton)
+        addSubview(closeButton)
+
+        rescheduleDismiss()
+        Diag.log("card shown \(image.width)x\(image.height)")
     }
 
     @available(*, unavailable)
@@ -95,35 +171,48 @@ final class CaptureCardView: NSView, NSDraggingSource {
 
     override var isFlipped: Bool { true }
 
-    override func mouseUp(with event: NSEvent) {
-        pinButtonPressed = false
+    // MARK: - Controls
+
+    /// The controls ride the plate's top-right corner, the close last so the
+    /// destructive one is not the one under a stray click.
+    override func layout() {
+        super.layout()
+        let side = CaptureCardControlButton.side
+        let inset = Self.plateInset
+        closeButton.frame = CGRect(
+            x: bounds.width - inset - side,
+            y: inset,
+            width: side,
+            height: side
+        )
+        pinButton.frame = CGRect(
+            x: closeButton.frame.minX - 4 - side,
+            y: inset,
+            width: side,
+            height: side
+        )
+    }
+
+    /// T4/S6: what the pin target does beyond its own state — the owner floats
+    /// the captured image as a window of its own from here.
+    var onPin: (() -> Void)?
+
+    @objc private func togglePin() {
+        isPinned.toggle()
+        onPin?()
+    }
+
+    @objc private func closeTapped() {
+        dismissTimer?.invalidate()
+        dismissTimer = nil
+        onClose()
     }
 
     // MARK: - Hover
 
-    /// The card's own pin affordance (T4/S6), wired by the owner: floats the
-    /// captured image instead of opening the editor. Untouched by the click
-    /// that opens the editor — two actions, two regions of the card.
-    var onPin: (() -> Void)?
-    /// Whether the press started on the pin button, so a drag begun there
-    /// does not drag the card out on the button's own spot.
-    private var pinButtonPressed = false
-
-    init(image: CGImage, onOpen: @escaping () -> Void, onClose: @escaping () -> Void) {
-        self.image = image
-        self.onOpen = onOpen
-        self.onClose = onClose
-        super.init(frame: CGRect(origin: .zero, size: Self.preferredSize(for: image)))
-        wantsLayer = true
-        layer?.cornerRadius = 10
-        layer?.masksToBounds = true
-        scheduleDismiss(after: Self.dismissDelay)
-        Diag.log("card shown \(image.width)x\(image.height)")
-    }
-
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        for area in trackingAreas { removeTrackingArea(area) }
+        for area in trackingAreas where area.owner === self { removeTrackingArea(area) }
         addTrackingArea(
             NSTrackingArea(
                 rect: bounds,
@@ -136,19 +225,27 @@ final class CaptureCardView: NSView, NSDraggingSource {
 
     override func mouseEntered(with event: NSEvent) {
         isHovered = true
-        dismissTimer?.invalidate()
-        dismissTimer = nil
+        hasBeenHovered = true
+        rescheduleDismiss()
     }
 
     override func mouseExited(with event: NSEvent) {
         isHovered = false
-        scheduleDismiss(after: Self.hoverDismissDelay)
+        rescheduleDismiss()
     }
 
-    private func scheduleDismiss(after delay: TimeInterval) {
+    /// Arms the dismiss timer from `autoDismissDelay`, which owns the policy:
+    /// pinned and hovered cards get no timer at all.
+    private func rescheduleDismiss() {
         dismissTimer?.invalidate()
+        dismissTimer = nil
+        guard let delay = Self.autoDismissDelay(
+            isPinned: isPinned,
+            isHovered: isHovered,
+            hasBeenHovered: hasBeenHovered
+        ) else { return }
         dismissTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
-            guard let self, !self.isHovered else { return }
+            guard let self, !self.isHovered, !self.isPinned else { return }
             self.onClose()
         }
     }
@@ -168,7 +265,7 @@ final class CaptureCardView: NSView, NSDraggingSource {
         context.addPath(plate)
         context.fillPath()
 
-        let inset: CGFloat = 8
+        let inset = Self.plateInset
         let target = CGRect(
             x: inset,
             y: inset,
@@ -183,27 +280,13 @@ final class CaptureCardView: NSView, NSDraggingSource {
         context.draw(image, in: target)
         context.restoreGState()
 
-        drawPinButton(in: context)
-    }
-
-    /// The pin affordance over the thumbnail's top-right corner (T4/S6): a
-    /// translucent round button with a pin glyph, always visible so the card's
-    /// second action is discoverable without depending on a hover.
-    private func drawPinButton(in context: CGContext) {
-        let rect = Self.pinButtonRect(in: bounds)
-        let circle = CGPath(ellipseIn: rect, transform: nil)
-        context.setFillColor(CGColor(gray: 0.05, alpha: isHovered ? 0.85 : 0.7))
-        context.addPath(circle)
-        context.fillPath()
-        guard let glyph = NSImage(systemSymbolName: "pin.fill", accessibilityDescription: "pin") else { return }
-        let point = NSPoint(x: rect.midX - glyph.size.width / 2, y: rect.midY - glyph.size.height / 2)
-        let tinted = NSImage(size: glyph.size, flipped: false) { _ in
-            glyph.draw(in: NSRect(origin: .zero, size: glyph.size))
-            NSColor.white.set()
-            NSRect(origin: .zero, size: glyph.size).fill(using: .sourceAtop)
-            return true
+        // A pinned card says so on the plate itself, not only on the pin.
+        if isPinned {
+            context.setStrokeColor(CGColor(red: 0.36, green: 0.66, blue: 1, alpha: 0.95))
+            context.setLineWidth(2)
+            context.addPath(plate)
+            context.strokePath()
         }
-        tinted.draw(at: point, from: .zero, operation: .sourceOver, fraction: 1)
     }
 
     // MARK: - Actions
@@ -212,24 +295,10 @@ final class CaptureCardView: NSView, NSDraggingSource {
         // Clicking opens the editor, like the reference app: the pasteboard
         // already has the image, so copy is not the interesting action here.
         dismissTimer?.invalidate()
-        let point = convert(event.locationInWindow, from: nil)
-        if Self.pinButtonRect(in: bounds).contains(point) {
-            // T4/S6: the pin button floats the image instead of opening the
-            // editor — its own entry point, distinct from the click.
-            pinButtonPressed = true
-            onPin?()
-            return
-        }
         onOpen()
     }
 
     override func mouseDragged(with event: NSEvent) {
-        // A drag that started on the pin button carries the image out — but
-        // the button's action has already floated the image, so the card's
-        // own drag stays off the button.
-        guard !pinButtonPressed else { return }
-        let point = convert(event.locationInWindow, from: nil)
-        guard !Self.pinButtonRect(in: bounds).contains(point) else { return }
         let provider = NSImage(cgImage: image, size: bounds.size)
         let item = NSDraggingItem(pasteboardWriter: provider)
         item.setDraggingFrame(bounds, contents: provider)
@@ -259,52 +328,127 @@ final class CaptureCardView: NSView, NSDraggingSource {
     }
 }
 
-/// Keeps capture cards stacked in the corner of the display they came from.
+/// One of the card's corner controls: a template symbol on a dark disc, so it
+/// reads over any capture without a bezel that would make the card a window.
+final class CaptureCardControlButton: NSButton {
+    static let side: CGFloat = 22
+
+    var isPinned = false {
+        didSet { image = Self.symbol(isPinned ? "pin.fill" : "pin") }
+    }
+
+    init(symbol: String, accessibilityLabel: String, identifier: String) {
+        super.init(frame: CGRect(x: 0, y: 0, width: Self.side, height: Self.side))
+        image = Self.symbol(symbol)
+        imagePosition = .imageOnly
+        isBordered = false
+        bezelStyle = .shadowlessSquare
+        contentTintColor = .white
+        toolTip = accessibilityLabel
+        setAccessibilityLabel(accessibilityLabel)
+        self.identifier = NSUserInterfaceItemIdentifier(identifier)
+        wantsLayer = true
+        layer?.cornerRadius = Self.side / 2
+        layer?.backgroundColor = NSColor(white: 0, alpha: 0.55).cgColor
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("CaptureCardControlButton is created in code only")
+    }
+
+    private static func symbol(_ name: String) -> NSImage? {
+        let configuration = NSImage.SymbolConfiguration(pointSize: 10, weight: .bold)
+        return NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(configuration)
+    }
+}
+
+/// Where the cards stand on a display: the pure part of the controller, so the
+/// stacking rule is pinned without a window.
+enum CaptureCardLayout {
+    /// Gap the stack keeps from the visible frame's corner.
+    static let margin: CGFloat = 20
+    /// Gap between stacked cards.
+    static let gap: CGFloat = 10
+
+    /// The origin for a card of `cardSize` in the bottom-right corner, above
+    /// `stackedSizes` — the cards already stacked there, oldest first. Pinned
+    /// cards are not stacked: they keep the frame the user left them in, so a
+    /// later capture lands on the unpinned ones only (S1).
+    static func nextOrigin(
+        visibleFrame: CGRect,
+        cardSize: CGSize,
+        stackedSizes: [CGSize]
+    ) -> CGPoint {
+        let stackedHeight = stackedSizes.reduce(0) { $0 + $1.height + gap }
+        return CGPoint(
+            x: (visibleFrame.maxX - cardSize.width - margin).rounded(),
+            y: (visibleFrame.minY + margin + stackedHeight).rounded()
+        )
+    }
+}
+
+/// Keeps capture cards stacked in the corner of the display they came from, and
+/// keeps every pinned one exactly where it is (S1).
 final class CaptureCardController {
     var onOpen: ((CGImage) -> Void)?
-    /// The pin entry point (T4/S6): arrives with the image the card shows and
-    /// the screen the card lives on, so the floating window lands near what
-    /// the user pinned.
+    /// T4/S6: arrives with the image the card shows and the screen the card
+    /// lives on, so the floating window lands near what the user pinned.
     var onPin: ((CGImage, NSScreen?) -> Void)?
-    private var cards: [CaptureCard] = []
-    /// Read by tests, which close the cards they open.
-    var openCards: [CaptureCard] { cards }
-    private let maximumCards = 4
+
+    /// S1: the cap counts the cards that may still go away by themselves. A
+    /// pinned card never counts and is never closed, so pinning one is a way to
+    /// keep a result on screen while more captures arrive.
+    static let maximumUnpinnedCards = 4
+
+    private(set) var cards: [CaptureCard] = []
 
     func show(_ image: CGImage, on screen: NSScreen?) {
         var card: CaptureCard!
         card = CaptureCard(
             image: image,
             onOpen: { [weak self] image in self?.onOpen?(image) },
-            onDismiss: { [weak self] in self?.cards.removeAll { $0 === card } },
+            onDismiss: { [weak self] in
+                self?.cards.removeAll { $0 === card }
+                card.close()
+            },
             onPinRequested: { [weak self] image, screen in self?.onPin?(image, screen) }
         )
         cards.append(card)
-
-        while cards.count > maximumCards {
-            let oldest = cards.removeFirst()
-            oldest.close()
-        }
-
+        evictOverflow()
         position(card, on: screen)
         card.orderFrontRegardless()
     }
 
+    /// Closes the oldest unpinned cards past the cap. Pinned ones are skipped
+    /// over, never closed, so the cap can only shrink the part of the stack that
+    /// was going to disappear on its own anyway.
+    private func evictOverflow() {
+        var unpinned = cards.reduce(0) { $0 + ($1.isPinned ? 0 : 1) }
+        var index = 0
+        while unpinned > Self.maximumUnpinnedCards, index < cards.count {
+            let candidate = cards[index]
+            guard !candidate.isPinned else {
+                index += 1
+                continue
+            }
+            cards.remove(at: index)
+            candidate.close()
+            unpinned -= 1
+        }
+    }
+
     private func position(_ card: CaptureCard, on screen: NSScreen?) {
         guard let screen = screen ?? NSScreen.main else { return }
-        let visible = screen.visibleFrame
-        let margin: CGFloat = 20
-        let gap: CGFloat = 10
-
-        var bottom = visible.minY + margin
-        for existing in cards where existing !== card {
-            bottom += existing.frame.height + gap
-        }
-
+        let stacked = cards
+            .filter { $0 !== card && !$0.isPinned }
+            .map(\.frame.size)
         card.setFrameOrigin(
-            CGPoint(
-                x: (visible.maxX - card.frame.width - margin).rounded(),
-                y: bottom.rounded()
+            CaptureCardLayout.nextOrigin(
+                visibleFrame: screen.visibleFrame,
+                cardSize: card.frame.size,
+                stackedSizes: stacked
             )
         )
     }

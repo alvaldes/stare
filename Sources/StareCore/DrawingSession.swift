@@ -212,7 +212,6 @@ public struct DrawingSession: Equatable, Sendable {
         fill: Bool = false,
         arrowHead: ArrowHeadStyle = .open,
         now: Date = Date(),
-        now: Date = Date(),
         redactionStyle: RedactionStyle = .blur
     ) -> Stroke {
         guard !tool.isSelection else {
