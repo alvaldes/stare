@@ -334,15 +334,14 @@ final class PinnedImageWindowTests: XCTestCase {
         XCTAssertTrue(screen.visibleFrame.contains(cardWindow.frame), "\(cardWindow.frame) outside \(screen.visibleFrame)")
 
         let view = try XCTUnwrap(cardWindow.contentView as? CaptureCardView)
-        // pinButtonRect is top-down (the card is flipped); the event's
-        // locationInWindow is bottom-up — convert the point before pressing.
-        let pinRect = CaptureCardView.pinButtonRect(in: view.bounds)
-        let pinPointInWindow = CGPoint(
-            x: pinRect.midX,
-            y: view.bounds.height - pinRect.midY
+        // The card carries real buttons now, so the press goes to the pin
+        // control itself instead of a hit-tested rect.
+        let pinButton = try XCTUnwrap(
+            view.subviews.compactMap { $0 as? NSButton }.first {
+                $0.identifier?.rawValue == CaptureCardView.pinButtonIdentifier
+            }
         )
-        view.mouseDown(with: mouseEvent(.leftMouseDown, at: pinPointInWindow, window: cardWindow))
-        view.mouseUp(with: mouseEvent(.leftMouseUp, at: pinPointInWindow, window: cardWindow))
+        pinButton.performClick(nil)
         XCTAssertEqual(pinnedImages.count, 1, "the pin button floats the image")
         XCTAssertEqual(opened, 0, "the pin button never opens the editor")
 

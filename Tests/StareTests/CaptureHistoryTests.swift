@@ -131,9 +131,8 @@ final class CaptureHistoryPaneTests: XCTestCase {
         XCTAssertEqual(opened.count, 2)
         XCTAssertTrue(opened[0] === composed)
         XCTAssertTrue(opened[1] === composed)
-
-import AppKit
-import XCTest
+    }
+}
 
 @testable import Stare
 
@@ -297,3 +296,5 @@ final class CaptureHistoryTests: XCTestCase {
         XCTAssertNotNil(store.image(for: entry))
         // Nothing was persisted: a fresh store sees nothing.
         XCTAssertTrue(CaptureHistoryStore(directory: directory).entries.isEmpty)
+    }
+}

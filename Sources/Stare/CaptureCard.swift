@@ -415,6 +415,8 @@ final class CaptureCardController {
     static let maximumUnpinnedCards = 4
 
     private(set) var cards: [CaptureCard] = []
+    /// Read by tests, which close the cards they open.
+    var openCards: [CaptureCard] { cards }
 
     func show(_ image: CGImage, on screen: NSScreen?) {
         var card: CaptureCard!
