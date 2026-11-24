@@ -1072,6 +1072,11 @@ final class OverlayController {
         // the History pane remembers and reopens.
         history.record(result, at: date)
         cards.show(result, on: screen(for: displayID))
+        // A capture ends the drawing mode (owner's call): the result is what was
+        // asked for, so the overlay gives way instead of staying over the card it
+        // just produced. Every capture path — display, area and window — delivers
+        // through here, so the exit happens once and in one place.
+        if isActive { deactivate(restoringFocus: false) }
     }
 
     /// Today's pasteboard write, extracted unchanged: both types, because
@@ -1655,7 +1660,10 @@ final class OverlayController {
                   CardCursor.isOverCard(NSEvent.mouseLocation, cardFrames: self.cards.visibleCardFrames)
             else { return event }
             NSCursor.arrow.set()
-            return event
+            // A `cursorUpdate` is the canvas's chance to set the tool cursor, and
+            // it arrives after this monitor: swallowing it here is what keeps the
+            // arrow on the card on the board, where the tool cursor used to win.
+            return event.type == .cursorUpdate ? nil : event
         }
     }
 

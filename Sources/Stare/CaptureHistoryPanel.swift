@@ -352,14 +352,14 @@ struct CaptureHistoryPanelContent: View {
                         .padding(.horizontal, 14)
                         .padding(.bottom, 14)
                     }
-                    // The arrow keys move the model's selection, so the grid has
-                    // to follow it: without this the selection walked off the
-                    // viewport and the keys read as dead while Return kept
-                    // copying whatever they had selected (B10).
+                    // Minimal scroll, not `anchor: .center`: centring on every
+                    // move pins the selected cell to the middle of the panel, so
+                    // the highlight stays put and the captures slide under it —
+                    // the keys read as scrolling without moving the focus (B10).
                     .onChange(of: model.selectedIndex) { _, selected in
                         guard let selected, model.entries.indices.contains(selected) else { return }
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            proxy.scrollTo(model.entries[selected].id, anchor: .center)
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            proxy.scrollTo(model.entries[selected].id)
                         }
                     }
                 }

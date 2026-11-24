@@ -75,6 +75,10 @@ final class CaptureCardView: NSView, NSDraggingSource {
     static let thumbnailMaxSize = CGSize(width: 190, height: 126)
     /// Backdrop kept around the thumbnail, in points.
     static let plateInset: CGFloat = 6
+    /// The thumbnail's own rounding: concentric with the plate's 10 pt corner at
+    /// a 6 pt inset, so the picture sits inside the card instead of squaring it
+    /// off.
+    static let thumbnailCornerRadius: CGFloat = 5
     /// A tall or small capture never makes the plate narrower than this.
     static let minimumContentWidth: CGFloat = 132
 
@@ -284,6 +288,12 @@ final class CaptureCardView: NSView, NSDraggingSource {
             height: bounds.height - inset * 2
         )
         context.saveGState()
+        // The capture takes the plate's rounding: concentric with it, so the
+        // thumbnail never shows a square corner inside a rounded card.
+        context.addPath(
+            CGPath(roundedRect: target, cornerWidth: Self.thumbnailCornerRadius, cornerHeight: Self.thumbnailCornerRadius, transform: nil)
+        )
+        context.clip()
         // The image comes top-down; this view is flipped, so flip it back.
         context.translateBy(x: 0, y: target.midY)
         context.scaleBy(x: 1, y: -1)
