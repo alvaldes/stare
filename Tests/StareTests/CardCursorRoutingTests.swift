@@ -71,4 +71,21 @@ final class CardCursorRoutingTests: XCTestCase {
         controller.activate()
         XCTAssertFalse(controller.cursorSkipsTheCard(at: insideTheCard, cardFrames: []))
     }
+
+    /// The canvas re-asserts its cursor on the move as well as on the cursor
+    /// update, so the arrow only holds if both are dropped over a card.
+    func testTheMoveAndTheCursorUpdateAreBothDroppedOverACard() {
+        XCTAssertTrue(OverlayController.swallowsPointerEvent(.cursorUpdate, overCard: true))
+        XCTAssertTrue(OverlayController.swallowsPointerEvent(.mouseMoved, overCard: true))
+        XCTAssertFalse(
+            OverlayController.swallowsPointerEvent(.mouseEntered, overCard: true),
+            "entering still has to reach the canvas: it is not a cursor re-assertion"
+        )
+    }
+
+    func testNothingIsDroppedOffACard() {
+        for type in [NSEvent.EventType.cursorUpdate, .mouseMoved, .mouseEntered] {
+            XCTAssertFalse(OverlayController.swallowsPointerEvent(type, overCard: false))
+        }
+    }
 }

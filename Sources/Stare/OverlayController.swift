@@ -1650,6 +1650,18 @@ final class OverlayController {
         toolbarCursorMonitor = nil
     }
 
+    /// Which pointer events must be dropped while the pointer is over a card: the
+    /// canvas re-asserts its cursor on the move as well as on the cursor update,
+    /// so only swallowing both keeps the arrow (B9).
+    static func swallowsPointerEvent(_ type: NSEvent.EventType, overCard: Bool) -> Bool {
+        overCard && (type == .cursorUpdate || type == .mouseMoved)
+    }
+
+    /// The B9 probe, off unless asked for: `STARE_CURSOR_PROBE=1` logs what the
+    /// monitor saw and decided while the pointer is over a card. Two blind passes
+    /// at this cursor were enough; the next one reads instead of guessing.
+    static let cursorProbeEnabled = ProcessInfo.processInfo.environment["STARE_CURSOR_PROBE"] == "1"
+
     /// Whether the pointer over a capture card keeps the arrow, in either live
     /// mode: the overlay sets its own crosshair and the board sets its tool
     /// cursor, and over a card neither may win (B9). `openBoard` sets
@@ -1673,16 +1685,23 @@ final class OverlayController {
         cardCursorMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.mouseMoved, .mouseEntered, .cursorUpdate]
         ) { [weak self] event in
-            guard let self,
-                  self.cursorSkipsTheCard(at: NSEvent.mouseLocation, cardFrames: self.cards.visibleCardFrames)
-            else { return event }
+            guard let self else { return event }
+            let overCard = self.cursorSkipsTheCard(
+                at: NSEvent.mouseLocation, cardFrames: self.cards.visibleCardFrames
+            )
+            guard overCard else { return event }
+            if Self.cursorProbeEnabled {
+                Diag.log(
+                    "card cursor type=\(event.type.rawValue) swallow=\(Self.swallowsPointerEvent(event.type, overCard: true)) window=\(event.window === self.cards.openCards.first ? "card" : "other")"
+                )
+            }
             NSCursor.arrow.set()
-            // Only this over-a-card branch swallows anything: the canvas handles a
-            // `cursorUpdate` after this monitor and would set the tool cursor over
-            // the card again, so that one event is dropped here. Moves and entries
-            // pass through untouched, and so does every event off a card (the
-            // guard above already returned for those).
-            return event.type == .cursorUpdate ? nil : event
+            // Both the move and the cursor update have to be dropped: the canvas
+            // re-asserts its tool cursor on either, and dropping only the update
+            // is why the board kept the tool cursor after the overlay gave way.
+            // A move over a card belongs to the card anyway — it is a window of
+            // ours sitting on top of that stretch of canvas.
+            return Self.swallowsPointerEvent(event.type, overCard: true) ? nil : event
         }
     }
 
