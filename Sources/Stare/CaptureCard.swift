@@ -418,6 +418,11 @@ final class CaptureCardController {
     /// Read by tests, which close the cards they open.
     var openCards: [CaptureCard] { cards }
 
+    /// The cards on screen, in screen coordinates: the overlay's cursor path
+    /// consults them so a card keeps the arrow while the drawing layer holds a
+    /// crosshair over the rest of the display (B9).
+    var visibleCardFrames: [CGRect] { cards.filter(\.isVisible).map(\.frame) }
+
     func show(_ image: CGImage, on screen: NSScreen?) {
         var card: CaptureCard!
         card = CaptureCard(

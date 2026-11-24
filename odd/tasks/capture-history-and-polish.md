@@ -80,3 +80,17 @@ B3, B5 and B6 are defects in what T2b just shipped, not new wishes; B1, B2, B4, 
   with it — `PinnedImageHotkeyDefaults` and its registration are gone — so the
   card's pin button and the menu's Pin Image are the whole path to float a pin and
   take it down again. The one fixed binding left is the history's.
+
+- **L15** (owner instruction, verbatim): "estan super-yolo asi que dale sigue y avisame cuando termines".
+  Both defects were worked to the probes L13 recorded, and both turned out to sit where the probe said.
+  **B9** is the drawing layer, not the card: the overlay sets one crosshair for a whole display, so the
+  card's own tracking area never wins. The rule now lives in `StareCore.CardCursor.isOverCard` and the
+  controller re-answers the arrow from a monitor (`installCardCursorMonitor`) while the pointer sits
+  inside a visible card's frame, through a new `CaptureCardController.visibleCardFrames` seam; five
+  tests pin the comparison. The look itself still wants a human eye over a card in drawing mode and on
+  the board.
+  **B10** was not routing: `handleKey` maps 123/126/124/125 and two tests already drive those codes
+  through `panel.sendEvent`, so the model moved and Return picked what nobody could see. The grid did
+  not follow the selection, so it walked out of the viewport. The panel now scrolls the selected cell
+  to the middle on every selection change, and `handleKey` logs keyCode, entry count and the selection
+  before and after, which is the probe L13 asked for and the thing to read on the next manual pass.

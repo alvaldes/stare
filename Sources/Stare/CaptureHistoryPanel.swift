@@ -119,6 +119,15 @@ final class CaptureHistoryPanel: NSPanel {
     func handleKey(_ event: NSEvent) -> Bool {
         // Command and Control belong to the app's menus and its own shortcuts.
         guard event.modifierFlags.intersection([.command, .control]).isEmpty else { return false }
+        // The recorded probe for B10: what arrives, and where the selection was
+        // before and after. Kept as a Diag line so the next manual pass can read
+        // it instead of theorising about key mappings.
+        Diag.log(
+            "history key keyCode=\(event.keyCode) entries=\(model.entries.count) before=\(model.selectedIndex.map(String.init) ?? "nil")"
+        )
+        defer {
+            Diag.log("history key keyCode=\(event.keyCode) after=\(model.selectedIndex.map(String.init) ?? "nil")")
+        }
         switch event.keyCode {
         case 53: // Esc
             hide()
@@ -327,14 +336,26 @@ struct CaptureHistoryPanelContent: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
-                    LazyVGrid(columns: columns, spacing: 10) {
-                        ForEach(Array(model.entries.enumerated()), id: \.element.id) { index, entry in
-                            CaptureHistoryCell(model: model, index: index, entry: entry)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVGrid(columns: columns, spacing: 10) {
+                            ForEach(Array(model.entries.enumerated()), id: \.element.id) { index, entry in
+                                CaptureHistoryCell(model: model, index: index, entry: entry)
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 14)
+                    }
+                    // The arrow keys move the model's selection, so the grid has
+                    // to follow it: without this the selection walked off the
+                    // viewport and the keys read as dead while Return kept
+                    // copying whatever they had selected (B10).
+                    .onChange(of: model.selectedIndex) { _, selected in
+                        guard let selected, model.entries.indices.contains(selected) else { return }
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            proxy.scrollTo(model.entries[selected].id, anchor: .center)
                         }
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 14)
                 }
             }
         }

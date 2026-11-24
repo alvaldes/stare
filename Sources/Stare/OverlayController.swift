@@ -170,6 +170,8 @@ final class OverlayController {
     /// cursor never survives a hover over the bar. Installed while the bar is
     /// on screen, removed when it goes away, so nothing stale is left behind.
     private var toolbarCursorMonitor: Any?
+    /// Re-answers the pointer while it is over a capture card (B9).
+    private var cardCursorMonitor: Any?
     private var previousApplication: NSRunningApplication?
     private let captureService: ScreenCapturing
     /// The one preferences owner (T6 slice 1), kept so the capture tail can
@@ -656,6 +658,7 @@ final class OverlayController {
         NSCursor.crosshair.set()
         showToolbar()
         installKeyMonitor()
+        installCardCursorMonitor()
         Diag.log("activate displays=\(canvases.count) active=\(NSApp.isActive)")
 
         // Activation is asynchronous: re-assert once it settles so the panels
@@ -688,6 +691,7 @@ final class OverlayController {
         tearDownCanvases()
         liveFrames.stop()
         removeKeyMonitor()
+        removeCardCursorMonitor()
         if restoringFocus { restoreFrontmostApplication() }
         NSCursor.arrow.set()
         Diag.log("deactivate")
@@ -774,6 +778,7 @@ final class OverlayController {
         NSCursor.crosshair.set()
         showToolbar()
         installKeyMonitor()
+        installCardCursorMonitor()
         Diag.log("board open displays=\(boardCanvases.count)")
 
         DispatchQueue.main.async { [weak self] in
@@ -809,6 +814,7 @@ final class OverlayController {
         pageOfMark.removeAll()
         liveFrames.stop()
         removeKeyMonitor()
+        removeCardCursorMonitor()
         if restoringFocus { restoreFrontmostApplication() }
         NSCursor.arrow.set()
         Diag.log("board close pages kept=\(boards.count)")
@@ -1633,6 +1639,28 @@ final class OverlayController {
     private func removeToolbarCursorMonitor() {
         if let monitor = toolbarCursorMonitor { NSEvent.removeMonitor(monitor) }
         toolbarCursorMonitor = nil
+    }
+
+    /// Watches the pointer for the capture cards (B9). The drawing layer sets
+    /// one crosshair for a whole display, so a card's own tracking area never
+    /// wins against it; re-answering the arrow on every event is what the bar's
+    /// monitor already does for its own cursor. `CardCursor` owns the rule.
+    private func installCardCursorMonitor() {
+        guard cardCursorMonitor == nil else { return }
+        cardCursorMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.mouseMoved, .mouseEntered, .cursorUpdate]
+        ) { [weak self] event in
+            guard let self, self.isActive,
+                  CardCursor.isOverCard(NSEvent.mouseLocation, cardFrames: self.cards.visibleCardFrames)
+            else { return event }
+            NSCursor.arrow.set()
+            return event
+        }
+    }
+
+    private func removeCardCursorMonitor() {
+        if let monitor = cardCursorMonitor { NSEvent.removeMonitor(monitor) }
+        cardCursorMonitor = nil
     }
 
     private var toolbarMode: String?
