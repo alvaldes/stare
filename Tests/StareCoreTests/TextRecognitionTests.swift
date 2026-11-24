@@ -158,4 +158,113 @@ final class TextRecognitionTests: XCTestCase {
         XCTAssertEqual(TextRecognitionHotkeyDefaults.displayName, "⌥⇧O")
         XCTAssertEqual(TextRecognitionHotkeyDefaults.binding, HotkeyBinding(key: .o, modifiers: [.option, .shift]))
     }
+
+    // MARK: - The surface state machine
+
+    func testAPressFromIdleOpensTheSurface() {
+        var machine = TextSelectionSurfaceMachine()
+        XCTAssertEqual(machine.phase, .idle)
+        XCTAssertEqual(machine.send(.hotkeyPressed), .opened)
+        XCTAssertEqual(machine.phase, .inviting)
+    }
+
+    func testAPressWhileTheSurfaceIsUpCancelsItVisibly() {
+        // A second press while the surface is open ends the gesture: the
+        // outcome is visible (the surface closes) — the shortcut is never
+        // left dead behind an open surface.
+        var machine = TextSelectionSurfaceMachine(phase: .inviting)
+        XCTAssertEqual(machine.send(.hotkeyPressed), .close(cancelled: true))
+        XCTAssertEqual(machine.phase, .closing)
+
+        var dragging = TextSelectionSurfaceMachine(phase: .dragging)
+        XCTAssertEqual(dragging.send(.hotkeyPressed), .close(cancelled: true))
+        XCTAssertEqual(dragging.phase, .closing)
+
+        // A press during teardown is owned by the teardown, not the hotkey.
+        var closing = TextSelectionSurfaceMachine(phase: .closing)
+        XCTAssertEqual(closing.send(.hotkeyPressed), .ignored)
+    }
+
+    func testEscapeCancelsWhileTheSurfaceIsUp() {
+        var inviting = TextSelectionSurfaceMachine(phase: .inviting)
+        XCTAssertEqual(inviting.send(.escapePressed), .close(cancelled: true))
+        XCTAssertEqual(inviting.phase, .closing)
+
+        var dragging = TextSelectionSurfaceMachine(phase: .dragging)
+        XCTAssertEqual(dragging.send(.escapePressed), .close(cancelled: true))
+
+        var closing = TextSelectionSurfaceMachine(phase: .closing)
+        XCTAssertEqual(closing.send(.escapePressed), .ignored)
+        XCTAssertEqual(closing.phase, .closing)
+    }
+
+    func testADragMovesTheSurfaceIntoDraggingInPlace() {
+        var machine = TextSelectionSurfaceMachine(phase: .inviting)
+        XCTAssertEqual(machine.send(.dragStarted), .beganDrag)
+        XCTAssertEqual(machine.phase, .dragging)
+        // A second drag-start inside a drag is nothing new.
+        XCTAssertEqual(machine.send(.dragStarted), .ignored)
+        XCTAssertEqual(machine.phase, .dragging)
+    }
+
+    func testAStrayClickCancelsTheGestureFromAnyLivingPhase() {
+        // A bare click — before a drag, or a mouseUp whose rect misses the
+        // 4×4 minimum — is not a selection: the gesture ends cancelled.
+        var inviting = TextSelectionSurfaceMachine(phase: .inviting)
+        XCTAssertEqual(inviting.send(.clickDismissed), .close(cancelled: true))
+
+        var dragging = TextSelectionSurfaceMachine(phase: .dragging)
+        XCTAssertEqual(dragging.send(.clickDismissed), .close(cancelled: true))
+        XCTAssertEqual(dragging.phase, .closing)
+    }
+
+    func testACommittedSelectionClosesTheSurfaceForDelivery() {
+        var machine = TextSelectionSurfaceMachine(phase: .dragging)
+        XCTAssertEqual(machine.send(.selectionCommitted), .close(cancelled: false))
+        XCTAssertEqual(machine.phase, .closing)
+        // There is nothing to commit before a drag starts.
+        var inviting = TextSelectionSurfaceMachine(phase: .inviting)
+        XCTAssertEqual(inviting.send(.selectionCommitted), .ignored)
+    }
+
+    func testAnIdleTimeoutDismissesOnlyBeforeADragStarts() {
+        // The idling surface is the safety net for a shortcut the system
+        // cannot see: it closes itself only while the user has committed
+        // nothing — never mid-drag.
+        var inviting = TextSelectionSurfaceMachine(phase: .inviting)
+        XCTAssertEqual(inviting.send(.idleTimedOut), .close(cancelled: true))
+
+        var dragging = TextSelectionSurfaceMachine(phase: .dragging)
+        XCTAssertEqual(dragging.send(.idleTimedOut), .ignored)
+        XCTAssertEqual(dragging.phase, .dragging, "a drag is never interrupted by idling")
+    }
+
+    func testTheSurfaceClosingResetsTheMachineToIdleFromAnyPhase() {
+        // The teardown is the ground truth: whatever phase the machine was
+        // in, once the surface is closed the next press opens fresh.
+        for phase in [TextSelectionSurfacePhase.inviting, .dragging, .closing] {
+            var machine = TextSelectionSurfaceMachine(phase: phase)
+            XCTAssertEqual(machine.send(.surfaceClosed), .reverted)
+            XCTAssertEqual(machine.phase, .idle)
+        }
+        var idle = TextSelectionSurfaceMachine()
+        XCTAssertEqual(idle.send(.surfaceClosed), .ignored)
+        XCTAssertEqual(idle.phase, .idle)
+    }
+
+    func testTheInstructionCopyShowsOnlyWhileInviting() {
+        XCTAssertEqual(
+            TextRecognitionSurfaceCopy.instruction(for: .inviting),
+            "Drag over text to copy it · Esc to cancel")
+        for phase in [TextSelectionSurfacePhase.idle, .dragging, .closing] {
+            XCTAssertEqual(
+                TextRecognitionSurfaceCopy.instruction(for: phase), "",
+                "the drag itself and the teardown carry no instruction copy")
+        }
+        XCTAssertGreaterThan(TextRecognitionSurfaceCopy.idleDismissAfter, 0)
+    }
+
+    func testPointerOnNoDisplayIsSaidInThePill() {
+        XCTAssertEqual(TextRecognitionFeedback.noDisplay.title, "No display under the pointer")
+    }
 }

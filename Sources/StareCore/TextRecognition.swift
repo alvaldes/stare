@@ -132,6 +132,7 @@ public enum TextRecognitionFeedback: Equatable, Sendable {
     case permissionMissing
     case nothingFound
     case failed
+    case noDisplay
 
     public var title: String {
         switch self {
@@ -141,6 +142,130 @@ public enum TextRecognitionFeedback: Equatable, Sendable {
             "No text found"
         case .failed:
             "Text recognition failed"
+        case .noDisplay:
+            "No display under the pointer"
         }
     }
+}
+
+/// The lifecycle of the OCR selection surface, as a pure state machine
+/// (idle → inviting → dragging → closing) so the AppKit glue stays thin and
+/// every decision about who shows what and how the gesture ends is testable
+/// without a window.
+public enum TextSelectionSurfacePhase: Equatable, Sendable {
+    /// Nothing is on screen; the shortcut answers normally.
+    case idle
+    /// The surface is up and visible — dim veil, crosshair, instruction —
+    /// waiting for the drag to start.
+    case inviting
+    /// A drag is under way; the rectangle follows the pointer.
+    case dragging
+    /// The gesture is ending: the glue tears the surface down.
+    case closing
+}
+
+/// What the user (or the hotkey) can do to the surface.
+public enum TextSelectionSurfaceInput: Equatable, Sendable {
+    case hotkeyPressed
+    case dragStarted
+    case escapePressed
+    /// A mouseUp whose rect is below the 4×4 minimum — or a bare click —
+    /// ends the gesture cancelled.
+    case clickDismissed
+    /// A worthy drag finished; the surface closes and the selection lands.
+    case selectionCommitted
+    /// The surface has sat through its whole idle budget without the user
+    /// committing to a drag — the safety net for a dismissal channel the
+    /// system cannot see.
+    case idleTimedOut
+    /// The surface's teardown completed: the machine is back to idle and the
+    /// next press opens fresh. The ground truth behind every phase.
+    case surfaceClosed
+}
+
+/// The effect the glue must carry out after one input.
+public enum TextSelectionSurfaceEffect: Equatable, Sendable {
+    /// idle → inviting: open the surface on the pointer's display.
+    case opened
+    /// inviting → dragging: an in-surface visual change only.
+    case beganDrag
+    /// anything → closing: tear the surface down; `cancelled` is false only
+    /// when a worthy selection was committed.
+    case close(cancelled: Bool)
+    /// The input does not apply in the current phase.
+    case ignored
+    /// The teardown completed: the machine is back to idle.
+    case reverted
+}
+
+public struct TextSelectionSurfaceMachine: Equatable, Sendable {
+    public private(set) var phase: TextSelectionSurfacePhase
+
+    public init(phase: TextSelectionSurfacePhase = .idle) {
+        self.phase = phase
+    }
+
+    public mutating func send(_ input: TextSelectionSurfaceInput) -> TextSelectionSurfaceEffect {
+        switch input {
+        case .hotkeyPressed:
+            switch phase {
+            case .idle:
+                phase = .inviting
+                return .opened
+            case .inviting, .dragging:
+                // Never leave the shortcut dead behind an open surface: a
+                // second press is a visible cancel.
+                phase = .closing
+                return .close(cancelled: true)
+            case .closing:
+                return .ignored
+            }
+        case .dragStarted:
+            guard phase == .inviting else { return .ignored }
+            phase = .dragging
+            return .beganDrag
+        case .escapePressed:
+            guard phase == .inviting || phase == .dragging else { return .ignored }
+            phase = .closing
+            return .close(cancelled: true)
+        case .clickDismissed:
+            guard phase == .inviting || phase == .dragging else { return .ignored }
+            phase = .closing
+            return .close(cancelled: true)
+        case .selectionCommitted:
+            guard phase == .dragging else { return .ignored }
+            phase = .closing
+            return .close(cancelled: false)
+        case .idleTimedOut:
+            // Only before the user commits to a drag: a drag under way is
+            // never interrupted because the user sat still.
+            guard phase == .inviting else { return .ignored }
+            phase = .closing
+            return .close(cancelled: true)
+        case .surfaceClosed:
+            guard phase != .idle else { return .ignored }
+            phase = .idle
+            return .reverted
+        }
+    }
+}
+
+/// The copy the surface shows, per state, in the same one-line style the
+/// capture paths' hint pill uses.
+public enum TextRecognitionSurfaceCopy {
+    /// The instruction the surface carries the moment it appears — visible
+    /// before any drag, because a gesture whose first visible moment is a
+    /// drag is a gesture nobody finds.
+    public static func instruction(for phase: TextSelectionSurfacePhase) -> String {
+        switch phase {
+        case .inviting:
+            "Drag over text to copy it · Esc to cancel"
+        case .idle, .dragging, .closing:
+            ""
+        }
+    }
+
+    /// How long the surface tolerates utter idleness before closing itself,
+    /// the last-resort dismissal when no key channel reaches it.
+    public static let idleDismissAfter: TimeInterval = 30
 }

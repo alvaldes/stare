@@ -89,7 +89,7 @@ reopen it any time from the menu bar with **Setup Guide…**.
 | `⌥⇧M` | Point at things with the pointer highlight |
 | `⌥⇧P` | Pin your marks so clicks pass through |
 | `⌥⇧I` | Pin the latest capture as a floating image (draggable, resizable, lockable) — press it again to take the pin down |
-| `⌥⇧O` | Recognise the text and QR code in an area you drag — on-device, straight to the clipboard |
+| `⌥⇧O` | Recognise the text and QR code in an area you drag — on-device, straight to the clipboard; the screen dims the moment you press, so you can see the gesture before you drag, and `Esc` or a second press cancels it |
 | `P` `H` `A` `L` `R` `O` | Pen, highlighter, arrow, line, rectangle, ellipse |
 | `T` `C` `B` `D` `F` `E` | Text, numbered step, blur, spotlight, laser, eraser |
 | `1`–`8` | Red, orange, yellow, green, blue, purple, white, black |

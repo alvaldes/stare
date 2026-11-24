@@ -58,7 +58,12 @@ final class TextSelectionWindowTests: XCTestCase {
         XCTAssertEqual(window.frame.height, primary.frame.height, accuracy: 0.5)
         XCTAssertEqual(window.frame.minX, primary.frame.minX, accuracy: 0.5)
         XCTAssertEqual(window.frame.minY, primary.frame.minY, accuracy: 0.5)
-        XCTAssertFalse(window.canBecomeKey, "the surface never steals typing focus")
+        // The surface must take key focus without activating the app — that
+        // is how Escape reaches an accessory app that is never frontmost.
+        // The nonactivating panel style keeps the activation side away.
+        XCTAssertTrue(window.canBecomeKey,
+            "an invisible-to-keys surface leaves the gesture with no Escape")
+        XCTAssertFalse(window.canBecomeMain)
         XCTAssertFalse(window.hidesOnDeactivate)
         for screen in NSScreen.screens.dropFirst() {
             XCTAssertFalse(
@@ -125,6 +130,27 @@ final class TextSelectionWindowTests: XCTestCase {
         XCTAssertTrue(window.isDismissed)
     }
 
+    func testOtherKeysDuringTheGestureChangeNothing() throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "the shape needs a real display")
+        let frame = try XCTUnwrap(PrimaryScreenTestWindow.frame(for: CGSize(width: 600, height: 400)))
+        let window = makeWindow(pointerFrame: frame)
+        var cancelled = 0
+        var selected: [CGRect] = []
+        window.onCancelled = { cancelled += 1 }
+        window.onSelected = { selected.append($0) }
+
+        // A key that is not Escape arrives through the key panel and is
+        // swallowed quietly: the gesture stays alive, nothing is cancelled.
+        window.keyDown(with: mouseKeyEvent(.keyDown, keyCode: 0, at: .zero, window: window))
+        XCTAssertFalse(window.isDismissed)
+        XCTAssertEqual(cancelled, 0)
+        XCTAssertTrue(selected.isEmpty)
+        // Escape still ends it through the same channel.
+        window.keyDown(with: mouseKeyEvent(.keyDown, keyCode: 53, at: .zero, window: window))
+        XCTAssertTrue(window.isDismissed)
+        XCTAssertEqual(cancelled, 1)
+    }
+
     func testShiftForcesASquareSelection() throws {
         try XCTSkipIf(NSScreen.screens.isEmpty, "the shape needs a real display")
         let frame = try XCTUnwrap(PrimaryScreenTestWindow.frame(for: CGSize(width: 600, height: 400)))
@@ -142,6 +168,56 @@ final class TextSelectionWindowTests: XCTestCase {
     }
 
     // MARK: - The hint surface
+
+    // MARK: - A press is visible immediately
+
+    func testTheSurfaceIsVisibleBeforeAnyDragAndSaysDragToSelect() throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "the shape needs a real display")
+        let frame = try XCTUnwrap(PrimaryScreenTestWindow.frame(for: CGSize(width: 600, height: 400)))
+        let window = makeWindow(pointerFrame: frame)
+        // The first visible moment of the gesture is not the drag: the
+        // surface opens inviting, with the veil and the instruction up.
+        XCTAssertEqual(window.phase, .inviting)
+        let view = try XCTUnwrap(window.surfaceView)
+        XCTAssertEqual(view.phase, .inviting)
+        let instruction = TextRecognitionSurfaceCopy.instruction(for: .inviting)
+        XCTAssertFalse(instruction.isEmpty, "the inviting state must carry the drag-to-select instruction")
+        XCTAssertTrue(window.acceptsGestures, "the inviting surface takes mouse input for the drag")
+    }
+
+    func testTheSurfaceBecomesKeySoEscapeCanArriveWithoutActivation() throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "the shape needs a real display")
+        let frame = try XCTUnwrap(PrimaryScreenTestWindow.frame(for: CGSize(width: 600, height: 400)))
+        let window = makeWindow(pointerFrame: frame)
+        window.orderFrontRegardless()
+        window.makeKey()
+        // A key-capable nonactivating panel is the dismissal channel: keys
+        // route to this app's panel while nothing activates.
+        XCTAssertEqual(NSApp.keyWindow, window, "the surface must hold key focus so Escape arrives")
+        // Escape through that channel still ends the gesture cancelled.
+        var cancelled = 0
+        window.onCancelled = { cancelled += 1 }
+        XCTAssertTrue(window.handleEscapeKey())
+        XCTAssertEqual(cancelled, 1)
+        XCTAssertNil(NSApp.keyWindow)
+    }
+
+    func testMouseDownMovesTheSurfaceIntoDraggingAndTheInstructionLeaves() throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "the shape needs a real display")
+        let frame = try XCTUnwrap(PrimaryScreenTestWindow.frame(for: CGSize(width: 600, height: 400)))
+        let window = makeWindow(pointerFrame: frame)
+        let view = try XCTUnwrap(window.surfaceView)
+        XCTAssertFalse(TextRecognitionSurfaceCopy.instruction(for: window.phase).isEmpty)
+
+        view.mouseDown(with: mouseEvent(.leftMouseDown, at: CGPoint(x: 30, y: 30), window: window))
+        // The first mouse press is the drag's start: the surface moves into
+        // dragging on its own machine, and the instruction hands the stage
+        // over to the rectangle.
+        XCTAssertEqual(window.phase, .dragging)
+        XCTAssertEqual(view.phase, .dragging)
+        XCTAssertTrue(TextRecognitionSurfaceCopy.instruction(for: window.phase).isEmpty,
+            "the drag carries the rectangle as its feedback, not the instruction")
+    }
 
     func testTheHintSurfaceSitsOnTheScreenItIsGivenAndLeavesOnDemand() throws {
         try XCTSkipIf(NSScreen.screens.isEmpty, "the hint needs a real display")
@@ -179,5 +255,18 @@ final class TextSelectionWindowTests: XCTestCase {
             with: type, location: point, modifierFlags: shift ? [.shift] : [],
             timestamp: 0, windowNumber: window?.windowNumber ?? 0, context: nil,
             eventNumber: 0, clickCount: 1, pressure: 1)!
+    }
+
+    private func mouseKeyEvent(
+        _ type: NSEvent.EventType,
+        keyCode: UInt16,
+        at point: CGPoint,
+        window: NSWindow?
+    ) -> NSEvent {
+        NSEvent.keyEvent(
+            with: type, location: point, modifierFlags: [],
+            timestamp: 0, windowNumber: window?.windowNumber ?? 0, context: nil,
+            characters: "", charactersIgnoringModifiers: "",
+            isARepeat: false, keyCode: keyCode)!
     }
 }
