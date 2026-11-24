@@ -18,7 +18,7 @@ public enum MarkRenderer {
     /// and shrinks with the region — a large area fades wide and ambient, a
     /// small one stays crisp. Tuned once for the eye; render candidates to
     /// compare by passing `feather:`.
-    public static let spotlightFeather: CGFloat = 0.8
+    public static let spotlightFeather: CGFloat = 1.2
     /// Samples of the eased falloff across one feather: the smoothstep curve
     /// `t²(3 − 2t)`, so the ramp starts and ends with zero slope and the
     /// boundary never reads as an edge.

@@ -158,11 +158,13 @@ final class CompositeParityProbeTests: XCTestCase {
     /// The spotlight stroke the parity tests draw: a region over the middle
     /// of the base. The tool arrives through its persisted raw value so the
     /// tests run (and fail) before the case exists.
+    private static let spotlightRect = (from: CGPoint(x: 30, y: 20), to: CGPoint(x: 90, y: 70))
+
     private func spotlight() throws -> Stroke {
         Stroke(
             tool: try XCTUnwrap(Tool(rawValue: "spotlight"), "the spotlight tool must exist"),
             ink: .black,
-            points: [CGPoint(x: 30, y: 20), CGPoint(x: 90, y: 70)]
+            points: [Self.spotlightRect.from, Self.spotlightRect.to]
         )
     }
 
@@ -198,29 +200,49 @@ final class CompositeParityProbeTests: XCTestCase {
     }
 
     /// The dim must actually reach the capture: the region interior stays
-    /// bare, the far corner carries the full dim weight, the falloff is
-    /// gentle just outside the boundary, and halfway along the feather it
-    /// holds half the weight — the same numbers the renderer tests pin.
+    /// bare, a full feather out the dim rests at its floor weight, and
+    /// halfway along the feather it holds a strictly intermediate weight.
+    /// This probe proves the compositor carries the dim; the ramp's exact
+    /// profile is pinned by the renderer tests, so the sample positions are
+    /// derived from the public feather, never magic numbers of a tuned look.
     func testCompositorCarriesTheSpotlightDim() throws {
-        let width = 120, height = 90
+        // A base roomy enough that a whole feather past the region's
+        // boundary still lands on the picture.
+        let width = 200, height = 150
         let base = try XCTUnwrap(makeBase(width: width, height: height))
         let image = bytes(of: try XCTUnwrap(MarkCompositor.composite(marks: [try spotlight()], over: base)))
 
         func channel(at point: CGPoint) -> CGFloat {
-            // Top-left overlay point space; the bitmap's rows run bottom-up.
-            let x = Int(point.x), y = height - 1 - Int(point.y)
+            // Overlay point space; bitmap buffers are top-down, so the
+            // overlay's y maps straight onto the buffer row — the same
+            // mapping the compositor's own flip produces, not a second one.
+            let x = Int(point.x), y = Int(point.y)
             let index = (y * width + x) * 4
             return CGFloat(image[index]) / 255
         }
 
-        XCTAssertEqual(channel(at: CGPoint(x: 60, y: 45)), 1, accuracy: 0.02,
+        // Derived positions, named not magic: along the x axis from the
+        // region's centre, one boundary radius is the boundary itself, so
+        // d = 1 + feather is the ramp's end (the floor) and d = 1 + feather/2
+        // is halfway along it. The floor probe adds a 0.3 margin so it rests
+        // past the ramp wherever the feather is tuned.
+        let centre = CGPoint(
+            x: (Self.spotlightRect.from.x + Self.spotlightRect.to.x) / 2,
+            y: (Self.spotlightRect.from.y + Self.spotlightRect.to.y) / 2
+        )
+        let semiWidth = (Self.spotlightRect.to.x - Self.spotlightRect.from.x) / 2
+        let feather = MarkRenderer.spotlightFeather
+        let floorPoint = CGPoint(x: centre.x + semiWidth * (1 + feather + 0.3), y: centre.y)
+        let midPoint = CGPoint(x: centre.x + semiWidth * (1 + feather / 2), y: centre.y)
+
+        XCTAssertEqual(channel(at: centre), 1, accuracy: 0.02,
                        "the region interior must stay bare")
-        XCTAssertEqual(channel(at: CGPoint(x: 5, y: 85)), 1 - 0.55, accuracy: 0.03,
-                       "the far corner must carry the dim weight")
-        XCTAssertGreaterThan(channel(at: CGPoint(x: 93, y: 45)), 1 - 0.55 * 0.15,
-                             "just outside the boundary the dim must stay gentle")
-        XCTAssertEqual(channel(at: CGPoint(x: 102, y: 45)), 1 - 0.55 * 0.5, accuracy: 0.05,
-                       "halfway along the feather the dim is half weight")
+        XCTAssertEqual(channel(at: floorPoint), 1 - 0.55, accuracy: 0.03,
+                       "a full feather out, the compositor carries the dim at its floor weight")
+        XCTAssertLessThan(channel(at: midPoint), 1 - 0.02,
+                          "between the light and the floor the compositor must carry some dim")
+        XCTAssertGreaterThan(channel(at: midPoint), (1 - 0.55) + 0.02,
+                             "between the light and the floor the dim must not overshoot its floor")
     }
 
     /// The compositor's whole-canvas dim needs the base's own size: a probe

@@ -229,8 +229,14 @@ final class MarkRendererTests: XCTestCase {
     private static let spotlightRect = (from: CGPoint(x: 20, y: 15), to: CGPoint(x: 80, y: 65))
 
     /// A canvas large enough to probe the whole falloff: the shipped feather
-    /// reaches 1.8 × the region's boundary radius, past the default canvas.
+    /// reaches 2.2 × the region's boundary radius, past the default canvas.
     private static let falloffCanvas = CGSize(width: 160, height: 120)
+
+    /// A canvas for the far field: the region sits centred with room for
+    /// more than a whole feather on every side, so corner probes rest past
+    /// the ramp's end wherever the feather is tuned.
+    private static let farFieldCanvas = CGSize(width: 180, height: 160)
+    private static let farFieldRect = (from: CGPoint(x: 60, y: 50), to: CGPoint(x: 120, y: 110))
 
     /// The lit window is the dragged rectangle's inscribed ellipse: the
     /// centre stays bare and a probe just inside the ellipse's edge on the
@@ -246,11 +252,37 @@ final class MarkRendererTests: XCTestCase {
     }
 
     /// Everything far from the region rests at the deepest dim weight — the
-    /// dim floor away from the light, no matter how far out.
+    /// dim floor away from the light, no matter how far out. The probes are
+    /// the corners of a canvas that leaves the region room for more than a
+    /// whole feather on every side, and the derivation is asserted, not
+    /// trusted: a probe that is not a full feather past the boundary fails
+    /// the distance guard before it can sample partway down the ramp.
     func testSpotlightDimsEverythingOutsideTheRegion() throws {
-        let stroke = try spotlightStroke(from: Self.spotlightRect.from, to: Self.spotlightRect.to)
-        for point in [CGPoint(x: 5, y: 5), CGPoint(x: 95, y: 75), CGPoint(x: 5, y: 75)] {
-            let pixel = colour(of: [stroke], at: point, in: Self.canvasSize)
+        let stroke = try spotlightStroke(from: Self.farFieldRect.from, to: Self.farFieldRect.to)
+        let centre = CGPoint(
+            x: (Self.farFieldRect.from.x + Self.farFieldRect.to.x) / 2,
+            y: (Self.farFieldRect.from.y + Self.farFieldRect.to.y) / 2
+        )
+        let semiWidth = (Self.farFieldRect.to.x - Self.farFieldRect.from.x) / 2
+        let semiHeight = (Self.farFieldRect.to.y - Self.farFieldRect.from.y) / 2
+        let probes = [
+            CGPoint(x: 4, y: 4),
+            CGPoint(x: Self.farFieldCanvas.width - 4, y: Self.farFieldCanvas.height - 4),
+            CGPoint(x: 4, y: Self.farFieldCanvas.height - 4),
+        ]
+        for point in probes {
+            // Normalized distance in the lit ellipse's own metric: 1 at the
+            // boundary, 1 + feather where the ramp ends and the floor begins.
+            let dx = (point.x - centre.x) / semiWidth
+            let dy = (point.y - centre.y) / semiHeight
+            let distance = (dx * dx + dy * dy).squareRoot()
+            XCTAssertGreaterThanOrEqual(
+                distance, 1 + MarkRenderer.spotlightFeather,
+                "probe \(point) must rest a full feather past the boundary, got \(distance)"
+            )
+        }
+        for point in probes {
+            let pixel = colour(of: [stroke], at: point, in: Self.farFieldCanvas)
             assertApproximatelyEqual(pixel, dimmedWhite(spotlightDimAlpha), tolerance: 0.03)
         }
     }
@@ -271,8 +303,15 @@ final class MarkRendererTests: XCTestCase {
     /// boundary never reads as a line — dim starts high near the light.
     func testSpotlightRampHalfwayHoldsHalfTheWeight() throws {
         let stroke = try spotlightStroke(from: Self.spotlightRect.from, to: Self.spotlightRect.to)
-        // d = 1 + 0.4 on the x axis: halfway along the 0.8 feather.
-        let pixel = colour(of: [stroke], at: CGPoint(x: 92, y: 40), in: Self.falloffCanvas)
+        // Derived from the public feather, never hardcoded: along the x axis
+        // from the region's centre, one boundary radius is the boundary
+        // itself, so half a feather past that is exactly halfway along the
+        // ramp wherever the feather is tuned. The falloff canvas leaves room
+        // for the full feather, so the ramp is never clamped by its reach.
+        let centreX = (Self.spotlightRect.from.x + Self.spotlightRect.to.x) / 2
+        let semiWidth = (Self.spotlightRect.to.x - Self.spotlightRect.from.x) / 2
+        let x = centreX + semiWidth * (1 + MarkRenderer.spotlightFeather / 2)
+        let pixel = colour(of: [stroke], at: CGPoint(x: x, y: 40), in: Self.falloffCanvas)
         assertApproximatelyEqual(pixel, dimmedWhite(spotlightDimAlpha * 0.5), tolerance: 0.05)
     }
 
