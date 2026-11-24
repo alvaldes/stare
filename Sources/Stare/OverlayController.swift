@@ -1660,9 +1660,11 @@ final class OverlayController {
                   CardCursor.isOverCard(NSEvent.mouseLocation, cardFrames: self.cards.visibleCardFrames)
             else { return event }
             NSCursor.arrow.set()
-            // A `cursorUpdate` is the canvas's chance to set the tool cursor, and
-            // it arrives after this monitor: swallowing it here is what keeps the
-            // arrow on the card on the board, where the tool cursor used to win.
+            // Only this over-a-card branch swallows anything: the canvas handles a
+            // `cursorUpdate` after this monitor and would set the tool cursor over
+            // the card again, so that one event is dropped here. Moves and entries
+            // pass through untouched, and so does every event off a card (the
+            // guard above already returned for those).
             return event.type == .cursorUpdate ? nil : event
         }
     }
