@@ -1645,6 +1645,7 @@ private struct CapturePane: View {
                 detail: "Folder saves: build the name from tokens — {date} · {time} · {app} · {display} — plus letters, numbers, hyphen, underscore and dot; the preview shows a sample app and display. An unknown token, an unsafe character, or an app or display name that isn't there falls back to the prefix name, and .png or .jpg is added automatically.",
                 content: TextField("", text: $model.capture.fileNameTemplate)
                     .frame(width: 180)
+                    .disabled(isClipboard)
             )
             HStack(spacing: 6) {
                 Text("Files are named like")

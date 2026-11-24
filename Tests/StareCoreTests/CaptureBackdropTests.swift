@@ -31,6 +31,7 @@ final class CaptureBackdropTests: XCTestCase {
     }
 
     private func folderPreference(
+        format: CaptureFormat = .png,
         padding: Int = 0,
         cornerRadius: Int = 0,
         shadow: Bool = false,
@@ -38,7 +39,7 @@ final class CaptureBackdropTests: XCTestCase {
         maxSaveWidth: Int = CapturePreference.defaultMaxSaveWidth
     ) -> CapturePreference {
         var preference = CapturePreference(
-            format: .png,
+            format: format,
             destination: .folder(path: folderURL.path),
             fileNamePrefix: "Stare"
         )
@@ -190,6 +191,32 @@ final class CaptureBackdropTests: XCTestCase {
         let rep = try XCTUnwrap(NSBitmapImageRep(cgImage: composed))
         let color = try XCTUnwrap(rep.colorAt(x: pad - 2, y: pad + 5))
         XCTAssertEqual(color.alphaComponent, 0, "without the shadow the margin stays clean")
+    }
+
+    // MARK: Alpha-incapable formats — the margin flattens to the backdrop's base
+
+    func testBackdroppedJPEGSaveFlattensTheTransparentMarginOpaque() throws {
+        // JPEG cannot carry alpha: a composed canvas's transparent margin
+        // would encode an undefined colour, so the write flattens it onto the
+        // same opaque base the backdrop paints behind the image — black.
+        let rep = try XCTUnwrap(
+            writtenRep(for: folderPreference(format: .jpeg, padding: 5))
+        )
+        XCTAssertEqual(rep.pixelsWide, 50, "the padded canvas is written whole")
+        XCTAssertEqual(rep.pixelsHigh, 20)
+        let interior = try XCTUnwrap(rep.colorAt(x: 25, y: 10))
+        // JPEG is lossy, so the interior is pinned by hue, not by exact bytes:
+        // the capture survived the flatten and is visibly not the base.
+        XCTAssertGreaterThan(interior.blueComponent - interior.redComponent, 0.1,
+            "the capture is still inside, not flattened into the base")
+        let margin = try XCTUnwrap(rep.colorAt(x: 1, y: 1))
+        XCTAssertEqual(margin.alphaComponent, 1, "the file speaks opaque")
+        // The margin is the defined flatten base — black, the same opaque
+        // colour the compose paints behind the image — not the undefined
+        // white the encoder otherwise composites the transparent margin over.
+        XCTAssertLessThan(margin.redComponent, 0.35, "the margin is the defined flatten base, not the encoder's white")
+        XCTAssertLessThan(margin.greenComponent, 0.35, "the margin is the defined flatten base, not the encoder's white")
+        XCTAssertLessThan(margin.blueComponent, 0.35, "the margin is the defined flatten base, not the encoder's white")
     }
 
     // MARK: The write order — padding before the downscale, never after

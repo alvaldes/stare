@@ -114,9 +114,8 @@ final class CaptureFileNameTemplateTests: XCTestCase {
     }
 
     func testTemplateTraversalCannotEscapeTheDestinationFolder() throws {
-        // A token carrying a path separator, a dot-dot, or a template with a
-        // literal separator can never move the file out of the folder: the
-        // write lands inside it or not at all.
+        // A token carrying a path separator can never move the file out of
+        // the folder: separators drop from the value, so no traversal forms.
         let folder = try temporaryFolder()
         var preference = CapturePreference(
             format: .png,
@@ -124,27 +123,31 @@ final class CaptureFileNameTemplateTests: XCTestCase {
             fileNamePrefix: "Stare"
         )
         preference.fileNameTemplate = "{app}-{date}"
-        let url = try XCTUnwrap(
+        let separated = try XCTUnwrap(
             CaptureFile.write(
                 CGImage.solid(width: 4, height: 4)!,
                 preference: preference,
                 date: date,
                 calendar: calendar,
-                app: "../../etc/passwd",
+                app: "a/b",
                 displayName: nil
             )
         )
         XCTAssertEqual(
-            url.lastPathComponent,
-            "....etcpasswd-2026-11-21.png",
-            "separators never survive; dots do, but without a separator a dot run cannot form a traversal"
+            separated.lastPathComponent,
+            "ab-2026-11-21.png",
+            "separators never survive, so the value stays one component"
         )
-        XCTAssertFalse(url.lastPathComponent.contains("/"))
-        XCTAssertTrue(url.path.hasPrefix(folder.path + "/"), "the file never escapes the destination folder")
+        XCTAssertFalse(separated.lastPathComponent.contains("/"))
+        XCTAssertFalse(separated.lastPathComponent.hasPrefix("."),
+            "the write is never dot-prefixed, so it is never Finder-hidden")
+        XCTAssertTrue(separated.path.hasPrefix(folder.path + "/"), "the file never escapes the destination folder")
 
-        // And even a dot-dot value still names one component inside the
-        // folder, because the extension is always appended and no separator
-        // can survive the substitution.
+        // A substitute value that begins with a dot — a dot-dot, or any run
+        // of dots the safe set keeps — would render a dot-prefixed,
+        // Finder-hidden file: the same unsafe-value rule as any other
+        // unusable token, so the template refuses and today's prefix name is
+        // written instead, still inside the folder and still visible.
         preference.fileNameTemplate = "{app}"
         let dotDot = try XCTUnwrap(
             CaptureFile.write(
@@ -156,9 +159,50 @@ final class CaptureFileNameTemplateTests: XCTestCase {
                 displayName: nil
             )
         )
-        XCTAssertEqual(dotDot.lastPathComponent, "...png")
+        XCTAssertEqual(dotDot.lastPathComponent, "Stare-2026-11-21-at-14-05-33.png")
+        XCTAssertFalse(dotDot.lastPathComponent.hasPrefix("."),
+            "all-dots values fall back: the file is never hidden")
         XCTAssertTrue(dotDot.path.hasPrefix(folder.path + "/"))
+
+        let dotLeading = try XCTUnwrap(
+            CaptureFile.write(
+                CGImage.solid(width: 4, height: 4)!,
+                preference: preference,
+                date: date,
+                calendar: calendar,
+                app: "../../etc/passwd",
+                displayName: nil
+            )
+        )
+        XCTAssertEqual(dotLeading.lastPathComponent, "Stare-2026-11-21-at-14-05-33.png")
+        XCTAssertFalse(dotLeading.lastPathComponent.hasPrefix("."),
+            "a dot-leading value falls back: the file is never dot-prefixed")
+        XCTAssertTrue(dotLeading.path.hasPrefix(folder.path + "/"))
         try? FileManager.default.removeItem(at: folder)
+    }
+
+    // MARK: The stored name carries exactly one extension
+
+    func testTemplateEndingInTheFormatsOwnExtensionIsNotDoubled() {
+        // A literal template may end in the format's own extension, because
+        // the dot is a safe literal; appending again would write
+        // "shot.png.png". The written name carries exactly one extension.
+        var preference = CapturePreference.standard
+        preference.fileNameTemplate = "shot.png"
+        XCTAssertEqual(preference.fileName(at: date, calendar: calendar), "shot.png")
+        // Case-insensitively: a file extension is matched without case.
+        preference.fileNameTemplate = "shot.PNG"
+        XCTAssertEqual(preference.fileName(at: date, calendar: calendar), "shot.PNG")
+        // In another format the stored literal is just the stem's tail, and
+        // the format's extension still follows exactly once.
+        preference.format = .jpeg
+        preference.fileNameTemplate = "shot.png"
+        XCTAssertEqual(preference.fileName(at: date, calendar: calendar), "shot.png.jpg")
+        // A template that does not end in the extension is appended to as
+        // before.
+        preference.format = .png
+        preference.fileNameTemplate = "shot"
+        XCTAssertEqual(preference.fileName(at: date, calendar: calendar), "shot.png")
     }
 
     // MARK: Empty template is today's behaviour, byte for byte

@@ -50,7 +50,14 @@ public enum CaptureFile {
             cornerRadius: preference.backdropCornerRadius,
             shadow: preference.backdropShadow
         ) ?? image
-        let saved = scaled(padded, preference: preference, scale: scale) ?? padded
+        var saved = scaled(padded, preference: preference, scale: scale) ?? padded
+        // A composed canvas carries a transparent margin, and a format that
+        // cannot carry alpha (JPEG) would encode it as an undefined colour:
+        // flatten it onto the backdrop's opaque base before encoding. An
+        // uncomposed save keeps today's bytes exactly.
+        if preference.format == .jpeg, padded !== image {
+            saved = CaptureBackdrop.flattened(saved) ?? saved
+        }
         guard let data = data(for: saved, format: preference.format) else { return nil }
         let folder = URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true)
         let name = preference.fileName(at: date, calendar: calendar, app: app, display: displayName)

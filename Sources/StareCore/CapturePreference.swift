@@ -141,7 +141,9 @@ public struct CapturePreference: Codable, Equatable, Sendable {
     /// template cannot honour — an unknown token, malformed braces, an unsafe
     /// literal, or a token whose value is unavailable — degrades to today's
     /// name instead of writing one nobody asked for. The extension is
-    /// appended after rendering, so a template never names the extension.
+    /// appended after rendering — never doubled when the rendered name
+    /// already ends in it — so the written name carries exactly one
+    /// extension.
     public var fileNameTemplate: String {
         didSet { fileNameTemplate = Self.sanitisedTemplate(fileNameTemplate) }
     }
@@ -244,11 +246,13 @@ public struct CapturePreference: Codable, Equatable, Sendable {
     ///
     /// Invariant: no character needing escaping can appear, and the name is
     /// always one component of the destination folder. Substitute values keep
-    /// only the safe character set (so no path separator survives) and the
-    /// extension is always appended, so the rendered name is never exactly
-    /// `.` or `..` — a template can rename the capture inside the folder but
-    /// cannot move it out of it. The same date, app, display, template and
-    /// format always produce the same name.
+    /// only the safe character set (so no path separator survives) and never
+    /// begin with a dot (so the name is never Finder-hidden) and the
+    /// extension is appended — at most once, never doubled when the rendered
+    /// template already ends in it — so the rendered name is never exactly
+    /// `.` or `..`. A template can rename the capture inside the folder but
+    /// cannot move it out of it or hide it. The same date, app, display,
+    /// template and format always produce the same name.
     public func fileName(
         at date: Date,
         calendar: Calendar = .current,
@@ -260,6 +264,13 @@ public struct CapturePreference: Codable, Equatable, Sendable {
                 fileNameTemplate, date: date, calendar: calendar, app: app, display: display
             )
         else { return legacyFileName(at: date, calendar: calendar) }
+        // The format's own extension is the one thing a template is never
+        // doubled by: a literal template may end in ".png" because the dot is
+        // a safe literal, and appending again would write "shot.png.png". A
+        // rendered name that already ends in the extension is written as it
+        // is — exactly one extension, and in another format the literal is
+        // just the stem's tail ("shot.png" stays "shot.png.jpg" for JPEG).
+        if rendered.lowercased().hasSuffix(".\(format.fileExtension)") { return rendered }
         return "\(rendered).\(format.fileExtension)"
     }
 
@@ -273,6 +284,50 @@ public struct CapturePreference: Codable, Equatable, Sendable {
             + ".\(format.fileExtension)"
     }
 
+    private enum TemplateSegment: Equatable {
+        /// A run of safe literal characters.
+        case literal(String)
+        /// A known `{token}` word from `templateTokens`.
+        case token(String)
+    }
+
+    /// The template's segments in order — literal runs of safe characters and
+    /// known tokens — or nil when the template is unusable: an unknown or
+    /// malformed token (dangling braces, empty or nested, never a known
+    /// word), or a literal character outside the safe set. One scanner serves
+    /// both storage-time sanitisation (`sanitisedTemplate`) and render-time
+    /// substitution (`renderedTemplate`), so a template one accepts the other
+    /// cannot fail — loosening one means loosening both, never a template
+    /// that validates but silently falls back at render time.
+    private static func parsedTemplate(_ template: String) -> [TemplateSegment]? {
+        var segments: [TemplateSegment] = []
+        var literal = ""
+        var index = template.startIndex
+        while index < template.endIndex {
+            let character = template[index]
+            if character == "{" {
+                guard let close = template[index...].firstIndex(of: "}"),
+                    close > template.index(after: index),
+                    // No nested opening brace inside the token.
+                    template[template.index(after: index)..<close].allSatisfy({ $0 != "{" }),
+                    templateTokens.contains(String(template[template.index(after: index)..<close]))
+                else { return nil }
+                if !literal.isEmpty {
+                    segments.append(.literal(literal))
+                    literal = ""
+                }
+                segments.append(.token(String(template[template.index(after: index)..<close])))
+                index = template.index(after: close)
+            } else {
+                if !isSafeLiteral(character) { return nil }
+                literal.append(character)
+                index = template.index(after: index)
+            }
+        }
+        if !literal.isEmpty { segments.append(.literal(literal)) }
+        return segments
+    }
+
     /// The template with every `{token}` substituted, or nil when the
     /// template cannot be honoured: an unknown or malformed token, or a token
     /// whose value is missing, refuses the whole template.
@@ -283,13 +338,14 @@ public struct CapturePreference: Codable, Equatable, Sendable {
         app: String?,
         display: String?
     ) -> String? {
+        guard let segments = parsedTemplate(template) else { return nil }
         var rendered = ""
-        var index = template.startIndex
-        while index < template.endIndex {
-            let character = template[index]
-            if character == "{" {
-                guard let close = template[index...].firstIndex(of: "}") else { return nil }
-                switch String(template[template.index(after: index)..<close]) {
+        for segment in segments {
+            switch segment {
+            case .literal(let text):
+                rendered += text
+            case .token(let token):
+                switch token {
                 case "date":
                     let components = calendar.dateComponents([.year, .month, .day], from: date)
                     func pad(_ value: Int?) -> String { String(format: "%02d", value ?? 0) }
@@ -308,11 +364,6 @@ public struct CapturePreference: Codable, Equatable, Sendable {
                 default:
                     return nil
                 }
-                index = template.index(after: close)
-            } else {
-                if character == "}" || !isSafeLiteral(character) { return nil }
-                rendered.append(character)
-                index = template.index(after: index)
             }
         }
         return rendered
@@ -325,23 +376,7 @@ public struct CapturePreference: Codable, Equatable, Sendable {
     private static func sanitisedTemplate(_ template: String?) -> String {
         guard let raw = template else { return "" }
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "" }
-        var index = trimmed.startIndex
-        while index < trimmed.endIndex {
-            let character = trimmed[index]
-            if character == "{" {
-                guard let close = trimmed[index...].firstIndex(of: "}"),
-                    close > trimmed.index(after: index),
-                    // No nested opening brace inside the token.
-                    trimmed[trimmed.index(after: index)..<close].allSatisfy({ $0 != "{" }),
-                    templateTokens.contains(String(trimmed[trimmed.index(after: index)..<close]))
-                else { return "" }
-                index = trimmed.index(after: close)
-            } else {
-                if character == "}" || !isSafeLiteral(character) { return "" }
-                index = trimmed.index(after: index)
-            }
-        }
+        guard !trimmed.isEmpty, parsedTemplate(trimmed) != nil else { return "" }
         return trimmed
     }
 
@@ -354,10 +389,16 @@ public struct CapturePreference: Codable, Equatable, Sendable {
     /// A token's substitute value keeps only the safe character set and must
     /// be non-empty: anything unsafe is dropped character by character, and
     /// an empty result means the value is unavailable, refusing the template.
+    /// A value that begins with a dot is unsafe the same way: wherever the
+    /// token sits, a dot-leading value at the template's start would render a
+    /// dot-prefixed file name, which Finder hides — so an all-dots (or any
+    /// dot-leading) value refuses the whole template and falls back to
+    /// today's prefix name.
     private static func sanitisedTokenValue(_ value: String?) -> String? {
         guard let value, !value.isEmpty else { return nil }
         let safe = String(value.unicodeScalars.filter { safePrefixCharacters.contains($0) })
-        return safe.isEmpty ? nil : safe
+        guard !safe.isEmpty, !safe.hasPrefix(".") else { return nil }
+        return safe
     }
 
     /// The given prefix when it is entirely safe, otherwise `defaultPrefix`.

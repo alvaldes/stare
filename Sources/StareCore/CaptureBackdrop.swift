@@ -26,6 +26,12 @@ public enum CaptureBackdrop {
     /// shadow has no dial of its own: it is cheap and looks one way.
     static let shadowCanvasMargin = 16
 
+    /// The base the backdrop paints behind the image: the shadow's fill
+    /// shape colour, and the background the composition flattens a canvas
+    /// onto when the written format cannot carry alpha. One colour, defined
+    /// here, so both uses stay the same.
+    static let baseColour = CGColor(gray: 0, alpha: 1)
+
     /// The fixed shadow style: a 12-point blur with a slight downward offset
     /// at 40% black. Constants, not preferences — S18 asks for a backdrop,
     /// not a shadow editor.
@@ -44,6 +50,28 @@ public enum CaptureBackdrop {
     /// same degrade-don't-break rule as the padding.
     public static func clampedCornerRadius(_ radius: Int) -> Int {
         max(0, min(maxCornerRadius, radius))
+    }
+
+    /// The image flattened onto an opaque background, at its own size and
+    /// colour space: a transparent margin encodes an undefined colour in a
+    /// format that cannot carry alpha (JPEG), so the flatten paints the same
+    /// opaque base the compose paints behind the image and draws the image
+    /// over it 1:1 — no resampling. An image with nothing to flatten is
+    /// returned unchanged.
+    public static func flattened(_ image: CGImage) -> CGImage? {
+        guard let context = CGContext(
+            data: nil,
+            width: image.width,
+            height: image.height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+        ) else { return nil }
+        context.setFillColor(baseColour)
+        context.fill(CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        return context.makeImage()
     }
 
     /// The capture composed into its backdrop, or nil when every parameter is
@@ -99,7 +127,7 @@ public enum CaptureBackdrop {
                 color: CGColor(red: 0, green: 0, blue: 0, alpha: shadowAlpha)
             )
             context.addPath(path)
-            context.setFillColor(CGColor(gray: 0, alpha: 1))
+            context.setFillColor(baseColour)
             context.fillPath()
             context.restoreGState()
         }
