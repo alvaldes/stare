@@ -187,7 +187,7 @@ final class TextRecognitionClient {
         return context.makeImage() ?? image
     }
 
-    private static func displayID(of screen: NSScreen) -> CGDirectDisplayID? {
+    static func displayID(of screen: NSScreen) -> CGDirectDisplayID? {
         let key = NSDeviceDescriptionKey("NSScreenNumber")
         return (screen.deviceDescription[key] as? NSNumber)?.uint32Value
     }

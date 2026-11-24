@@ -89,7 +89,7 @@ reopen it any time from the menu bar with **Setup Guide…**.
 | `⌥⇧M` | Point at things with the pointer highlight |
 | `⌥⇧P` | Pin your marks so clicks pass through |
 | `⌥⇧I` | Pin the latest capture as a floating image (draggable, resizable, lockable) — press it again to take the pin down |
-| `⌥⇧O` | Recognise the text and QR code in an area you drag — on-device, straight to the clipboard; the screen dims the moment you press, so you can see the gesture before you drag, and `Esc` or a second press cancels it |
+| `⌥⇧O` | Recognise the text and QR code in an area you drag — on-device, straight to the clipboard; the screen dims the moment you press, the pointer becomes the same crosshair the area capture uses, and a magnifier follows the drag so the exact pixel edge is visible; `Esc` or a second press cancels it |
 | `P` `H` `A` `L` `R` `O` | Pen, highlighter, arrow, line, rectangle, ellipse |
 | `T` `C` `B` `D` `F` `E` | Text, numbered step, blur, spotlight, laser, eraser |
 | `1`–`8` | Red, orange, yellow, green, blue, purple, white, black |
@@ -111,7 +111,7 @@ reopen it any time from the menu bar with **Setup Guide…**.
 | Whiteboard | `⌘←` `⌘→` change page (going past the last one adds a page) · `⌘B` flips the page between white and black · hold space and drag to pan (the pointer becomes a grabbing hand) · pinch, `⌘` + scroll or `⌘+`/`⌘−` zooms, `⌘0` resets pan and zoom |
 | Whiteboard | `S` captures the marks over the page colour, no Screen Recording needed · `Esc` closes the board and keeps the pages for the session |
 | Capture card | Hover keeps it on screen · click opens the editor · drag it into another app · the pin button in its corner floats the image as a borderless always-on-top window of its own, beside the card in the same screen corner — never in the middle of the display unless you drag it there: drag it anywhere, scroll to resize, ⌥-scroll to change its opacity, and its 📌, ✕ and 🔒 stay visible without hovering — 📌 (the pinned badge) and ✕ close it, 🔒 makes it click-through so you can work underneath it — and each one closes with its ✕ or its 📌 (or `⌥⇧I` takes the frontmost pin down); the pinned images stay on screen no matter what you open or close in Stare, and they never leave your machine |
-| Recognise text | Drag the area and the text it holds — and a QR code, if that is what you framed — goes straight to the clipboard: recognition runs on-device with Vision, nothing is uploaded, and everything proceeds without opening a drawing session; a missing Screen Recording grant, a selection with nothing in it, or a failed read each say so on screen instead of ever touching your clipboard |
+| Recognise text | Drag the area and the text it holds — and a QR code, if that is what you framed — goes straight to the clipboard: recognition runs on-device with Vision, nothing is uploaded, and everything proceeds without opening a drawing session; the pointer is the crosshair for the whole gesture (it comes back whatever way the gesture ends) and a magnifier follows the drag, showing the display as the gesture opened so the exact pixel edge is visible the way the ⇧S area drag's magnifier does; a missing Screen Recording grant, a selection with nothing in it, or a failed read each say so on screen instead of ever touching your clipboard |
 | Editor | Same tools and inks · `⌘Z` undo · `⇧⌘Z` redo · `Esc` cancels a crop, then closes · an applied crop stays editable: drag its edges to adjust it, and `⌘Z` returns the previous crop |
 
 All of these — the four global shortcuts and each tool's key — can be

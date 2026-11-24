@@ -138,15 +138,15 @@ final class TextRecognitionTests: XCTestCase {
     // MARK: - The fixed shortcut is free
 
     func testTheOcrShortcutDoesNotCollideWithAnyOtherShortcut() {
-        // The pinned-image defaults reserve ⌥⇧O for OCR by contract; here it
-        // becomes fixed for real, and the pin makes that contract testable.
+        // ⌥⇧O became fixed for real; the pin's ⌥⇧L is gone (T4 pin fix, and
+        // its dead constants removed in the T5 follow-up), so ⌥⇧L is free —
+        // and must stay that way if it ever comes back.
         let taken: [HotkeyBinding] = [
             HotkeyAction.drawOverlay.defaultBinding, // ⌥⇧A
             HotkeyAction.pointerHighlight.defaultBinding, // ⌥⇧M
             HotkeyAction.pin.defaultBinding, // ⌥⇧P
             HotkeyAction.whiteboard.defaultBinding, // ⌥⇧W
             PinnedImageHotkeyDefaults.pin, // ⌥⇧I
-            PinnedImageHotkeyDefaults.lock, // ⌥⇧L
             HotkeyBinding(key: .s, modifiers: [.option]), // ⌥S
             HotkeyBinding(key: .s, modifiers: [.shift]), // ⇧S
             HotkeyBinding(key: .s, modifiers: [.option, .shift]), // ⌥⇧S
@@ -155,6 +155,9 @@ final class TextRecognitionTests: XCTestCase {
         XCTAssertFalse(
             taken.contains(TextRecognitionHotkeyDefaults.binding),
             "⌥⇧O must stay free for OCR")
+        XCTAssertFalse(
+            taken.contains(HotkeyBinding(key: .l, modifiers: [.option, .shift])),
+            "⌥⇧L stays free: the pin's lock is the 🔒 control, the shortcut exists no more")
         XCTAssertEqual(TextRecognitionHotkeyDefaults.displayName, "⌥⇧O")
         XCTAssertEqual(TextRecognitionHotkeyDefaults.binding, HotkeyBinding(key: .o, modifiers: [.option, .shift]))
     }

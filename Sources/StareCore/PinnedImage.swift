@@ -199,19 +199,13 @@ public enum PinnedImageControls {
 /// against a new one. ⌥⇧I pins/dismisses per `PinnedImagePinRule`.
 /// ⌥⇧L does not exist any more (T4 pin fix): the lock is the 🔒 control on
 /// the pin itself, which stays drawn and clickable even while locked, so the
-/// keyboard shortcut — its menu item and its registration went with it —
-/// had nothing to add. The `lock` entries below remain only because
-/// `Tests/StareCoreTests/TextRecognitionTests.swift` (the OCR surface, whose
-/// files are outside this task's edit surfaces) still lists the binding in
-/// its collision test; they are dead in Sources, pending that surface's
-/// rebase. Nothing collides: neither binding is ⌥⇧A, ⌥⇧M, ⌥⇧P, ⌥⇧W, ⌥S,
-/// ⇧S, S or the ⌥⇧O reserved for OCR.
+/// keyboard shortcut — its menu item, its registration and its two dead
+/// constants here (T5 follow-up) — had nothing to add. Nothing collides:
+/// neither binding is ⌥⇧A, ⌥⇧M, ⌥⇧P, ⌥⇧W, ⌥S, ⇧S, S or the ⌥⇧O reserved for
+/// OCR.
 public enum PinnedImageHotkeyDefaults {
     public static let pin = HotkeyBinding(key: .i, modifiers: [.option, .shift])
     public static let pinDisplayName = "⌥⇧I"
-
-    public static let lock = HotkeyBinding(key: .l, modifiers: [.option, .shift])
-    public static let lockDisplayName = "⌥⇧L"
 }
 
 /// What ⌥⇧I does on a press (T4 closing fix): a keyboard user pressing the

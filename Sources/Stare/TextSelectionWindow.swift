@@ -29,6 +29,42 @@ final class TextSelectionWindow: NSPanel {
     /// input and no further callbacks.
     private(set) var isDismissed = false
 
+    /// The gesture's cursor (T5 follow-up): the same drafting crosshair the
+    /// area capture drag shows, for the surface's whole life — from the
+    /// moment the surface appears to the moment it closes. Held two ways:
+    /// a pushed cursor at the instant the surface becomes key (a pointer
+    /// that has not moved yet still sees the change), and a cursor rect over
+    /// the whole surface in the view (`resetCursorRects`), so AppKit's own
+    /// cursor management — the thing that otherwise resets a pushed cursor
+    /// to the arrow on the first mouse move — keeps the crosshair instead of
+    /// fighting it. The pop lives in `resignKey`: every exit path that ends
+    /// the gesture (commit, Escape, a second press, the idle timeout, a
+    /// refused stray click, teardown) closes the window, resigns its key and
+    /// restores the pointer exactly as it was.
+    private(set) var isShowingGestureCursor = false
+
+    override func becomeKey() {
+        super.becomeKey()
+        showGestureCursor()
+    }
+
+    override func resignKey() {
+        super.resignKey()
+        hideGestureCursor()
+    }
+
+    private func showGestureCursor() {
+        guard !isShowingGestureCursor else { return }
+        NSCursor.crosshair.push()
+        isShowingGestureCursor = true
+    }
+
+    private func hideGestureCursor() {
+        guard isShowingGestureCursor else { return }
+        NSCursor.pop()
+        isShowingGestureCursor = false
+    }
+
     /// Chooses the display the pointer is on, purely: the first frame that
     /// contains the pointer's global position. Between displays — the dead
     /// corner — or with no display at all, nil, and the caller refuses the
@@ -184,9 +220,48 @@ final class TextSelectionSurfaceView: NSView {
     }
     var onDragStarted: (() -> Void)?
 
+    /// The frame the loupe magnifies (T5 follow-up): the pointer's display
+    /// as it was when the surface opened, captured once in the background by
+    /// the flow and dropped off here when it lands. Not a per-event capture:
+    /// each display capture costs a ScreenCaptureKit round trip (tens of
+    /// milliseconds, and macOS serialises them), so covering a drag event
+    /// would jank the gesture it assists. It does not paint over the
+    /// recognition either — recognition re-captures the display at commit —
+    /// so the loupe is honest about the one thing it is for: the edge being
+    /// chosen is placed in screen coordinates, and a frame of the same
+    /// display at the same scale maps the pixel under the loupe's crosshair
+    /// exactly onto the screen point under the pointer. Whatever changed on
+    /// screen since the surface opened stays visible around the translucent
+    /// veil; the loupe's staleness is the same trade the area drag accepts
+    /// on purpose, minus the freeze (nothing here gets frozen into a
+    /// capture). Nil without pixels: no Screen Recording, no frame, no loupe
+    /// — a magnifier over invented pixels would lie about the edge.
+    var loupeFrame: CGImage? {
+        didSet { needsDisplay = true }
+    }
+    /// The drag's pointer in the view's own (bottom-left) coordinates; the
+    /// plan converts it into the display's top-left space.
+    private var loupePoint: CGPoint?
+
+    /// The loupe plan the drag paints right now: the pure geometry the ⇧S
+    /// area drag already trusts (`AreaCaptureLoupe`), fed with this
+    /// surface's own spaces — the pointer lifted into the display's
+    /// top-left space, the view's bounds as the display, and the surface
+    /// frame's own pixels-per-point. nil whenever there is nothing truthful
+    /// to magnify: no pixels captured, no drag under way, or no pointer on
+    /// the display.
+    var loupePlan: AreaCaptureLoupe.Plan? {
+        guard phase == .dragging, let point = loupePoint, let base = loupeFrame else { return nil }
+        let pixelsPerPoint = CGFloat(base.width) / max(bounds.width, 1)
+        return AreaCaptureLoupe.plan(
+            at: CGPoint(x: point.x, y: bounds.height - point.y),
+            bounds: CGRect(origin: .zero, size: bounds.size),
+            framePixelSize: CGSize(width: base.width, height: base.height),
+            pixelsPerPoint: pixelsPerPoint)
+    }
+
     private var dragStart: CGPoint?
     private var dragCurrent: CGPoint?
-    private var cursorPushed = false
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -197,9 +272,18 @@ final class TextSelectionSurfaceView: NSView {
         fatalError("TextSelectionSurfaceView is created in code only")
     }
 
+    override func resetCursorRects() {
+        // The gesture's cursor, AppKit's own way: a crosshair rect over the
+        // whole surface — the same cursor the area capture drag shows —
+        // alive for as long as the gesture is. This is what keeps the
+        // crosshair under the pointer once it moves: without a cursor rect
+        // AppKit resets any pushed cursor to the arrow on the first event.
+        guard phase == .inviting || phase == .dragging else { return }
+        addCursorRect(bounds, cursor: .crosshair)
+    }
+
     override func mouseDown(with event: NSEvent) {
         guard phase == .inviting else { return }
-        forceCursor()
         onDragStarted?()
         dragStart = convert(event.locationInWindow, from: nil)
         dragCurrent = dragStart
@@ -209,12 +293,14 @@ final class TextSelectionSurfaceView: NSView {
     override func mouseDragged(with event: NSEvent) {
         guard dragStart != nil, phase == .dragging else { return }
         dragCurrent = convert(event.locationInWindow, from: nil)
+        loupePoint = dragCurrent
         needsDisplay = true
     }
 
     override func mouseUp(with event: NSEvent) {
         guard let start = dragStart, phase == .dragging else { return }
         dragStart = nil
+        loupePoint = nil
         onFinished?(start, convert(event.locationInWindow, from: nil), event.modifierFlags.contains(.shift))
     }
 
@@ -239,6 +325,7 @@ final class TextSelectionSurfaceView: NSView {
             let border = NSBezierPath(rect: selection)
             border.lineWidth = 1.5
             border.stroke()
+            drawLoupe()
         case .idle, .closing:
             // After dismissal the surface paints nothing: the selection is
             // gone.
@@ -267,19 +354,58 @@ final class TextSelectionSurfaceView: NSView {
             withAttributes: textAttributes)
     }
 
-    /// The crosshair is the selection gesture's cursor; one push per drag,
-    /// popped when the window finishes, so the pointer never keeps the
-    /// crosshair after the surface is gone.
-    func forceCursor() {
-        guard !cursorPushed else { return }
-        NSCursor.crosshair.push()
-        cursorPushed = true
-    }
-
-    func releaseCursor() {
-        guard cursorPushed else { return }
-        NSCursor.pop()
-        cursorPushed = false
+    /// The area drag's magnifier, over this surface's frame. The pure
+    /// geometry is the one the ⇧S drag already trusts (`AreaCaptureLoupe`):
+    /// the loupe never covers the pointer's pixel, flips to the other side
+    /// near a display edge and clamps inside the display — reused, not
+    /// rewritten. The view only paints it.
+    private func drawLoupe() {
+        guard let plan = loupePlan,
+            let base = loupeFrame,
+            let crop = base.cropping(to: plan.source),
+            let context = NSGraphicsContext.current?.cgContext else { return }
+        context.saveGState()
+        // The plan speaks the display's top-left space (`AreaCaptureLoupe`
+        // was written in the frozen frame's own convention); this view is
+        // not flipped, so flip the context once and paint the plan directly.
+        context.translateBy(x: 0, y: bounds.height)
+        context.scaleBy(x: 1, y: -1)
+        // The magnified source, clipped to the loupe: near an edge the source
+        // stops at the frame's edge and the rest of the loupe stays empty
+        // instead of stretching the pixels.
+        context.saveGState()
+        context.addPath(CGPath(
+            roundedRect: plan.frame,
+            cornerWidth: 8,
+            cornerHeight: 8,
+            transform: nil
+        ))
+        context.clip()
+        context.translateBy(x: plan.destination.minX, y: plan.destination.maxY)
+        context.scaleBy(x: 1, y: -1)
+        context.draw(crop, in: CGRect(origin: .zero, size: plan.destination.size))
+        context.restoreGState()
+        // Chrome: a bordered ring and the crosshair through the pointer's
+        // pixel, dark-under/bright-on-top so it reads on light and dark
+        // content — the same trick the drawn cursors use.
+        let ring = CGPath(
+            roundedRect: plan.frame.insetBy(dx: 1.5, dy: 1.5),
+            cornerWidth: 7,
+            cornerHeight: 7,
+            transform: nil
+        )
+        for (colour, width) in [(CGColor(gray: 0, alpha: 0.85), CGFloat(3)), (CGColor(gray: 1, alpha: 0.95), CGFloat(1))] {
+            context.setStrokeColor(colour)
+            context.setLineWidth(width)
+            context.addPath(ring)
+            context.strokePath()
+            context.move(to: CGPoint(x: plan.frame.minX, y: plan.crosshair.y))
+            context.addLine(to: CGPoint(x: plan.frame.maxX, y: plan.crosshair.y))
+            context.move(to: CGPoint(x: plan.crosshair.x, y: plan.frame.minY))
+            context.addLine(to: CGPoint(x: plan.crosshair.x, y: plan.frame.maxY))
+            context.strokePath()
+        }
+        context.restoreGState()
     }
 }
 
@@ -385,7 +511,6 @@ final class TextRecognitionFlow {
     private var window: TextSelectionWindow?
     private var hintWindow: TextRecognitionHintWindow?
     private var escapeMonitor: Any?
-    private var cursorPushed = false
     private var idleDismiss: DispatchWorkItem?
 
     init(client: TextRecognitionClient) {
@@ -437,14 +562,37 @@ final class TextRecognitionFlow {
             self?.closeSurface()
         }
         self.window = window
-        NSCursor.crosshair.push()
-        cursorPushed = true
         window.orderFrontRegardless()
         // The dismissal channel: a key-capable nonactivating panel holds key
         // focus without activating the app, so Escape reaches an accessory
         // app that is never frontmost — with no new permission (S9).
         window.makeKey()
         scheduleIdleDismiss()
+        // The loupe's frame: one capture of the pointer display, taken in the
+        // background the moment the surface opens (the same off-main ask the
+        // area drag's stock frame uses), so by the time a drag is under way
+        // there is something truthful for it to magnify. The surface's own
+        // windows — the veil, a pill — are excluded from the capture by the
+        // capture service's own-window filter, so the loupe never magnifies
+        // the gesture itself.
+        fetchSurfaceFrame(for: window, pointerFrame: pointerFrame)
+    }
+
+    /// Asks for the frame the loupe magnifies and drops it on the surface
+    /// when it lands. A failed capture (or no display under the pointer —
+    /// already refused above) leaves the frame nil and the drag loupe-less,
+    /// exactly the no-permission contract the area drag keeps.
+    private func fetchSurfaceFrame(for window: TextSelectionWindow, pointerFrame: CGRect) {
+        guard let screen = NSScreen.screens.first(where: { $0.frame == pointerFrame }),
+            let displayID = TextRecognitionClient.displayID(of: screen) else { return }
+        let captureService = client.captureService
+        let view = window.surfaceView
+        Task.detached(priority: .userInitiated) {
+            let image = try? captureService.captureDisplay(displayID)
+            DispatchQueue.main.async {
+                view?.loupeFrame = image
+            }
+        }
     }
 
     /// The safety net behind the key channel: if no key ever reaches the
@@ -471,11 +619,8 @@ final class TextRecognitionFlow {
         if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
         escapeMonitor = nil
         cancelIdleDismiss()
-        window?.surfaceView?.releaseCursor()
         window?.closeWithoutCallbacks()
         window = nil
-        if cursorPushed { NSCursor.pop() }
-        cursorPushed = false
     }
 
     private func recognise(_ selected: CGRect, on pointerFrame: CGRect) {

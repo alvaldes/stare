@@ -202,6 +202,75 @@ final class TextSelectionWindowTests: XCTestCase {
         XCTAssertNil(NSApp.keyWindow)
     }
 
+    // MARK: - The surface's cursor (T5 follow-up): crosshair while up, restored after
+
+    func testEveryExitRestoresThePreviousCursorAfterTheCrosshair() throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "the cursor needs a real display")
+        let frame = try XCTUnwrap(PrimaryScreenTestWindow.frame(for: CGSize(width: 600, height: 400)))
+
+        // Escape.
+        do {
+            let window = makeWindow(pointerFrame: frame)
+            let baseline = NSCursor.current
+            window.orderFrontRegardless()
+            window.makeKey()
+            XCTAssertTrue(sameCursor(NSCursor.current, NSCursor.crosshair),
+                "the OCR surface shows the area capture's crosshair from the moment it appears")
+            XCTAssertTrue(window.handleEscapeKey())
+            XCTAssertTrue(sameCursor(NSCursor.current, baseline), "Escape restores the previous cursor")
+        }
+        // Commit.
+        do {
+            let window = makeWindow(pointerFrame: frame)
+            let baseline = NSCursor.current
+            window.orderFrontRegardless()
+            window.makeKey()
+            XCTAssertTrue(sameCursor(NSCursor.current, NSCursor.crosshair))
+            let view = try XCTUnwrap(window.surfaceView)
+            view.mouseDown(with: mouseEvent(.leftMouseDown, at: CGPoint(x: 20, y: 20), window: window))
+            view.mouseDragged(with: mouseEvent(.leftMouseDragged, at: CGPoint(x: 120, y: 90), window: window))
+            view.mouseUp(with: mouseEvent(.leftMouseUp, at: CGPoint(x: 120, y: 90), window: window))
+            XCTAssertTrue(window.isDismissed)
+            XCTAssertTrue(sameCursor(NSCursor.current, baseline), "a finished selection restores the previous cursor")
+        }
+        // Idle timeout — the machine refuses it only mid-drag, so it ends the
+        // inviting state.
+        do {
+            let window = makeWindow(pointerFrame: frame)
+            let baseline = NSCursor.current
+            window.orderFrontRegardless()
+            window.makeKey()
+            XCTAssertTrue(sameCursor(NSCursor.current, NSCursor.crosshair))
+            window.handleIdleTimeout()
+            XCTAssertTrue(window.isDismissed)
+            XCTAssertTrue(sameCursor(NSCursor.current, baseline), "the idle timeout restores the previous cursor")
+        }
+        // A second ⌥⇧O while the surface is up: a visible cancel.
+        do {
+            let window = makeWindow(pointerFrame: frame)
+            let baseline = NSCursor.current
+            window.orderFrontRegardless()
+            window.makeKey()
+            XCTAssertTrue(sameCursor(NSCursor.current, NSCursor.crosshair))
+            window.cancelBySecondPress()
+            XCTAssertTrue(window.isDismissed)
+            XCTAssertTrue(sameCursor(NSCursor.current, baseline), "the second press restores the previous cursor")
+        }
+        // A refused stray click.
+        do {
+            let window = makeWindow(pointerFrame: frame)
+            let baseline = NSCursor.current
+            window.orderFrontRegardless()
+            window.makeKey()
+            XCTAssertTrue(sameCursor(NSCursor.current, NSCursor.crosshair))
+            let view = try XCTUnwrap(window.surfaceView)
+            view.mouseDown(with: mouseEvent(.leftMouseDown, at: CGPoint(x: 40, y: 40), window: window))
+            view.mouseUp(with: mouseEvent(.leftMouseUp, at: CGPoint(x: 41, y: 41), window: window))
+            XCTAssertTrue(window.isDismissed)
+            XCTAssertTrue(sameCursor(NSCursor.current, baseline), "a refused stray click restores the previous cursor")
+        }
+    }
+
     func testMouseDownMovesTheSurfaceIntoDraggingAndTheInstructionLeaves() throws {
         try XCTSkipIf(NSScreen.screens.isEmpty, "the shape needs a real display")
         let frame = try XCTUnwrap(PrimaryScreenTestWindow.frame(for: CGSize(width: 600, height: 400)))
@@ -238,6 +307,135 @@ final class TextSelectionWindowTests: XCTestCase {
     }
 
     // MARK: - Helpers
+
+    /// Cursor identity where AppKit hands back its own instances: the same
+    /// object, or the same hot spot and picture — enough to tell the
+    /// crosshair from every other cursor without pretending to own the
+    /// singletons.
+    private func sameCursor(_ a: NSCursor, _ b: NSCursor) -> Bool {
+        if a === b { return true }
+        guard a.hotSpot == b.hotSpot,
+            let aTiff = a.image.tiffRepresentation,
+            let bTiff = b.image.tiffRepresentation else { return false }
+        return aTiff == bTiff
+    }
+
+    // MARK: - The loupe (T5 follow-up): the area drag's magnifier, over the frame captured at open
+
+    /// A display frame at 2× native scale, as `CaptureService.captureDisplay`
+    /// hands it: `points` view points, `pixels` rows of real pixels.
+    private func frameImage(_ points: CGFloat, _ pixels: Int) -> CGImage {
+        let context = CGContext(
+            data: nil, width: pixels, height: pixels, bitsPerComponent: 8,
+            bytesPerRow: pixels * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: pixels, height: pixels))
+        return context.makeImage()!
+    }
+
+    /// The surface frame split into two horizontal bands in top-left pixel
+    /// space (the reading of `CGImage.cropping(to:)`): top half green, bottom
+    /// half blue — the same trick `AreaCaptureLoupeTests` uses to catch a
+    /// mirrored source rect, because a bottom-left convention lands the other
+    /// band.
+    private func bandedFrameImage(_ pixels: Int) throws -> CGImage {
+        let context = try XCTUnwrap(CGContext(
+            data: nil, width: pixels, height: pixels, bitsPerComponent: 8,
+            bytesPerRow: pixels * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(red: 0, green: 0, blue: 1, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: pixels, height: pixels / 2))
+        context.setFillColor(red: 0, green: 1, blue: 0, alpha: 1)
+        context.fill(CGRect(x: 0, y: pixels / 2, width: pixels, height: pixels / 2))
+        return try XCTUnwrap(context.makeImage())
+    }
+
+    func testTheDragMagnifiesItsFrameWithTheAreaDragGeometry() throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "the loupe needs a real display")
+        let frame = try XCTUnwrap(PrimaryScreenTestWindow.frame(for: CGSize(width: 600, height: 400)))
+        let window = makeWindow(pointerFrame: frame)
+        let view = try XCTUnwrap(window.surfaceView)
+        view.loupeFrame = frameImage(600, 1200)
+
+        // Before the drag there is nothing to magnify: the loupe exists for
+        // the pixel edge being chosen, and none is being chosen yet.
+        XCTAssertNil(view.loupePlan, "the loupe is a drag companion, not part of the inviting state")
+
+        view.mouseDown(with: mouseEvent(.leftMouseDown, at: CGPoint(x: 100, y: 100), window: window))
+        view.mouseDragged(with: mouseEvent(.leftMouseDragged, at: CGPoint(x: 200, y: 150), window: window))
+
+        // The pointer at window point (200, 150) is 200 points from the
+        // display's left edge and 250 from its top. The plan is exactly what
+        // `AreaCaptureLoupe` answers for that point over this frame: the same
+        // side, the same gap, the same projection — never a second geometry.
+        XCTAssertEqual(view.loupePlan?.frame, CGRect(x: 224, y: 274, width: 120, height: 120))
+        XCTAssertEqual(view.loupePlan?.source, CGRect(x: 370, y: 470, width: 60, height: 60),
+            "the source square is centred on the pointer in the frame's top-left pixel space")
+        XCTAssertEqual(view.loupePlan?.destination, CGRect(x: 224, y: 274, width: 120, height: 120),
+            "in the open, the source lands exactly on the loupe")
+        XCTAssertEqual(view.loupePlan?.crosshair, CGPoint(x: 284, y: 334),
+            "the pointer's pixel sits at the loupe's centre, where the crosshair marks it")
+
+        // Near the display's right edge, the same flips the ⇧S drag flips:
+        // the loupe moves left of the pointer and the source clamps to the
+        // frame's edge, magnifying only the pixels that exist.
+        view.mouseDragged(with: mouseEvent(.leftMouseDragged, at: CGPoint(x: 595, y: 200), window: window))
+        XCTAssertEqual(view.loupePlan?.frame, CGRect(x: 451, y: 224, width: 120, height: 120))
+        XCTAssertEqual(view.loupePlan?.source, CGRect(x: 1160, y: 370, width: 40, height: 60))
+        XCTAssertEqual(view.loupePlan?.destination, CGRect(x: 451, y: 224, width: 80, height: 120),
+            "the empty rest of the loupe stays empty instead of stretching the pixels")
+
+        // The drag ends, the surface does too: nothing keeps magnifying.
+        view.mouseUp(with: mouseEvent(.leftMouseUp, at: CGPoint(x: 595, y: 200), window: window))
+        XCTAssertTrue(window.isDismissed)
+        XCTAssertNil(window.surfaceView?.loupePlan)
+    }
+
+    func testWithoutSurfacePixelsThereIsNothingToMagnify() throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "the loupe needs a real display")
+        let frame = try XCTUnwrap(PrimaryScreenTestWindow.frame(for: CGSize(width: 600, height: 400)))
+        let window = makeWindow(pointerFrame: frame)
+        let view = try XCTUnwrap(window.surfaceView)
+        view.mouseDown(with: mouseEvent(.leftMouseDown, at: CGPoint(x: 100, y: 100), window: window))
+        view.mouseDragged(with: mouseEvent(.leftMouseDragged, at: CGPoint(x: 200, y: 150), window: window))
+        XCTAssertNil(view.loupePlan,
+            "no pixels captured, no loupe — a magnifier over invented pixels would lie about the edge")
+    }
+
+    func testTheLoupesCrosshairPointsAtThePixelUnderThePointer() throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "the loupe needs a real display")
+        let frame = try XCTUnwrap(PrimaryScreenTestWindow.frame(for: CGSize(width: 600, height: 400)))
+        let window = makeWindow(pointerFrame: frame)
+        let view = try XCTUnwrap(window.surfaceView)
+        view.loupeFrame = try bandedFrameImage(1200)
+
+        // The pointer at window (300, 120) is 280 points below the display's
+        // top edge — pixel row 560 of the 1200-pixel frame at 2 px/pt, inside
+        // the top band (green), and off the display's mirror axis (200) so a
+        // top-left and a bottom-left source cannot agree: under a bottom-left
+        // reading the same plan arithmetic would place the centre at row 640,
+        // the blue band.
+        view.mouseDown(with: mouseEvent(.leftMouseDown, at: CGPoint(x: 100, y: 100), window: window))
+        view.mouseDragged(with: mouseEvent(.leftMouseDragged, at: CGPoint(x: 300, y: 120), window: window))
+
+        let plan = try XCTUnwrap(view.loupePlan)
+        let image = try XCTUnwrap(view.loupeFrame)
+        let crop = try XCTUnwrap(image.cropping(to: plan.source))
+        let context = try XCTUnwrap(CGContext(
+            data: nil, width: crop.width, height: crop.height, bitsPerComponent: 8,
+            bytesPerRow: crop.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.draw(crop, in: CGRect(x: 0, y: 0, width: crop.width, height: crop.height))
+        let bytes = try XCTUnwrap(context.data).bindMemory(to: UInt8.self, capacity: crop.width * crop.height * 4)
+        // The loupe's centre colour is the green top band: the crop's own
+        // centre is the pixel under the pointer in the frame's top-left
+        // space — no mirror anywhere.
+        let centreIndex = (crop.height / 2) * crop.width * 4 + (crop.width / 2) * 4
+        XCTAssertEqual(bytes[centreIndex + 1], 255, "the crop's centre is the pixel under the pointer")
+        XCTAssertEqual(bytes[centreIndex + 2], 0)
+        XCTAssertEqual(bytes[centreIndex], 0)
+    }
 
     private func makeWindow(pointerFrame: CGRect) -> TextSelectionWindow {
         let window = TextSelectionWindow(pointerFrame: pointerFrame)
