@@ -162,8 +162,17 @@ final class CaptureCardTests: XCTestCase {
 
         for _ in 0..<4 { controller.show(image(), on: screen) }
         let pinned = try XCTUnwrap(controller.cards.last)
+        // The slot is computed against the screen the card actually landed on, not
+        // `NSScreen.main`: that one follows the key window, so on a desk with more
+        // than one display it can answer with a different screen's frame between
+        // the placement and this assertion, which read as the card being in the
+        // wrong slot when it was not.
+        let cardScreen = try XCTUnwrap(
+            NSScreen.screens.first { $0.visibleFrame.contains(pinned.frame.origin) } ?? NSScreen.main,
+            "the pinned card has to land inside some screen's visible frame"
+        )
         let bottomSlot = CaptureCardLayout.nextOrigin(
-            visibleFrame: screen.visibleFrame,
+            visibleFrame: cardScreen.visibleFrame,
             cardSize: pinned.frame.size,
             stackedHeight: 0
         )

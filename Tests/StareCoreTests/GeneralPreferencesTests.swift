@@ -172,7 +172,7 @@ final class GeneralPreferencesTests: XCTestCase {
         .tool(.pen), .tool(.highlighter), .separator,
         .tool(.line), .tool(.arrow), .tool(.rectangle), .tool(.ellipse), .separator,
         .tool(.text), .tool(.number), .separator,
-        .tool(.blur), .tool(.laser), .separator,
+        .tool(.blur), .tool(.spotlight), .tool(.laser), .separator,
         .tool(.eraser),
     ]
 
@@ -256,8 +256,13 @@ final class GeneralPreferencesTests: XCTestCase {
             #"{"tools":["select","pen","highlighter","line","arrow","rectangle","ellipse","text","number","blur","laser","eraser"],"hidden":["number"]}"#
         )
         // Same visible set and order the v0.4 bar drew, with the family
-        // dividers it drew too...
-        XCTAssertEqual(layout.visibleTools, ToolbarToolLayout.defaultOrder.filter { $0 != .number })
+        // dividers it drew too. The spotlight arrived after that layout was
+        // written, so it is not on the bar: a tool the stored document never
+        // placed waits in the pool, it does not push itself in.
+        XCTAssertEqual(
+            layout.visibleTools,
+            ToolbarToolLayout.defaultOrder.filter { $0 != .number && $0 != .spotlight }
+        )
         XCTAssertEqual(layout.items, [
             .tool(.select), .separator,
             .tool(.pen), .tool(.highlighter), .separator,
@@ -267,7 +272,7 @@ final class GeneralPreferencesTests: XCTestCase {
         ])
         // ...and the hidden tool lands in the pool instead of the old
         // hidden set.
-        XCTAssertEqual(layout.pool, [.number])
+        XCTAssertEqual(layout.pool, [.number, .spotlight])
     }
 
     func testV0_4StoredLayoutKeepsToolOrderAcrossFamiliesWithDividersWhereTheOldBarDrewThem() throws {

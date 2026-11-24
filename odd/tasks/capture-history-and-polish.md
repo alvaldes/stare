@@ -110,3 +110,16 @@ B3, B5 and B6 are defects in what T2b just shipped, not new wishes; B1, B2, B4, 
   the board test fail — the check that this fix cannot silently regress. Both changes
   still want the owner's eye on the next manual pass, which is the only place the arrow
   and the returning keyboard can actually be seen.
+
+- **L17** (owner decision, verbatim): "no aparece asi que dejemoslo asi porque no veo una solucion y
+  llevamos dando vueltas en esto ya un tiempo y no veo la salida". B9's board half stops here, on purpose.
+  What three passes established: the drawing mode gives the arrow (`cursorSkipsTheCard` answers in both
+  modes, `CardCursorRoutingTests` pins it), the board does not; the canvas re-asserts its cursor on
+  `mouseMoved` as well as on `cursorUpdate`; and the card is a non-activating panel that does not take
+  mouse-moved events, so moves over it are delivered to the canvas underneath, which is the surface
+  that keeps winning. What is *not* known is which of the remaining re-assertion sites does it, because
+  the probe that would say so (`STARE_CURSOR_PROBE=1`, logging type, swallow decision and whether the
+  event came from the card or the canvas) was never run. The code stays as it is: it is correct for the
+  overlay and harmless on the board. A future pass should start by reading that probe, and if the answer
+  is "another view re-asserts", the shape of the fix is to have the card take mouse-moved events rather
+  than to keep dropping events from the canvas.
