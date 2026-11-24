@@ -221,6 +221,15 @@ final class CaptureHistoryPanelTests: XCTestCase {
         controller.deliverHistoryPick(makeImage())
 
         XCTAssertTrue(NSPasteboard.general.types?.contains(.png) ?? false)
+        // The type alone does not prove a picture landed: Return used to leave
+        // an empty PNG behind, so decode what was actually copied.
+        let png = try XCTUnwrap(NSPasteboard.general.data(forType: .png))
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: png))
+        XCTAssertEqual(bitmap.pixelsWide, 8)
+        XCTAssertEqual(bitmap.pixelsHigh, 6)
+        let colour = try XCTUnwrap(bitmap.colorAt(x: 4, y: 3)?.usingColorSpace(.deviceRGB))
+        XCTAssertGreaterThan(colour.blueComponent, 0.8, "the copied PNG carries the capture, not a blank plate")
+        XCTAssertLessThan(colour.redComponent, 0.2)
     }
 
     func testHidingTheCaptureHistoryHandsKeyFocusBackToTheSurfaceThatWasWorkingBeforeIt() throws {

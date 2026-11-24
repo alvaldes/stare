@@ -210,17 +210,28 @@ final class CaptureCardView: NSView, NSDraggingSource {
 
     // MARK: - Hover
 
+    /// The card is a result you click, not a canvas: the pointer over it is the
+    /// arrow even while the overlay or the board holds a crosshair, which is a
+    /// global `NSCursor.set()` the card's own tracking area has to answer.
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .arrow)
+    }
+
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         for area in trackingAreas where area.owner === self { removeTrackingArea(area) }
         addTrackingArea(
             NSTrackingArea(
                 rect: bounds,
-                options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                options: [.cursorUpdate, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
                 owner: self,
                 userInfo: nil
             )
         )
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        NSCursor.arrow.set()
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -372,17 +383,18 @@ enum CaptureCardLayout {
     /// Gap between stacked cards.
     static let gap: CGFloat = 10
 
-    /// The origin for a card of `cardSize` in the bottom-right corner, above
-    /// `stackedSizes` — the cards already stacked there, oldest first. Pinned
-    /// cards are not stacked: they keep the frame the user left them in, so a
-    /// later capture lands on the unpinned ones only (S1).
+    /// The origin for a card of `cardSize` in the bottom-right corner of
+    /// `visibleFrame`, above `stackedHeight` points of cards already stacked
+    /// there. The stack is packed: pinned cards keep their slot in it (they only
+    /// stop counting for the cap and never dismiss themselves), so a card that
+    /// outlives the ones under it drops into the free slot instead of hanging
+    /// where the stack had grown to (S1, owner's second pass).
     static func nextOrigin(
         visibleFrame: CGRect,
         cardSize: CGSize,
-        stackedSizes: [CGSize]
+        stackedHeight: CGFloat
     ) -> CGPoint {
-        let stackedHeight = stackedSizes.reduce(0) { $0 + $1.height + gap }
-        return CGPoint(
+        CGPoint(
             x: (visibleFrame.maxX - cardSize.width - margin).rounded(),
             y: (visibleFrame.minY + margin + stackedHeight).rounded()
         )
@@ -409,16 +421,22 @@ final class CaptureCardController {
         card = CaptureCard(
             image: image,
             onOpen: { [weak self] image in self?.onOpen?(image) },
-            onDismiss: { [weak self] in
-                self?.cards.removeAll { $0 === card }
-                card.close()
-            },
+            onDismiss: { [weak self] in self?.dismiss(card) },
             onPinRequested: { [weak self] image, screen in self?.onPin?(image, screen) }
         )
         cards.append(card)
         evictOverflow()
-        position(card, on: screen)
+        repack(preferredScreen: screen)
         card.orderFrontRegardless()
+    }
+
+    /// Takes a card off the stack: the card's own close button, its dismiss
+    /// timer and the cap all land here, so the stack is repacked exactly once
+    /// per disappearance and the remaining cards close the gap (S1).
+    func dismiss(_ card: CaptureCard) {
+        cards.removeAll { $0 === card }
+        card.close()
+        repack(preferredScreen: nil)
     }
 
     /// Closes the oldest unpinned cards past the cap. Pinned ones are skipped
@@ -439,17 +457,25 @@ final class CaptureCardController {
         }
     }
 
-    private func position(_ card: CaptureCard, on screen: NSScreen?) {
-        guard let screen = screen ?? NSScreen.main else { return }
-        let stacked = cards
-            .filter { $0 !== card && !$0.isPinned }
-            .map(\.frame.size)
-        card.setFrameOrigin(
-            CaptureCardLayout.nextOrigin(
-                visibleFrame: screen.visibleFrame,
-                cardSize: card.frame.size,
-                stackedSizes: stacked
+    /// Lays the whole stack out again, oldest at the bottom: each display gets
+    /// its own column, so a card on a second screen never counts for the stack
+    /// on the first. `preferredScreen` only decides where a card that is not on
+    /// a display yet belongs.
+    private func repack(preferredScreen: NSScreen?) {
+        var stackedHeight: [ObjectIdentifier: CGFloat] = [:]
+        for card in cards {
+            let screen = card.screen ?? preferredScreen ?? NSScreen.main
+            guard let screen else { continue }
+            let key = ObjectIdentifier(screen)
+            let height = stackedHeight[key] ?? 0
+            card.setFrameOrigin(
+                CaptureCardLayout.nextOrigin(
+                    visibleFrame: screen.visibleFrame,
+                    cardSize: card.frame.size,
+                    stackedHeight: height
+                )
             )
-        )
+            stackedHeight[key] = height + card.frame.size.height + CaptureCardLayout.gap
+        }
     }
 }

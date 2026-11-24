@@ -134,14 +134,14 @@ final class CaptureCardTests: XCTestCase {
         let card = CGSize(width: 202, height: 135)
 
         XCTAssertEqual(
-            CaptureCardLayout.nextOrigin(visibleFrame: visible, cardSize: card, stackedSizes: []),
+            CaptureCardLayout.nextOrigin(visibleFrame: visible, cardSize: card, stackedHeight: 0),
             CGPoint(x: 1512 - 202 - CaptureCardLayout.margin, y: CaptureCardLayout.margin)
         )
         XCTAssertEqual(
             CaptureCardLayout.nextOrigin(
                 visibleFrame: visible,
                 cardSize: card,
-                stackedSizes: [CGSize(width: 202, height: 135)]
+                stackedHeight: 135 + CaptureCardLayout.gap
             ),
             CGPoint(
                 x: 1512 - 202 - CaptureCardLayout.margin,
@@ -151,16 +151,51 @@ final class CaptureCardTests: XCTestCase {
         )
     }
 
-    func testTheControllerNeverEvictsAPinnedCardAndAPinnedCardDoesNotPushNewOnes() throws {
+    /// S1 (owner's second pass): the stack is packed at all times. Pinning the
+    /// newest card and letting the older ones go must drop the pinned card into
+    /// the free slot at the bottom instead of leaving it hanging where the
+    /// stack had grown to, and the next capture must land right above it.
+    func testPinningTheNewestCardDropsItIntoTheFreeSlotWhenTheOthersGo() throws {
+        try XCTSkipIf(NSScreen.main == nil, "needs a screen to place a card")
+        let controller = CaptureCardController()
+        let screen = try XCTUnwrap(NSScreen.main)
+
+        for _ in 0..<4 { controller.show(image(), on: screen) }
+        let pinned = try XCTUnwrap(controller.cards.last)
+        let bottomSlot = CaptureCardLayout.nextOrigin(
+            visibleFrame: screen.visibleFrame,
+            cardSize: pinned.frame.size,
+            stackedHeight: 0
+        )
+        XCTAssertGreaterThan(pinned.frame.origin.y, bottomSlot.y, "the fourth card starts higher up the stack")
+
+        pinned.isPinned = true
+        for card in controller.cards where card !== pinned {
+            controller.dismiss(card)
+        }
+
+        XCTAssertEqual(controller.cards.count, 1)
+        XCTAssertEqual(pinned.frame.origin.y, bottomSlot.y, accuracy: 0.5, "S1: the pinned card drops into the free slot")
+
+        controller.show(image(), on: screen)
+        let next = try XCTUnwrap(controller.cards.last)
+        XCTAssertGreaterThan(next.frame.origin.y, pinned.frame.origin.y, "the next capture stacks right above it")
+        XCTAssertEqual(
+            next.frame.origin.y,
+            bottomSlot.y + pinned.frame.height + CaptureCardLayout.gap,
+            accuracy: 0.5,
+            "no hole is left between them"
+        )
+    }
+
+    func testTheControllerNeverEvictsAPinnedCard() throws {
         try XCTSkipIf(NSScreen.main == nil, "needs a screen to place a card")
         let controller = CaptureCardController()
         let screen = try XCTUnwrap(NSScreen.main)
 
         controller.show(image(), on: screen)
-        controller.show(image(), on: screen)
         let pinned = try XCTUnwrap(controller.cards.first)
         pinned.isPinned = true
-        let pinnedFrame = pinned.frame
 
         for _ in 0..<CaptureCardController.maximumUnpinnedCards {
             controller.show(image(), on: screen)
@@ -169,11 +204,22 @@ final class CaptureCardTests: XCTestCase {
         XCTAssertEqual(controller.cards.count, CaptureCardController.maximumUnpinnedCards + 1,
                        "S1: the cap counts the unpinned cards only")
         XCTAssertTrue(controller.cards.contains { $0 === pinned }, "S1: a pinned card is never evicted")
-        XCTAssertEqual(pinned.frame, pinnedFrame, "S1: a pinned card keeps the spot it was left in")
         XCTAssertEqual(
             pinned.level.rawValue,
             NSWindow.Level.screenSaver.rawValue + 2,
             "S1: the card stays above the palettes and the overlay"
         )
+    }
+
+    // MARK: - Cursor
+
+    /// S1 (owner's second pass): neither the drawing overlay's crosshair nor
+    /// the board's crosshair may leak onto a capture card — it is a result you
+    /// click, not a canvas.
+    func testThePointerOverTheCardIsTheArrowEvenWhileDrawing() {
+        let card = view()
+        NSCursor.crosshair.set()
+        card.cursorUpdate(with: NSEvent())
+        XCTAssertEqual(NSCursor.current, NSCursor.arrow, "the card answers with the arrow, not the tool's cursor")
     }
 }

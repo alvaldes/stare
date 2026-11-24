@@ -32,6 +32,19 @@ Branch `feat/capture-extras`, off `main` at `65c94a0`. Runner: `swift test` (one
 | T4 | S4 | Settings placement card spans the pane instead of stopping at 700 pt | parent | 797d9cd |
 | T5 | S5 | Pointer highlighter preview is shorter | parent | 17db96d |
 
+## Backlog (owner, after the first manual pass — recorded, not started)
+
+- **B1** "en settings se debe de poder configurar el tamanno de los preview en la grilla del historial"
+- **B2** "al historial le falta un comportamiento como maccy que si doy click afuera se cierra"
+- **B3** "la imagen del historial si se pega en la pizarra pero no centrada"
+- **B4** "la imagen en la pizarra debe de poder ajustarse como mismo se hace con el cursor tool (V) en las demas marcas y si se ajusta el tamano debe de poser mantener la forma si se hace el ajuste con shift presisonado. Esto del shift presionado es para todo lo que hace el tool 'V'"
+- **B5** "un detalle es que la imagen se inserta invertida - /Users/alvaldes/Library/Application Support/dev.alvaldes.stare/CaptureHistory/captures/39E94DD1-2481-46FB-A833-543435EB2CD9.png"
+- **B6** "el esc en la pizarra no borra la imagen"
+- **B7** "settings debe tener un min de ancho y altura al que se puede achicar"
+- **B8** "las card en settings que estan en 2 col deben de verse bien y para eso deben tener un estilo donde se trate de que en una fila ambas card tengan ls misma altura o que la combinacion de varias en una col sea la altua de la card de la otra col asi queda simetrico todo."
+
+B3, B5 and B6 are defects in what T2b just shipped, not new wishes; B1, B2, B4, B7 and B8 are new work. B4 leaks out of the board: the Shift-to-keep-the-shape rule is asked for every surface the cursor tool touches.
+
 ## Log
 
 - **L1** (the owner's request, verbatim):
@@ -51,4 +64,10 @@ Branch `feat/capture-extras`, off `main` at `65c94a0`. Runner: `swift test` (one
 - **L8** (known gap, reported by the worker): the board's image layer is not undoable — the board's journal is stroke-typed and an image op would mean touching `DrawingSession.swift`, which was outside that unit's surfaces.
 - **L9** (evidence, verification and the fixes it forced): an independent verifier reproduced eight findings against the first cut, six of them real and fixed before the commits — the panel's keyboard never reached the hosting view (`NSHostingView` declines first responder, so Esc, the arrows and ↵ were dead through the real event path), the store trusted `fileName` from the index and would read and delete outside its own folder on a hand-edited index, ↓/↑ walked the grid backwards, a board image hanging off the base was squeezed into the intersection instead of clipped, the cap was not enforced at load, and a zero-width screen docked the column dead centre. Each fix landed after a RED that reproduced the probe. New classes: `CaptureHistoryPanelKeyboardTests`, `CaptureHistoryIndexPathTests`, `BoardImageClipTests`, `ToolbarAnchorRegressionTests`.
 - **L10** (evidence, commits): `c594f15` (T3), `17db96d` (T5), `e6fcdec` (T1), `797d9cd` (T2a + T2b + T4 + docs). Full suite 619 tests, 0 failures, except `RedactionDispatchTests.testEveryPixelateBlockIsConstantInsideThePatch`, which fails in roughly one run in three on a tree this diff never touches (it passes 3/3 standalone and the class was green inside an earlier full run): a load-dependent pre-existing flake, reported as such rather than worked around.
-- **L11** (slice note): `797d9cd` carries T2a and T2b together (about 1,300 authored lines) because the pick route, the board's image layer and the controller that owns both share `OverlayController.swift`; splitting them would have left a commit that could not build. Delivery shape when publishing: T3, T5 and T1 are three small PRs of their own, and T2 is one PR of two review passes — the history (store, panel, hotkey) and the board's image layer.
+- **L11** (slice note):`797d9cd` carries T2a and T2b together (about 1,300 authored lines) because the pick route, the board's image layer and the controller that owns both share `OverlayController.swift`; splitting them would have left a commit that could not build. Delivery shape when publishing: T3, T5 and T1 are three small PRs of their own, and T2 is one PR of two review passes — the history (store, panel, hotkey) and the board's image layer.
+- **L12** (owner's second manual pass, verbatim, and what it changed):
+  "- el cursor sobre las card de captura debe ser el normal no el de la tool en dibujo o en whiteboard
+  - cuando se toma una captra y se fija esta queda abajo de la pila pero cuando se siguen tomando capturas y se apilan arriba y hago pin de la cuarta esta se fija en la posicion y el resto de capturas se cierra porque no estan pineadas. Lo que deberia hacer seguido de eso es bajar la captura 4 a donde estaba la captura 2 asi sigue ese efecto de apilada y la siguiente captura aparece en posicion 3.
+  - en el historial las flechas no hacen nada
+  - historial: el enter no copia la imagen, copia algo en blanco"
+  Two of these are corrections to S1 and two are defects in the shipped T2a: the card now answers with the arrow cursor, and the stack is repacked after every appearance and every disappearance with pinned cards keeping their slot, so a pinned card drops into the free slot instead of hanging where the stack had grown to. The dead keyboard was not the responder chain — the panel is a non-activating window and the app was never activated, so every key went to the app underneath (which is also why Return "copied a blank image": it pasted that app's stale clipboard). The panel now activates Stare, remembers the frontmost app for the hide hook to restore, and routes keys through a local monitor as well as the responder chain. Pinned by `testThePointerOverTheCardIsTheArrowEvenWhileDrawing`, `testPinningTheNewestCardDropsItIntoTheFreeSlotWhenTheOthersGo`, and the strengthened `testAPickWithNoBoardOpenCopiesToThePasteboard`, which now decodes what was copied instead of trusting the pasteboard type.

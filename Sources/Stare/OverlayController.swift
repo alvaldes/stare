@@ -488,8 +488,15 @@ final class OverlayController {
             return
         }
         if isActive { deactivate(restoringFocus: false) }
+        // The panel is a non-activating window: it can be key inside Stare and
+        // still receive nothing while another app is frontmost, so the arrows,
+        // Return and Esc would die and Return would land in the app underneath
+        // and paste its stale clipboard. Activating here is what makes the
+        // keyboard work at all; the hide hook hands the foreground back.
+        rememberFrontmostApplication()
+        NSApp.activate(ignoringOtherApps: true)
         captureHistoryPanel.showPanel()
-        Diag.log("capture history visible entries=\(captureHistoryStore.entries.count)")
+        Diag.log("capture history visible entries=\(captureHistoryStore.entries.count) active=\(NSApp.isActive)")
     }
     /// What picking a history item does with its image (T2b/S2): while the
     /// whiteboard is open the pick pastes the capture onto the board's current

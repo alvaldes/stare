@@ -81,11 +81,60 @@ final class CaptureHistoryPanel: NSPanel {
         if let hostingView {
             makeFirstResponder(hostingView)
         }
+        installKeyMonitor()
     }
 
     func hide() {
+        removeKeyMonitor()
         orderOut(nil)
         onHidden?()
+    }
+
+    // MARK: Keyboard monitoring
+
+    /// A local monitor as well as the responder chain: SwiftUI can move the
+    /// window's first responder after the panel is key, and a key that lands
+    /// nowhere is exactly the bug the owner hit twice. The monitor sees the
+    /// event before the window does, so the mapping below runs once, never
+    /// twice.
+    private var keyMonitor: Any?
+
+    private func installKeyMonitor() {
+        removeKeyMonitor()
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.isVisible else { return event }
+            return self.handleKey(event) ? nil : event
+        }
+    }
+
+    private func removeKeyMonitor() {
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
+    }
+
+    /// The one key mapping: Esc closes, the arrows walk the grid (↓/→ toward the
+    /// older captures, because the grid reads newest first), Return picks.
+    /// Anything with Command or Control is somebody else's and passes through.
+    /// Returns whether the event was consumed.
+    func handleKey(_ event: NSEvent) -> Bool {
+        // Command and Control belong to the app's menus and its own shortcuts.
+        guard event.modifierFlags.intersection([.command, .control]).isEmpty else { return false }
+        switch event.keyCode {
+        case 53: // Esc
+            hide()
+            return true
+        case 123, 126: // ←, ↑: previous — one entry newer
+            model.moveSelection(-1)
+            return true
+        case 124, 125: // →, ↓: next — one entry older
+            model.moveSelection(1)
+            return true
+        case 36, 76: // Return, keypad Enter
+            model.pickSelected()
+            return true
+        default:
+            return false
+        }
     }
 
     /// Centres the panel inside `screen`'s visible frame, clamped so it never
@@ -137,15 +186,19 @@ final class CaptureHistoryPanelHostingView: NSHostingView<CaptureHistoryPanelCon
     override var acceptsFirstResponder: Bool { true }
 
     override func keyDown(with event: NSEvent) {
+        guard window?.isVisible == true else {
+            super.keyDown(with: event)
+            return
+        }
         switch event.keyCode {
-        case 53: // Esc
-            model.close()
-        case 123, 126: // ←, ↑: previous — one entry newer
-            model.moveSelection(-1)
-        case 124, 125: // →, ↓: next — one entry older
-            model.moveSelection(1)
-        case 36, 76: // Return, keypad Enter
-            model.pickSelected()
+        case 53, 123, 124, 125, 126, 36, 76:
+            // Install the panel as the router instead of duplicating the
+            // mapping: the monitor normally consumes these first.
+            if let panel = window as? CaptureHistoryPanel {
+                _ = panel.handleKey(event)
+                return
+            }
+            super.keyDown(with: event)
         default:
             super.keyDown(with: event)
         }
