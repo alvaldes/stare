@@ -166,9 +166,11 @@ final class CaptureCardTests: XCTestCase {
         // `NSScreen.main`: that one follows the key window, so on a desk with more
         // than one display it can answer with a different screen's frame between
         // the placement and this assertion, which read as the card being in the
-        // wrong slot when it was not.
+        // wrong slot when it was not. Containment is asked of the card's centre, so
+        // a card sitting on a shared edge still resolves to one screen.
+        let centreOfCard = CGPoint(x: pinned.frame.midX, y: pinned.frame.midY)
         let cardScreen = try XCTUnwrap(
-            NSScreen.screens.first { $0.visibleFrame.contains(pinned.frame.origin) } ?? NSScreen.main,
+            NSScreen.screens.first { $0.visibleFrame.contains(centreOfCard) },
             "the pinned card has to land inside some screen's visible frame"
         )
         let bottomSlot = CaptureCardLayout.nextOrigin(
