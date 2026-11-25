@@ -732,7 +732,7 @@ final class GeneralPreferencesTests: XCTestCase {
         // stores; with nothing stored the palette opens at this spot. The
         // border-aware overload (T9/S12) must reproduce it for today's top
         // dock so the reset target never moves on its own.
-        XCTAssertEqual(ToolbarGripperSpec.defaultAnchor, CGPoint(x: 0.5, y: 0.08))
+        XCTAssertEqual(ToolbarGripperSpec.defaultAnchor, CGPoint(x: 0.5, y: 0.92))
         XCTAssertEqual(ToolbarGripperSpec.defaultAnchor(border: .top, screenFrame: Self.screenFrame), ToolbarGripperSpec.defaultAnchor)
     }
 
@@ -746,12 +746,12 @@ final class GeneralPreferencesTests: XCTestCase {
         for border in ToolbarBorder.allCases {
             let anchor = ToolbarGripperSpec.defaultAnchor(border: border, screenFrame: Self.screenFrame)
             switch border {
-            case .top: XCTAssertEqual(anchor, CGPoint(x: 0.5, y: 0.08))
-            case .bottom: XCTAssertEqual(anchor, CGPoint(x: 0.5, y: 0.92))
+            case .top: XCTAssertEqual(anchor, CGPoint(x: 0.5, y: 0.92))
+            case .bottom: XCTAssertEqual(anchor, CGPoint(x: 0.5, y: 0.08))
             case .left, .right:
                 // The side inset is the absolute distance the row keeps from
                 // the top/bottom edge, read back as a fraction of the width.
-                let inset = 0.08 * Self.screenFrame.height / Self.screenFrame.width
+                let inset = ToolbarGripperSpec.crossEdgeInset * Self.screenFrame.height / Self.screenFrame.width
                 XCTAssertEqual(anchor.x, border == .left ? inset : 1 - inset, accuracy: 1e-9)
                 XCTAssertEqual(anchor.y, 0.5)
             }
@@ -771,6 +771,40 @@ final class GeneralPreferencesTests: XCTestCase {
     private static let horizontalBarSize = CGSize(width: 600, height: 42)
     private static let verticalBarSize = CGSize(width: 42, height: 600)
 
+    /// The owner's report ("horizontal top pone la barra abajo en vez de
+    /// arriba"), pinned as geometry rather than as a magic number: a bar docked
+    /// to the top edge sits in the TOP HALF of the screen, and one docked to the
+    /// bottom edge sits in the bottom half. Screen coordinates grow upwards, so a
+    /// top dock has a HIGH y.
+    func testDockingToTheTopPutsTheBarAtTheTopAndToOneTheBottomAtTheBottom() {
+        let top = ToolbarGripperSpec.resetRect(
+            barSize: Self.horizontalBarSize,
+            screenFrame: Self.screenFrame,
+            visibleFrame: Self.plainVisibleFrame,
+            border: .top
+        )
+        let bottom = ToolbarGripperSpec.resetRect(
+            barSize: Self.horizontalBarSize,
+            screenFrame: Self.screenFrame,
+            visibleFrame: Self.plainVisibleFrame,
+            border: .bottom
+        )
+        XCTAssertGreaterThan(top.midY, Self.plainVisibleFrame.midY, "a top dock belongs in the top half")
+        XCTAssertLessThan(bottom.midY, Self.plainVisibleFrame.midY, "a bottom dock belongs in the bottom half")
+        // And each keeps the same 8% inset from its own edge, measured to the
+        // bar's centre — the anchor the panel and the reset path both use.
+        XCTAssertEqual(
+            top.midY,
+            Self.screenFrame.maxY - ToolbarGripperSpec.crossEdgeInset * Self.screenFrame.height,
+            accuracy: 1
+        )
+        XCTAssertEqual(
+            bottom.midY,
+            Self.screenFrame.minY + ToolbarGripperSpec.crossEdgeInset * Self.screenFrame.height,
+            accuracy: 1
+        )
+    }
+
     func testResetRectForTodaysTopBorderReproducesTheBarOpensExactlyThere() {
         // Same centre-and-clamp math the panel has always applied for the
         // fresh-install anchor: pin the exact rect for a horizontal bar at
@@ -782,7 +816,7 @@ final class GeneralPreferencesTests: XCTestCase {
                 visibleFrame: Self.plainVisibleFrame,
                 border: .top
             ),
-            CGRect(x: 456, y: 58, width: 600, height: 42)
+            CGRect(x: 456, y: 882, width: 600, height: 42)
         )
     }
 
@@ -822,9 +856,11 @@ final class GeneralPreferencesTests: XCTestCase {
             visibleFrame: Self.plainVisibleFrame,
             border: .left
         )
+        // The row is docked at the TOP now, so its gap is measured from the top
+        // edge — the same distance the column keeps from the left edge.
         XCTAssertEqual(
             vertical.minX - Self.screenFrame.minX,
-            horizontal.minY - Self.screenFrame.minY,
+            Self.screenFrame.maxY - horizontal.maxY,
             accuracy: 0.5
         )
     }

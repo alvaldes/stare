@@ -9,12 +9,12 @@ final class ToolbarAnchorRegressionTests: XCTestCase {
     func testAZeroWidthScreenDocksTheColumnOnItsSideAtTheCrossEdgeInset() {
         XCTAssertEqual(
             ToolbarGripperSpec.sideFraction(screenFrame: .zero),
-            ToolbarGripperSpec.defaultAnchor.y,
+            ToolbarGripperSpec.crossEdgeInset,
             "the fallback is the 8% cross-edge inset, not the centre"
         )
         XCTAssertEqual(
             ToolbarGripperSpec.defaultAnchor(border: .right, screenFrame: .zero).x,
-            1 - ToolbarGripperSpec.defaultAnchor.y,
+            1 - ToolbarGripperSpec.crossEdgeInset,
             "the column still docks on its side"
         )
     }

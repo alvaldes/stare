@@ -120,57 +120,12 @@ final class SettingsBarPreviewTests: XCTestCase {
 
     // MARK: - The whole bar inside the stage (T2/S2)
 
-    /// T4/S5: with the `⁞` open, the preview still fits the stage by scaling
-    /// instead of clipping: the extras open as their own row (a second
-    /// saturated band — the active hidden tool's accent marks it), and every
-    /// row keeps the fit factor's share of the pane width. Both assertions
-    /// compare the two rendered widths against each other through the fit
-    /// ratio, never hard-coded pixel geometry: the natural size the stage
-    /// measures is the size the ratio divides.
-    func testThePreviewKeepsScalingWhenTheOverflowIsOpen() throws {
-        let defaultRender = try Self.renderPane(
-            cardsWidth: Self.defaultCardsWidth, orientation: .horizontal,
-            tool: .spotlight, openOverflow: true
-        )
-        let minimumRender = try Self.renderPane(
-            cardsWidth: Self.minimumCardsWidth, orientation: .horizontal,
-            tool: .spotlight, openOverflow: true
-        )
-
-        let defaultBands = Self.saturatedBands(in: defaultRender)
-        let minimumBands = Self.saturatedBands(in: minimumRender)
-
-        // Opened: the ⁞'s own mark leaves the tool row; the marked hidden tool
-        // (spotlight, active) sits in the extras row, a second saturated band.
-        guard defaultBands.count == 2, minimumBands.count == 2 else {
-            XCTFail(
-                "T4/S5: the open preview must show two saturated bands — the tool row and the "
-                    + "extras row (default \(defaultBands.count), minimum \(minimumBands.count))")
-            return
-        }
-        XCTAssertGreaterThan(
-            minimumBands[1].top, minimumBands[0].bottom,
-            "S1: the extras open as a second row of the pill — a separate band below the tools")
-
-        // The tool row carries the inks, as always; scaled, with the extras
-        // open: the minimum width carries the default width's ink, fitted.
-        let inkAtDefault = try Self.inkRuns(in: defaultRender).reduce(0) { $0 + $1.width }
-        let inkAtMinimum = try Self.inkRuns(in: minimumRender).reduce(0) { $0 + $1.width }
-        let fitted = (Self.minimumCardsWidth - SettingsMetrics.stageChrome)
-            / (Self.defaultCardsWidth - SettingsMetrics.stageChrome)
-        XCTAssertGreaterThanOrEqual(
-            inkAtMinimum, inkAtDefault * fitted * 0.97,
-            "T4/S5: with the overflow open the preview still scales — nothing was cut to hold the extras row")
-
-        // The extras row itself scales with the same fit: the marked
-        // spotlight's accent run at the minimum width is the default width's
-        // run shrunk by the fit factor. A preview that kept the extras at
-        // their unscaled size (or swapped them for chrome elsewhere in the
-        // pane, which never scales) fails here.
-        XCTAssertGreaterThanOrEqual(
-            minimumBands[1].widestRunWidth,
-            defaultBands[1].widestRunWidth * fitted - 2,
-            "T4/S5: the open extras row scales by the same fit factor as the tool row")
+    /// The preview draws the bar's more button and, by the owner's call, does
+    /// nothing with it: Settings is for arranging the bar, not for opening the
+    /// hidden tools, and a button that answered there made the pane busier
+    /// without teaching anything the card below does not already say.
+    func testThePreviewDrawsTheMoreButtonWithoutAnsweringIt() {
+        XCTAssertEqual(BarPane.previewOverflowPresentation, .inert)
     }
 
     /// S2: at the minimum window width (cards 625) the preview keeps every

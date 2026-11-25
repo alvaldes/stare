@@ -75,6 +75,27 @@ final class ToolbarOverflowPlacementTests: XCTestCase {
         }
     }
 
+    /// The panel centres on the button that opened it, along the bar's axis, so
+    /// it reads as belonging to that button and not to the bar's far end.
+    func testThePanelCentresOnTheButtonThatOpenedIt() {
+        // A vertical bar on the right, with the more button a third of the way
+        // down from its top edge.
+        let bar = verticalBar(on: .right)
+        let button = CGPoint(x: bar.midX, y: bar.maxY - bar.height / 3)
+        let frame = ToolbarOverflowPlacement.panelFrame(
+            panelSize: panel, barFrame: bar, border: .right, visibleFrame: visible, anchor: button)
+        XCTAssertEqual(frame.midY, button.y, accuracy: 0.5)
+        XCTAssertEqual(frame.maxX, bar.minX - ToolbarOverflowPlacement.gap, "still on the centre-facing side")
+
+        // A horizontal bar along the top, with the button near its right end.
+        let row = horizontalBar(on: .top)
+        let control = CGPoint(x: row.maxX - 60, y: row.midY)
+        let hanging = ToolbarOverflowPlacement.panelFrame(
+            panelSize: panel, barFrame: row, border: .top, visibleFrame: visible, anchor: control)
+        XCTAssertEqual(hanging.midX, control.x, accuracy: 0.5)
+        XCTAssertEqual(hanging.maxY, row.minY - ToolbarOverflowPlacement.gap)
+    }
+
     /// A panel with no room left keeps its leading corner on screen instead of
     /// computing a frame outside the display.
     func testAPanelLargerThanTheRoomStaysReachable() {

@@ -37,6 +37,12 @@ Bring `main` in as it advances (`git merge main`) so the merge at the end stays 
 - **S6** A tool behind the `⁞` keeps its key: pressing the spotlight's key selects the spotlight whether it
   sits on the bar or behind the `⁞`, and the bar shows that it is the active tool.
 
+- **S8** (owner feedback round 2, verbatim): "aparece del lado contrario y no aparece junto a los '...' centrado";
+  "como saco los separadores que ya saque del pool, ademas el click en el btn preview no debe hacer nada asi
+  queda mas limpio"; "horizontal top pone la barra abajo en vez de arriba. Tambien cambie de horizontal a
+  vertical y se rompio la bar (nota: debe tomar la pos por defecto cuando se cambia de una config de
+  placement)".
+
 ## Tasks
 
 | ID | Specs | Task | Route | Commit |
@@ -46,7 +52,8 @@ Bring `main` in as it advances (`git merge main`) so the merge at the end stays 
 | T3 | S4 | The Settings pool as the bar's hidden section: titled, worded, never inert | worker | ed576a5 |
 | T4 | S5 | The Settings preview shows the `⁞` and the draft's hidden tools | worker | ed576a5 |
 | T5 | S1-S6 | Docs: README, CHANGELOG, and this log | inline (parent) | d7b31f6 |
-| T6 | S7 | Owner feedback round 1: the extras get their own minimal panel, toward the screen; the card reads "More tools"; a roomy drop zone | inline (parent) | pending |
+| T6 | S7 | Owner feedback round 1: the extras get their own minimal panel, toward the screen; the card reads "More tools"; a roomy drop zone | inline (parent) | dca12b2 |
+| T7 | S8 | Owner feedback round 2: fix the inverted top/bottom dock, centre the panel on the button, make the preview button inert, let separators be removed | inline (parent) | pending |
 
 **Slice note.** The `20570 authored changed lines in 96 commits since origin/main` the commit hook reports is the
 unpublished `main` history this branch sits on, not this batch: T1+T2 are ~250 authored lines across six
@@ -171,3 +178,19 @@ files. Delivery shape when publishing stays the owner's call, and `main` is merg
   edit beyond the parent's own. The work was redone inline. `main` was checked before editing: it had not
   moved (the `812620c` commit belongs to the sibling session's own branch, not to `main`), so there was
   nothing to merge.
+- **L20** (S8): `ToolbarGripperSpec.defaultAnchor(border:)` returned `y: 0.08` for `.top` and `0.92` for
+  `.bottom`, but the anchor is read against a screen whose y grows upwards — so a top-docked bar landed at the
+  bottom and vice versa, a v0.5 defect its own tests had pinned. Fixed by measuring the inset FROM the docked
+  edge, with `crossEdgeInset` named instead of `defaultAnchor.y` doing double duty, and a new test that asserts
+  the HALVES (`top.midY > visible.midY`) rather than a magic number. That inversion is also why the extras
+  panel opened "del lado contrario": it was told the bar sits on the edge opposite to the real one. The panel
+  now also centres on the `⁞` itself — the bar reports the button's frame, the panel converts it to screen
+  space — instead of aligning with the bar's leading edge. The preview's `⁞` is inert (`.inert`), which retires
+  the open-overflow pixel test and, with it, the gap R3-002 kept naming. Separators can finally leave: a
+  right-click on a placed separator in the preview removes exactly that one (`removingItem(at:)`, three tests),
+  and the card's help says so. Verified: 865 `StareCoreTests` + 293 `StareTests`, 0 failures, exit 0
+  (`--skip CardCursorRoutingTests`, L8).
+- **L21** (open, S8): "cambié de horizontal a vertical y se rompió la bar" is attributed to L20's inversion —
+  the dock landed on the wrong edge, which also fed the panel's side. The reset-on-placement-change path
+  (`ToolbarPanel` observing `$toolbarOrientation`/`$toolbarBorder` and clearing the saved anchor) is unchanged
+  and still the mechanism; the owner re-tests it after the fix before anything else is added there.

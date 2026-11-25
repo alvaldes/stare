@@ -1756,7 +1756,12 @@ final class OverlayController {
                 self?.hideOverflowPanel()
             }
         )
-        panel.place(beside: toolbar.frame, border: state.toolbarBorder, screen: screen)
+        panel.place(
+            beside: toolbar.frame,
+            border: state.toolbarBorder,
+            screen: screen,
+            anchor: toolbar.overflowButtonScreenCentre()
+        )
         overflowPanel = panel
         panel.orderFrontRegardless()
     }

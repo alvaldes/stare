@@ -36,7 +36,8 @@ final class SettingsHiddenSectionTests: XCTestCase {
         and they keep their shortcuts. Drag one onto the bar to bring it back, and \
         drag a bar tool onto a spot here to hide it. A tool is never nowhere. A \
         placed separator comes back off the bar through any spot here, and the \
-        bar's first tool cannot leave — the preview dims it.
+        bar's first tool cannot leave — the preview dims it. Right-click a separator \
+        on the bar to remove it.
         """)
     }
 

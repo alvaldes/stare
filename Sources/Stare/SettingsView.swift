@@ -530,7 +530,8 @@ struct BarPane: View {
     and they keep their shortcuts. Drag one onto the bar to bring it back, and \
     drag a bar tool onto a spot here to hide it. A tool is never nowhere. A \
     placed separator comes back off the bar through any spot here, and the \
-    bar's first tool cannot leave — the preview dims it.
+    bar's first tool cannot leave — the preview dims it. Right-click a separator \
+    on the bar to remove it.
     """
 
     /// The real bar the stage renders (T4/S5): the draft's item list AND the
@@ -541,6 +542,10 @@ struct BarPane: View {
     /// run. Internal, not private, so a test can pin the configuration —
     /// `showsOverflow` and `hiddenTools` on the very view the stage renders —
     /// through the same seam the other bar seams use.
+    /// The preview's `⁞` is drawn, never answered: the pane is for arranging,
+    /// and the card below already says what is hidden behind the button.
+    static let previewOverflowPresentation: ToolbarView.OverflowPresentation = .inert
+
     var previewToolbar: ToolbarView {
         ToolbarView(
             state: toolbarPreviewState,
@@ -555,9 +560,12 @@ struct BarPane: View {
                 sourceDrop: { target, edge in
                     handleBarDrop(target: target, edge: edge, payload: .addSeparator)
                 },
-                fixed: { item in !model.toolbarTools.canLeave(item) }
+                fixed: { item in !model.toolbarTools.canLeave(item) },
+                removeItem: { index in
+                    model.toolbarTools = model.toolbarTools.removingItem(at: index)
+                }
             ),
-            overflowPresentation: .inline
+            overflowPresentation: Self.previewOverflowPresentation
         )
     }
 

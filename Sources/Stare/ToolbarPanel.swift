@@ -151,6 +151,8 @@ final class ToolbarPanel: NSPanel {
         onOverflowToggle: (() -> Void)? = nil
     ) {
         self.state = state
+        overflowFrameBox = OverflowFrameBox()
+        let frameBox = overflowFrameBox
         let hosting = ToolbarHostingView(
             rootView: ToolbarView(
                 state: state,
@@ -161,7 +163,8 @@ final class ToolbarPanel: NSPanel {
                 onPreviousPage: onPreviousPage,
                 onNextPage: onNextPage,
                 onDeletePage: onDeletePage,
-                onOverflowToggle: onOverflowToggle
+                onOverflowToggle: onOverflowToggle,
+                onOverflowFrame: { frame in frameBox.frame = frame }
             )
         )
         hosting.sizingOptions = [.intrinsicContentSize]
@@ -234,6 +237,31 @@ final class ToolbarPanel: NSPanel {
     }
 
     private var settingCancellables: Set<AnyCancellable> = []
+
+    /// Where the more button sits, in the window's top-left space as SwiftUI
+    /// reports it. Held in a box because the view is built before `super.init`
+    /// runs, so nothing may touch `self` yet.
+    final class OverflowFrameBox {
+        var frame: CGRect?
+    }
+
+    private let overflowFrameBox: OverflowFrameBox
+
+    /// The same frame in screen coordinates, or nil before the first layout
+    /// pass. The extras panel centres on it, so the panel reads as opened by
+    /// that button rather than by the bar's far end.
+    func overflowButtonScreenCentre() -> CGPoint? {
+        guard let frame = overflowFrameBox.frame,
+              let hosting = contentView else { return nil }
+        let topLeft = CGRect(
+            x: frame.minX,
+            y: hosting.bounds.height - frame.maxY,
+            width: frame.width,
+            height: frame.height
+        )
+        let inScreen = convertToScreen(topLeft)
+        return CGPoint(x: inScreen.midX, y: inScreen.midY)
+    }
 
     /// Schedules a resize to the content's fitting size off the current
     /// update: the hooks fire while SwiftUI is still settling, and changing

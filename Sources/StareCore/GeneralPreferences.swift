@@ -466,6 +466,20 @@ public struct ToolbarToolLayout: Codable, Equatable, Sendable {
         return ToolbarToolLayout(items: copy, pool: poolOrder)
     }
 
+    /// Takes the item at `index` off the bar (the organiser's Remove). Every
+    /// separator carries the same value, so a specific one can only be named by
+    /// where it sits — the index the bar draws it at. A tool goes through
+    /// `removing`, which keeps the last-tool guard; anything out of range
+    /// changes nothing.
+    public func removingItem(at index: Int) -> ToolbarToolLayout {
+        guard items.indices.contains(index) else { return self }
+        let item = items[index]
+        if let tool = item.tool { return removing(.tool(tool)) }
+        var copy = items
+        copy.remove(at: index)
+        return ToolbarToolLayout(items: copy, pool: pool)
+    }
+
     /// Reorders the pool: `tool` moves to `index` — the insert position in
     /// the pool as it would be without the tool (clamped). A tool not in the
     /// pool changes nothing.
@@ -567,7 +581,16 @@ public enum ToolbarGripperSpec {
     /// lands back here. This is exactly the anchor the top border keeps;
     /// `defaultAnchor(border:screenFrame:)` is the orientation/border-aware
     /// form (S12).
-    public static let defaultAnchor = CGPoint(x: 0.5, y: 0.08)
+    ///
+    /// Screen coordinates grow upwards (AppKit), so the top edge is the HIGH
+    /// y: the anchor is the inset measured from the docked edge, not from the
+    /// bottom of the screen. Getting that backwards is what put a top-docked
+    /// bar at the bottom of the display.
+    public static let defaultAnchor = CGPoint(x: 0.5, y: 1 - ToolbarGripperSpec.crossEdgeInset)
+
+    /// The air between the bar and the edge it is docked to, as a fraction of
+    /// the screen's height: 8 %, the same number of points on every border (S3).
+    public static let crossEdgeInset: CGFloat = 0.08
 
     /// The default anchor for a docked border (S12): the bar's centre sits 8%
     /// in from the chosen edge and centred along it. The 8% is always read off
@@ -577,10 +600,12 @@ public enum ToolbarGripperSpec {
     /// number of points on a wide screen, which is what made the column read
     /// further in than the row.
     public static func defaultAnchor(border: ToolbarBorder, screenFrame: CGRect) -> CGPoint {
-        let crossInset = defaultAnchor.y
+        let crossInset = crossEdgeInset
         switch border {
-        case .top: return CGPoint(x: 0.5, y: crossInset)
-        case .bottom: return CGPoint(x: 0.5, y: 1 - crossInset)
+        // The inset is measured FROM the docked edge, and y grows upwards: the
+        // top edge is the high y.
+        case .top: return CGPoint(x: 0.5, y: 1 - crossInset)
+        case .bottom: return CGPoint(x: 0.5, y: crossInset)
         case .left: return CGPoint(x: sideFraction(screenFrame: screenFrame), y: 0.5)
         case .right: return CGPoint(x: 1 - sideFraction(screenFrame: screenFrame), y: 0.5)
         }
@@ -594,8 +619,8 @@ public enum ToolbarGripperSpec {
     /// cross-edge fraction itself, not the dead-centre x — the doc comment on
     /// `defaultAnchor` promises the column keeps docking on its side.
     static func sideFraction(screenFrame: CGRect) -> CGFloat {
-        guard screenFrame.width > 0 else { return defaultAnchor.y }
-        return min(defaultAnchor.y * screenFrame.height / screenFrame.width, 0.5)
+        guard screenFrame.width > 0 else { return crossEdgeInset }
+        return min(crossEdgeInset * screenFrame.height / screenFrame.width, 0.5)
     }
 
     /// The margin the palette keeps inside the visible frame when clamping.

@@ -278,6 +278,10 @@ struct ToolbarOrganiserHooks {
     /// drag-out and the preview marks them fixed. Nil — the default, on
     /// every surface but the organiser — means everything placed can leave.
     var fixed: ((ToolbarLayoutItem) -> Bool)?
+    /// Takes the item at that index off the bar — the separator right-clicked in
+    /// the preview. Separators all carry the same value, so only the position
+    /// names one.
+    var removeItem: (@MainActor (Int) -> Void)? = nil
 
     /// The item-only view of the shared payload hop: decodes the wire and
     /// delivers every payload that names a `ToolbarLayoutItem`. The tests
@@ -422,6 +426,9 @@ struct ToolbarView: View {
     enum OverflowPresentation: Equatable {
         case panel
         case inline
+        /// Draw the button, do nothing with it: the Settings preview shows that
+        /// the bar has one without pretending to open anything there.
+        case inert
     }
 
     var overflowPresentation: OverflowPresentation = .panel
@@ -429,6 +436,11 @@ struct ToolbarView: View {
     /// Asked to open or close the extras panel (T6). Nil keeps the inline
     /// behaviour, which is what every surface other than the real bar wants.
     var onOverflowToggle: (() -> Void)? = nil
+
+    /// Where the `⁞` sits, in the window's own top-left space (SwiftUI's
+    /// `.global`), so the panel can centre on the button that opened it. The
+    /// controller flips it into screen coordinates.
+    var onOverflowFrame: ((CGRect) -> Void)? = nil
     /// The organiser's measured item sizes, for the drop targets' midpoints.
     @State private var itemSizes: [ToolbarLayoutItem: CGSize] = [:]
 
@@ -557,12 +569,16 @@ struct ToolbarView: View {
         } else {
             // The stored list, drawn exactly as stored: tools as buttons,
             // separators as the same dividers the grouped bar always drew.
-            ForEach(Array(toolSection.enumerated()), id: \.offset) { _, item in
+            ForEach(Array(toolSection.enumerated()), id: \.offset) { index, item in
                 switch item {
                 case .tool(let tool):
-                    organiserWrapped(toolButton(tool), item)
+                    organiserWrapped(toolButton(tool), item, index: index)
                 case .separator:
-                    organiserWrapped(divider, item)
+                    organiserWrapped(divider, item, index: index)
+                        .contentShape(Rectangle())
+                        .contextMenu {
+                            Button("Remove Separator") { organiser?.removeItem?(index) }
+                        }
                 }
             }
             // S1: the `⁞` closes the tool run, right where the extras begin.
@@ -647,7 +663,7 @@ struct ToolbarView: View {
     /// reordered inside the bar; the pool targets are the ones that refuse
     /// it.
     @ViewBuilder
-    private func organiserWrapped(_ view: some View, _ item: ToolbarLayoutItem) -> some View {
+    private func organiserWrapped(_ view: some View, _ item: ToolbarLayoutItem, index: Int) -> some View {
         if let organiser {
             if organiser.fixed?(item) == true {
                 view
@@ -748,14 +764,16 @@ struct ToolbarView: View {
         let hidden = hiddenTools
         let symbol = ToolbarOverflowSpec.symbolName(selected: state.tool, hidden: hidden)
         let activeHidden = hidden.contains(state.tool) ? state.tool : nil
-        let marked = activeHidden.map { state.isToolMarked($0) }
-            ?? (overflowPresentation == .inline ? isOverflowOpen : false)
+        let marked = overflowPresentation == .inert
+            ? false
+            : activeHidden.map { state.isToolMarked($0) }
+                ?? (overflowPresentation == .inline ? isOverflowOpen : false)
         let help = ToolbarOverflowSpec.help(selected: state.tool, hidden: hidden)
         return Button {
-            if overflowPresentation == .panel, let onOverflowToggle {
-                onOverflowToggle()
-            } else {
-                isOverflowOpen.toggle()
+            switch overflowPresentation {
+            case .panel: onOverflowToggle?()
+            case .inline: isOverflowOpen.toggle()
+            case .inert: break
             }
         } label: {
             Image(systemName: symbol)
@@ -776,6 +794,13 @@ struct ToolbarView: View {
         .buttonStyle(.plain)
         .help(Text(verbatim: help))
         .accessibilityLabel(Text(verbatim: help))
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { onOverflowFrame?(geo.frame(in: .global)) }
+                    .onChange(of: geo.frame(in: .global)) { _, frame in onOverflowFrame?(frame) }
+            }
+        )
     }
 
     private func inkButton(_ ink: Ink) -> some View {

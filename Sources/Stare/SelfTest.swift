@@ -184,7 +184,7 @@ enum SelfTest {
         // the close button — the order the bar tail maps over — and its reset
         // targets the fresh-install anchor the app persists.
         let gripperAfterClose = ToolbarView.trailingItems.suffix(2) == [.close, .gripper]
-        let gripperAnchorsAtFreshInstall = ToolbarGripperSpec.defaultAnchor == CGPoint(x: 0.5, y: 0.08)
+        let gripperAnchorsAtFreshInstall = ToolbarGripperSpec.defaultAnchor == CGPoint(x: 0.5, y: 1 - ToolbarGripperSpec.crossEdgeInset)
         report.append(
             "palette gripper afterClose=\(gripperAfterClose) freshInstallAnchor=\(gripperAnchorsAtFreshInstall) "
                 + "ok=\(gripperAfterClose && gripperAnchorsAtFreshInstall)"

@@ -53,13 +53,14 @@ final class ToolbarOverflowPanel: NSPanel {
 
     /// Puts the panel beside the bar on the side that faces the middle of the
     /// screen, clamped into the screen's visible frame.
-    func place(beside barFrame: CGRect, border: ToolbarBorder, screen: NSScreen) {
+    func place(beside barFrame: CGRect, border: ToolbarBorder, screen: NSScreen, anchor: CGPoint? = nil) {
         let size = hosting.fittingSize
         let rect = ToolbarOverflowPlacement.panelFrame(
             panelSize: size,
             barFrame: barFrame,
             border: border,
-            visibleFrame: screen.visibleFrame
+            visibleFrame: screen.visibleFrame,
+            anchor: anchor
         )
         setFrame(rect, display: false)
     }
