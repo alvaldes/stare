@@ -119,3 +119,30 @@ files. Delivery shape when publishing stays the owner's call, and `main` is merg
   evidence (L7) and the horizontal case has an executed pixel test, but no assertion pins the vertical one;
   a measurement test would need a seam that only exists for tests, so it stays a recorded gap. R3-003 and the
   two readability findings are cosmetic. `SelfTest` was not run by the verifier (it needs a live session).
+- **L15** (review, second round): native review `review-1ee20395d7ecf028` approved and burned for the corrected
+  candidate (`60189f6..9a56b71`, lenses risk + reliability). Four non-blocking findings, two of them new: the
+  version guard read an unreadable version as 0 (`try? … ?? 0`, so a garbled field re-ran the upgrade), and the
+  open-overflow assertion covered only the horizontal preview.
+- **L16** (re-verification, then fix): the independent verifier closed the blocker through the REAL persistence
+  path, not just the codec — a version-less v0.5 blob seeded into `UserDefaultsPreferenceStore`, migrated, the
+  full bar rebuilt with the organiser's own drops, then three further launches returning exactly that bar — and
+  proved sensitivity by running the same probe on `def1993`, where it failed. It also left one advisory: the
+  v0.4 `tools`/`hidden` branch ignored `version` entirely. Both that and the review's garbled-version hole are
+  the same defect class, so they were fixed together: a document migrates only when it carries **no** version
+  at all, a readable older version still upgrades, and anything this build cannot read is treated as current
+  and left exactly as stored (`mayMigrate`). RED observed on the two new pins against `9a56b71`, GREEN after
+  (`ToolbarOverflowMigrationTests` 8/8). Suite: **856 `StareCoreTests` + 288 `StareTests`, 0 failures,
+  exit 0**.
+- **L17** (review, third round, closing): native review `review-03e559230787d0bb` approved and burned for
+  `60189f6..9efcbbd`. Five non-blocking findings, none new: the one-time upgrade still maps a version-less blob
+  that normalises to the v0.5 bar onto the shipped one (intended, bounded, L13), a v0.5 save that happens to be
+  identical to the old shipped bar cannot be told apart from an untouched one (inherent to a version-less
+  legacy shape), the vertical open-overflow column still has no executed assertion, and the two cosmetic ones
+  (the pixel heuristic that locates the `\u2049`, and the control's accent conflating "open" with "a hidden tool
+  armed").
+  **Accepted gap, on the record:** the open-overflow render test lives on the Settings preview, whose stage is
+  pinned to the horizontal bar by design (v0.5: a vertical bar distorted the pane), so the vertical open column
+  has render evidence (L7) but no assertion. Closing it needs a seam that exists only to open a private view
+  state (or a pixel-aimed synthetic click on the real bar); the layout is cosmetic and reversible, three
+  reviewers named it non-blocking, and the honest line is to leave it recorded rather than grow the view for
+  the test.
