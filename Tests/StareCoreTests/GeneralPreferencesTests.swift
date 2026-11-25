@@ -164,10 +164,26 @@ final class GeneralPreferencesTests: XCTestCase {
         try JSONDecoder().decode(ToolbarToolLayout.self, from: Data(json.utf8))
     }
 
-    /// The bar a fresh install must draw, pinned literally: every tool in
-    /// the documented order, a separator exactly between the tool families —
-    /// the dividers the grouped bar has always placed.
+    /// The bar a fresh install must draw now, pinned literally: the drawing
+    /// tools on the bar with a separator between the families, the extras
+    /// behind the `⁞`.
     private static let standardItems: [ToolbarLayoutItem] = [
+        .tool(.select), .separator,
+        .tool(.pen), .tool(.highlighter), .separator,
+        .tool(.arrow), .tool(.rectangle), .tool(.ellipse), .separator,
+        .tool(.text), .separator,
+        .tool(.eraser),
+    ]
+
+    /// The tools that ship behind the `⁞`, in the order the pool lists them
+    /// (the documented default order, minus whatever is on the bar).
+    private static let standardPool: [Tool] = [.line, .number, .blur, .spotlight, .laser]
+
+    /// The bar v0.5 shipped, pinned literally: every tool on the bar and
+    /// nothing behind the `⁞`. It is kept as a fixture because the saved
+    /// layout of an install nobody rearranged is exactly this document, and
+    /// that is the one saved bar the overflow batch upgrades.
+    private static let fullBarItems: [ToolbarLayoutItem] = [
         .tool(.select), .separator,
         .tool(.pen), .tool(.highlighter), .separator,
         .tool(.line), .tool(.arrow), .tool(.rectangle), .tool(.ellipse), .separator,
@@ -176,22 +192,57 @@ final class GeneralPreferencesTests: XCTestCase {
         .tool(.eraser),
     ]
 
-    func testStandardToolbarLayoutReproducesTodaysBar() {
+    func testStandardToolbarLayoutKeepsTheDrawingToolsAndPutsTheExtrasBehindTheOverflow() {
         XCTAssertEqual(ToolbarToolLayout.standard.items, Self.standardItems)
         // Separators are placeable items, not automatic family grouping: the
         // shipped layout simply holds them at the family boundaries.
-        XCTAssertEqual(ToolbarToolLayout.standard.items.filter { $0 == .separator }.count, 5)
-        XCTAssertEqual(ToolbarToolLayout.standard.visibleTools, Tool.toolbarGroups.flatMap { $0 })
-        XCTAssertTrue(ToolbarToolLayout.standard.pool.isEmpty)
+        XCTAssertEqual(ToolbarToolLayout.standard.items.filter { $0 == .separator }.count, 4)
+        XCTAssertEqual(ToolbarToolLayout.standard.visibleTools, ToolbarToolLayout.standardVisibleTools)
+        XCTAssertEqual(
+            ToolbarToolLayout.standardVisibleTools,
+            [.select, .pen, .highlighter, .arrow, .rectangle, .ellipse, .text, .eraser]
+        )
+        // The extras are not gone: they wait in the pool, in the documented
+        // order, and every one of them is reachable from the bar's `⁞`.
+        XCTAssertEqual(ToolbarToolLayout.standard.pool, Self.standardPool)
+        XCTAssertEqual(
+            Set(ToolbarToolLayout.standard.visibleTools).union(ToolbarToolLayout.standard.pool),
+            Set(Tool.allCases)
+        )
         XCTAssertEqual(GeneralPreferences.standard.toolbarTools, .standard)
+    }
+
+    /// S3: a saved layout that is still exactly the bar v0.5 shipped — every
+    /// tool on it, nothing behind the `⁞` — becomes the shipped bar of this
+    /// build, so an install nobody rearranged gets the shorter bar instead of
+    /// keeping the long one for ever.
+    func testAnUncustomisedSavedBarUpgradesToTheShippedOne() throws {
+        let saved = #"{"items":["tool:select","separator","tool:pen","tool:highlighter","separator","tool:line","tool:arrow","tool:rectangle","tool:ellipse","separator","tool:text","tool:number","separator","tool:blur","tool:spotlight","tool:laser","separator","tool:eraser"],"pool":[]}"#
+        XCTAssertEqual(try Self.decodeLayout(saved), .standard)
+    }
+
+    /// ...and a layout anyone touched is left exactly as saved: the upgrade
+    /// never rearranges a choice.
+    func testACustomisedSavedBarIsLeftExactlyAsSaved() throws {
+        let saved = #"{"items":["tool:select","separator","tool:pen","tool:highlighter","separator","tool:line","tool:arrow","tool:rectangle","tool:ellipse","separator","tool:text","tool:number","separator","tool:blur","tool:laser","separator","tool:eraser"],"pool":["spotlight"]}"#
+        let layout = try Self.decodeLayout(saved)
+        XCTAssertEqual(layout.pool, [.spotlight])
+        XCTAssertEqual(layout.visibleTools.count, 12)
+        XCTAssertFalse(layout.visibleTools.contains(.spotlight))
+    }
+
+    /// The v0.4 blob with nothing hidden is the same uncustomised bar.
+    func testAnUncustomisedV0_4BarUpgradesToTheShippedOne() throws {
+        let saved = #"{"tools":["select","pen","highlighter","line","arrow","rectangle","ellipse","text","number","blur","spotlight","laser","eraser"],"hidden":[]}"#
+        XCTAssertEqual(try Self.decodeLayout(saved), .standard)
     }
 
     /// Taking a placed separator back out: the first one goes, the rest of
     /// the bar keeps its order.
     func testRemovingAPlacedSeparatorRemovesTheFirstOneOnly() {
-        let layout = ToolbarToolLayout(items: Self.standardItems)
+        let layout = ToolbarToolLayout(items: Self.fullBarItems)
         let without = layout.removing(.separator)
-        var expected = Self.standardItems
+        var expected = Self.fullBarItems
         expected.remove(at: 1)
         XCTAssertEqual(without.items, expected)
     }
@@ -560,7 +611,7 @@ final class GeneralPreferencesTests: XCTestCase {
     }
 
     func testPoolNormalisesDuplicatesAndBarMembersAway() {
-        let layout = ToolbarToolLayout(items: ToolbarToolLayout.standard.items, pool: [.laser, .laser, .select, .number])
+        let layout = ToolbarToolLayout(items: Self.fullBarItems, pool: [.laser, .laser, .select, .number])
         // Every one of those tools is already on the bar: the pool keeps
         // only the tools that are genuinely off it.
         XCTAssertTrue(layout.pool.isEmpty)

@@ -180,15 +180,19 @@ public enum ToolbarLayoutItem: Hashable, Sendable {
     }
 }
 
-/// Which tools the drawing toolbar shows, in what order, and which wait in
-/// the pool (T6/S5): the stored form is the bar's item list — every entry a
-/// tool or a separator — plus the pool's tools in pool order. Normalisation
-/// keeps every broken state unreachable: unknown identifiers drop, tools the
-/// bar list never mentions land in the pool (never silently on the bar),
-/// duplicated tools collapse to their first occurrence, and leading, trailing
-/// or repeated separators are cleaned so the bar can never render an empty
-/// end. A document that would leave the bar with no tool is refused and the
-/// shipped bar comes back.
+/// Which tools the drawing toolbar shows, in what order, and which wait behind
+/// the bar's `⁞` — the pool (T6/S5, and the overflow batch's S2): the stored
+/// form is the bar's item list — every entry a tool or a separator — plus the
+/// pool's tools in pool order. The pool is not a graveyard: it is the bar's
+/// hidden section, reached from the `⁞`, so a tool is either on the bar or one
+/// click away behind it, never nowhere.
+///
+/// Normalisation keeps every broken state unreachable: unknown identifiers
+/// drop, tools the bar list never mentions land in the pool (never silently on
+/// the bar), duplicated tools collapse to their first occurrence, and leading,
+/// trailing or repeated separators are cleaned so the bar can never render an
+/// empty end. A document that would leave the bar with no tool is refused and
+/// the shipped bar comes back.
 ///
 /// This is the drawing toolbar's layout only — the capture editor keeps its
 /// own fixed family-grouped palette over a still image, and a keyboard
@@ -196,27 +200,35 @@ public enum ToolbarLayoutItem: Hashable, Sendable {
 public struct ToolbarToolLayout: Codable, Equatable, Sendable {
     /// The bar's items in display order: tools and separators, normalised.
     public var items: [ToolbarLayoutItem]
-    /// Every tool that is not on the bar, in the pool's order.
+    /// Every tool that is not on the bar — the hidden section the `⁞` opens —
+    /// in its own order.
     public var pool: [Tool]
 
     /// The documented default order: exactly the grouped bar flattened — the
     /// same sequence `Tool.toolbarGroups` renders.
     public static let defaultOrder = Tool.toolbarGroups.flatMap { $0 }
 
-    /// The items a fresh install draws: every tool in the documented order
-    /// with a separator exactly between the tool families — the dividers the
-    /// grouped bar has always placed.
-    public static let standardItems: [ToolbarLayoutItem] = {
-        var items: [ToolbarLayoutItem] = []
-        for group in Tool.toolbarGroups {
-            if !items.isEmpty { items.append(.separator) }
-            items.append(contentsOf: group.map(ToolbarLayoutItem.tool))
-        }
-        return items
-    }()
+    /// The tools a fresh install keeps on the bar (S3): the ones picked while
+    /// drawing. Everything else ships behind the `⁞` — one click away, and one
+    /// drag in Settings from coming back.
+    public static let standardVisibleTools: [Tool] = [
+        .select, .pen, .highlighter, .arrow, .rectangle, .ellipse, .text, .eraser,
+    ]
 
-    /// The layout a fresh install gets: every tool on the bar in today's
-    /// order with the family dividers, an empty pool.
+    /// The items a fresh install draws: the drawing tools in the documented
+    /// order with a separator exactly between the tool families.
+    public static let standardItems: [ToolbarLayoutItem] =
+        ToolbarToolLayout.itemsWithFamilySeparators(ToolbarToolLayout.standardVisibleTools)
+
+    /// The bar v0.5 shipped: every tool on it, nothing behind the `⁞`. Kept
+    /// because a saved layout that still equals it is a bar nobody rearranged,
+    /// and that is the one saved bar `upgradingUncustomised` may move on.
+    static let legacyStandardItems: [ToolbarLayoutItem] =
+        ToolbarToolLayout.itemsWithFamilySeparators(ToolbarToolLayout.defaultOrder)
+
+    /// The layout a fresh install gets: the drawing tools on the bar with the
+    /// family dividers, and every other tool behind the `⁞` in the documented
+    /// order — the initialiser tops the pool up with exactly those.
     public static let standard = ToolbarToolLayout()
 
     /// Creates a layout. The stored form is normalised: duplicate tools
@@ -258,6 +270,20 @@ public struct ToolbarToolLayout: Codable, Equatable, Sendable {
     /// The tools the bar draws, in order.
     public var visibleTools: [Tool] {
         items.compactMap(\.tool)
+    }
+
+    /// The tools the `⁞` opens, in order — the pool, which is also everything
+    /// the bar does not draw. Empty means the bar shows no `⁞` at all.
+    public var hiddenTools: [Tool] { pool }
+
+    /// S3: a saved layout that is still exactly the bar v0.5 shipped — every
+    /// tool on it, nothing behind the `⁞` — becomes this build's shipped bar,
+    /// so an install nobody rearranged gets the shorter bar instead of keeping
+    /// the long one for ever. A layout anyone touched comes back untouched:
+    /// the upgrade never rearranges a choice.
+    static func upgradingUncustomised(_ layout: ToolbarToolLayout) -> ToolbarToolLayout {
+        guard layout.pool.isEmpty, layout.items == legacyStandardItems else { return layout }
+        return .standard
     }
 
     /// The items of the v0.4-shaped bar: the stored tool order with a
@@ -439,12 +465,17 @@ public struct ToolbarToolLayout: Codable, Equatable, Sendable {
     /// but holding the v0.4 `tools`/`hidden` fields decodes into the new one
     /// with the same visible set and order the old bar drew — separators
     /// wherever the family changed. Anything older is the shipped bar.
+    /// A document that still equals the bar v0.5 shipped upgrades to this
+    /// build's shipped bar (S3); every other saved layout is kept as saved.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         if container.contains(.items) {
             let rawItems = (try? container.decode([String].self, forKey: .items)) ?? []
             let rawPool = (try? container.decode([String].self, forKey: .pool)) ?? []
-            self.init(items: rawItems.compactMap(ToolbarLayoutItem.init(identifier:)), pool: rawPool.compactMap(Tool.init(rawValue:)))
+            self = ToolbarToolLayout.upgradingUncustomised(ToolbarToolLayout(
+                items: rawItems.compactMap(ToolbarLayoutItem.init(identifier:)),
+                pool: rawPool.compactMap(Tool.init(rawValue:))
+            ))
             return
         }
         let rawTools = (try? container.decode([String].self, forKey: .tools)) ?? []
@@ -460,10 +491,10 @@ public struct ToolbarToolLayout: Codable, Equatable, Sendable {
         for tool in rawTools.compactMap(Tool.init(rawValue:)) where seen.insert(tool).inserted {
             stored.append(tool)
         }
-        self.init(
+        self = ToolbarToolLayout.upgradingUncustomised(ToolbarToolLayout(
             items: Self.itemsWithFamilySeparators(stored.filter { !rawHidden.contains($0.rawValue) }),
             pool: stored.filter { rawHidden.contains($0.rawValue) }
-        )
+        ))
     }
 
     public func encode(to encoder: Encoder) throws {

@@ -405,11 +405,34 @@ struct ToolbarView: View {
     /// pins the items — the Settings organiser's live preview passes the
     /// draft, so what the user arranges is what this bar shows.
     var toolItems: [ToolbarLayoutItem]? = nil
+    /// The tools behind the `⁞` (S1/S2): nil (the default) means the drawing
+    /// toolbar reads them from the persisted layout mirrored in the state, so
+    /// a Settings change re-lays the overflow live. A non-nil value pins them
+    /// — the Settings organiser's preview passes the draft's pool, never the
+    /// saved one. An empty list draws no `⁞` at all.
+    var toolPool: [Tool]? = nil
     /// The Settings organiser hooks (T6/S5): nil keeps the bar inert, exactly
     /// as every surface outside the organiser needs.
     var organiser: ToolbarOrganiserHooks? = nil
     /// The organiser's measured item sizes, for the drop targets' midpoints.
     @State private var itemSizes: [ToolbarLayoutItem: CGSize] = [:]
+
+    /// Whether the `⁞` is open (S1): the extras sit beside the bar, in the
+    /// same pill, only while this is true. A fresh overlay starts closed, so
+    /// a new drawing session always starts on the short bar.
+    @State private var isOverflowOpen = false
+
+    /// The tools behind the `⁞` (S1/S2): the pool, which is everything the bar
+    /// does not draw. The capture editor's fixed palette has no overflow — its
+    /// tools are already narrowed to what works over a still image.
+    var hiddenTools: [Tool] {
+        guard toolGroups == nil else { return [] }
+        return toolPool ?? state.toolbarTools.hiddenTools
+    }
+
+    /// Whether the bar offers a `⁞` at all: only when something waits behind
+    /// it. A bar holding every tool looks exactly as it always did.
+    var showsOverflow: Bool { !hiddenTools.isEmpty }
 
     /// The item list the bar draws (T6/S5): the organiser's draft when one
     /// is passed, or the persisted layout's items — the stored order with
@@ -445,13 +468,22 @@ struct ToolbarView: View {
     var body: some View {
         Group {
             if isVertical {
-                VStack(alignment: .center, spacing: 4) { barItems }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 12)
+                // S1: the bar stacks its items, and the `⁞` opens the extras in
+                // a second column of the same pill — beside the bar, never
+                // below it, so opening it never makes the bar taller again.
+                HStack(alignment: .top, spacing: 4) {
+                    VStack(alignment: .center, spacing: 4) { barItems }
+                    if isOverflowOpen, showsOverflow { overflowColumn }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 12)
             } else {
-                HStack(spacing: 4) { barItems }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                VStack(alignment: .center, spacing: 4) {
+                    HStack(spacing: 4) { barItems }
+                    if isOverflowOpen, showsOverflow { overflowRow }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
             }
         }
         .background(
@@ -463,6 +495,33 @@ struct ToolbarView: View {
                 .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
         )
         .onPreferenceChange(ToolbarItemSizeKey.self) { itemSizes = $0 }
+    }
+
+    /// The extras column of a vertical bar (S1): a rule, then every tool the
+    /// bar does not draw, in pool order.
+    @ViewBuilder
+    private var overflowColumn: some View {
+        divider
+        VStack(alignment: .center, spacing: 4) { overflowItems }
+    }
+
+    /// The extras row of a horizontal bar (S1).
+    @ViewBuilder
+    private var overflowRow: some View {
+        divider
+        HStack(spacing: 4) { overflowItems }
+    }
+
+    @ViewBuilder
+    private var overflowItems: some View {
+        ForEach(hiddenTools, id: \.self) { tool in
+            // Picking an extra closes the `⁞` again: one tool is what the
+            // drawing needs, and the collapsed control then shows which one.
+            toolButton(tool, pick: {
+                state.select(tool)
+                isOverflowOpen = false
+            })
+        }
     }
 
     /// Everything the bar offers, in the same order both orientations draw:
@@ -490,6 +549,10 @@ struct ToolbarView: View {
                 case .separator:
                     organiserWrapped(divider, item)
                 }
+            }
+            // S1: the `⁞` closes the tool run, right where the extras begin.
+            if showsOverflow {
+                overflowButton
             }
             // The fixed divider before the inks, unless the layout already
             // ends in a placed separator — the bar must not draw two
@@ -643,13 +706,13 @@ struct ToolbarView: View {
         .padding(.vertical, isVertical ? 4 : 0)
     }
 
-    private func toolButton(_ tool: Tool) -> some View {
+    private func toolButton(_ tool: Tool, pick: (() -> Void)? = nil) -> some View {
         // The marking answers the editor's single armed item (S6): with the
         // crop armed no tool is marked, exactly as picking a tool unmarks the
         // crop. Outside the capture editor the armed item is always the
         // current tool, so this reduces to today's `tool == tool` marking.
         let marked = state.isToolMarked(tool)
-        return Button { state.select(tool) } label: {
+        return Button { if let pick { pick() } else { state.select(tool) } } label: {
             Image(systemName: tool.symbolName)
                 .font(.system(size: 13, weight: .medium))
                 .frame(width: 28, height: 26)
@@ -661,6 +724,36 @@ struct ToolbarView: View {
         }
         .buttonStyle(.plain)
         .help(Text(verbatim: "\(tool.displayName) (\(state.toolShortcuts[tool]))"))
+    }
+
+    /// The `⁞` (S1/S6): three dots along the bar's axis while nothing hidden
+    /// is active, and the active tool's own symbol when that tool lives behind
+    /// it — the bar never leaves the user guessing which tool is armed.
+    private var overflowButton: some View {
+        let hidden = hiddenTools
+        let symbol = ToolbarOverflowSpec.symbolName(selected: state.tool, hidden: hidden)
+        let activeHidden = hidden.contains(state.tool) ? state.tool : nil
+        let marked = activeHidden.map { state.isToolMarked($0) } ?? isOverflowOpen
+        let help = ToolbarOverflowSpec.help(selected: state.tool, hidden: hidden)
+        return Button { isOverflowOpen.toggle() } label: {
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .semibold))
+                .rotationEffect(.degrees(
+                    symbol == ToolbarOverflowSpec.glyph
+                        ? ToolbarOverflowSpec.rotationDegrees(isVertical: isVertical)
+                        : 0
+                ))
+                .frame(width: 26, height: 26)
+                .foregroundStyle(marked ? Color.white : Color.secondary)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(marked ? Color.accentColor.opacity(0.55) : Color.clear)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(Text(verbatim: help))
+        .accessibilityLabel(Text(verbatim: help))
     }
 
     private func inkButton(_ ink: Ink) -> some View {

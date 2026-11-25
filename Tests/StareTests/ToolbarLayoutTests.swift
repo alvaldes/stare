@@ -58,6 +58,74 @@ final class ToolbarLayoutTests: XCTestCase {
         XCTAssertNotEqual(view.toolSection, state.toolbarTools.items)
     }
 
+    // MARK: - The `⁞` and what waits behind it (S1/S2/S6)
+
+    func testAFreshBarKeepsTheDrawingToolsAndPutsTheExtrasBehindTheOverflow() {
+        let view = ToolbarView(state: EditorState(), onUndo: {}, onRedo: {}, onClear: {}, onDone: {})
+        // The short bar is what a fresh install draws…
+        XCTAssertEqual(view.toolSection.compactMap(\.tool), ToolbarToolLayout.standardVisibleTools)
+        // …and the extras are one click away instead of gone.
+        XCTAssertTrue(view.showsOverflow)
+        XCTAssertEqual(view.hiddenTools, ToolbarToolLayout.standard.pool)
+        XCTAssertFalse(view.toolSection.compactMap(\.tool).contains(.spotlight))
+    }
+
+    func testABarThatHoldsEveryToolDrawsNoOverflowAtAll() {
+        let state = EditorState()
+        state.toolbarTools = ToolbarToolLayout(items: Tool.toolbarGroups.flatMap { $0 }.map(ToolbarLayoutItem.tool))
+        XCTAssertTrue(state.toolbarTools.pool.isEmpty)
+
+        let view = ToolbarView(state: state, onUndo: {}, onRedo: {}, onClear: {}, onDone: {})
+        // Nothing waits behind it, so there is no `⁞`: a bar holding every
+        // tool looks exactly as it always did.
+        XCTAssertFalse(view.showsOverflow)
+        XCTAssertTrue(view.hiddenTools.isEmpty)
+    }
+
+    func testTheOrganiserPreviewReadsTheDraftsPoolNotTheSavedOne() {
+        let state = EditorState()
+        state.toolbarTools = ToolbarToolLayout.standard
+        // The draft pools everything but the pen: twelve tools wait behind
+        // the `⁞`, not the saved layout's five.
+        let draft = ToolbarToolLayout(items: [.tool(.pen)], pool: [])
+        let view = ToolbarView(
+            state: state,
+            onUndo: {}, onRedo: {}, onClear: {}, onDone: {},
+            toolItems: draft.items,
+            toolPool: draft.hiddenTools
+        )
+        XCTAssertEqual(view.toolSection, draft.items)
+        XCTAssertEqual(view.hiddenTools, draft.hiddenTools)
+        XCTAssertNotEqual(view.hiddenTools, state.toolbarTools.hiddenTools)
+    }
+
+    func testTheCaptureEditorDrawsNoOverflow() {
+        let editor = ToolbarView(
+            state: EditorState(),
+            onUndo: {}, onRedo: {}, onClear: {}, onDone: {},
+            toolGroups: Tool.captureEditorGroups
+        )
+        // The editor's palette is already narrowed to what works over a still
+        // image: it never grows a `⁞`.
+        XCTAssertFalse(editor.showsOverflow)
+        XCTAssertTrue(editor.hiddenTools.isEmpty)
+    }
+
+    func testAToolBehindTheOverflowStillAnswersItsKeyAndTheControlSaysSo() {
+        let state = EditorState()
+        let hidden = state.toolbarTools.hiddenTools
+        // S6: the spotlight sits behind the `⁞` and its key still arms it.
+        XCTAssertTrue(hidden.contains(.spotlight))
+        XCTAssertEqual(state.shortcutRouter.resolve(Character("d")), .tool(.spotlight))
+        state.select(.spotlight)
+        XCTAssertTrue(state.isToolMarked(.spotlight))
+        // …and the collapsed control says which tool that is, instead of dots.
+        XCTAssertEqual(
+            ToolbarOverflowSpec.symbolName(selected: state.tool, hidden: hidden),
+            Tool.spotlight.symbolName
+        )
+    }
+
     // MARK: - Fixed surfaces stay fixed
 
     func testTheCaptureEditorKeepsItsFixedPalette() {
