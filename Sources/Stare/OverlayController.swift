@@ -407,6 +407,7 @@ final class OverlayController {
             guard let self else { return event }
             if event.modifierFlags.contains(.command),
                event.charactersIgnoringModifiers?.lowercased() == "z" {
+                Diag.log("key monitor saw command-z shift=\(event.modifierFlags.contains(.shift))")
                 if event.modifierFlags.contains(.shift) {
                     self.redo()
                 } else {
@@ -702,15 +703,39 @@ final class OverlayController {
         installCardCursorMonitor()
         Diag.log("activate displays=\(canvases.count) active=\(NSApp.isActive)")
 
-        // Activation is asynchronous: re-assert once it settles so the panels
-        // are ordered in front of the now-active app.
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.isActive else { return }
-            Diag.log("activate settled active=\(NSApp.isActive) key=\(NSApp.keyWindow != nil)")
-            for canvas in self.canvases.values { canvas.panel.orderFrontRegardless() }
-            self.toolbar?.orderFrontRegardless()
-            self.canvasUnderPointer()?.panel.makeKey()
-            NSCursor.crosshair.set()
+        // Ordering the panels and taking the keyboard are asynchronous: a mode
+        // cycle can lose that race (the log shows `active=false key=false`), and
+        // an inactive app never sees ⌘Z — this controller routes undo from a
+        // LOCAL monitor, which only receives our own events. That was the
+        // "undo stops working after closing and opening a mode" report.
+        for canvas in canvases.values { canvas.panel.orderFrontRegardless() }
+        toolbar?.orderFrontRegardless()
+        NSCursor.crosshair.set()
+        assertActivation()
+    }
+
+    /// Makes Stare the active app with its mode's panel key, retrying while the
+    /// system settles. One `async` hop is not enough: after a mode cycle the
+    /// activation loses to the app that was handed focus back, and it stays lost.
+    private func assertActivation(attempt: Int = 0) {
+        guard isActive || isBoardActive else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        let canvas = isBoardActive ? boardCanvasUnderPointer() : canvasUnderPointer()
+        canvas?.panel.orderFrontRegardless()
+        canvas?.panel.makeKeyAndOrderFront(nil)
+        if let canvas { canvas.panel.makeFirstResponder(canvas.view) }
+        let active = NSApp.isActive
+        let key = canvas?.panel.isKeyWindow == true
+        if active && key {
+            Diag.log("activation settled attempt=\(attempt) active=true key=true")
+            return
+        }
+        guard attempt < 10 else {
+            Diag.log("activation gave up attempt=\(attempt) active=\(active) key=\(key)")
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.assertActivation(attempt: attempt + 1)
         }
     }
 
@@ -821,6 +846,7 @@ final class OverlayController {
             canvas.view.showIntroHint()
         }
         boardCanvasUnderPointer()?.panel.makeKey()
+        Diag.log("board open active=\(NSApp.isActive) key=\(boardCanvasUnderPointer()?.panel.isKeyWindow == true) canvases=\(boardCanvases.count)")
         syncBoardIndicator()
         NSCursor.crosshair.set()
         showToolbar()
@@ -828,12 +854,7 @@ final class OverlayController {
         installCardCursorMonitor()
         Diag.log("board open displays=\(boardCanvases.count)")
 
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.isBoardActive else { return }
-            for canvas in self.boardCanvases.values { canvas.panel.orderFrontRegardless() }
-            self.toolbar?.orderFrontRegardless()
-            self.boardCanvasUnderPointer()?.panel.makeKey()
-        }
+        assertActivation()
     }
 
     /// Closing the board returns to the previous behaviour: the transparent
@@ -853,12 +874,10 @@ final class OverlayController {
         // app launches, stored here at the mode exit.
         saveSession()
         hideToolbar()
-        // The marks stay on their pages, so the undo history cannot resurrect
-        // them in a future overlay session: start the history clean — entries
-        // and the page records behind the mark entries alike.
-        historyOrder.removeAll()
-        redoOrder.removeAll()
-        pageOfMark.removeAll()
+        // The history is KEPT (L35): the pages and the marks survive the board
+        // closing, and they come back with their ids, so their undo steps still
+        // apply. Clearing here left the owner looking at a stroke on screen with
+        // nothing to undo — `entries=0` in the log right after returning.
         liveFrames.stop()
         removeKeyMonitor()
         removeCardCursorMonitor()
@@ -1197,9 +1216,8 @@ final class OverlayController {
             return
         }
         for canvas in canvases.values { canvas.clear() }
-        historyOrder.removeAll()
-        redoOrder.removeAll()
-        pageOfMark.removeAll()
+        // Same reason as the board's close: the sessions are stored and restored
+        // with their stroke ids, so the undo steps stay valid across a cycle.
         liveFrames.stop()
     }
 
@@ -1210,6 +1228,9 @@ final class OverlayController {
     /// names.
     func undo() {
         let canvases = activeCanvases
+        Diag.log(
+            "undo called active=\(NSApp.isActive) key=\(NSApp.keyWindow != nil) entries=\(historyOrder.count) canvases=\(canvases.count) board=\(isBoardActive) overlay=\(isActive)"
+        )
         if let canvas = activeCanvasUnderPointer(), canvas.discardActiveMark() { return }
         while let last = historyOrder.popLast() {
             if let canvas = canvases[last.owningDisplayID], canvas.undo(entry: last) {
@@ -1225,6 +1246,7 @@ final class OverlayController {
     /// came from — a removed mark, a transform, or the cleared batch.
     func redo() {
         let canvases = activeCanvases
+        Diag.log("redo called active=\(NSApp.isActive) entries=\(redoOrder.count) board=\(isBoardActive) overlay=\(isActive)")
         while let last = redoOrder.popLast() {
             if let canvas = canvases[last.owningDisplayID], canvas.redo(entry: last) {
                 historyOrder.append(last)

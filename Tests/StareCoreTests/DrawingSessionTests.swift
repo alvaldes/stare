@@ -1467,4 +1467,19 @@ final class DrawingSessionTests: XCTestCase {
         )
         XCTAssertEqual(restored, stroke, "the spotlight must survive the round trip whole")
     }
+
+    /// The premise that lets the undo history survive a mode cycle: a restored
+    /// session keeps every stroke's id. The controller's entries name marks by
+    /// id, and the board and the overlay restore their session on the way in —
+    /// if the ids changed, the steps would name marks that no longer exist.
+    func testRestoredStrokesKeepTheirIds() {
+        let stroke = Stroke(
+            tool: .pen,
+            ink: .red,
+            points: [CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 10)]
+        )
+        let restored = DrawingSession.restored(strokes: [stroke])
+        XCTAssertEqual(restored.strokes.first?.id, stroke.id)
+        XCTAssertEqual(restored.strokes.first?.points, stroke.points)
+    }
 }

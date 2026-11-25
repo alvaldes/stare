@@ -146,9 +146,11 @@ final class BoardImageUndoTests: XCTestCase {
     }
 
     /// The owner's report: after closing and reopening the board, ⌘Z and ⇧⌘Z
-    /// stop working — in board mode and in drawing mode alike. Closing the board
-    /// clears the history on purpose, so what has to survive is the WIRING: a
-    /// canvas built by the second `openBoard` must report its image edits too.
+    /// stop working — in board mode and in drawing mode alike. Two things have to
+    /// hold, and both were missing: the history has to SURVIVE the cycle (the
+    /// pages and marks do, with their ids, so their steps still apply — the log
+    /// showed `entries=0` right after returning), and a canvas built by the
+    /// second `openBoard` has to report its image edits too.
     func testUndoStillWorksAfterTheBoardIsClosedAndReopened() throws {
         try XCTSkipIf(NSScreen.screens.isEmpty, "no screens: the board canvases need one")
         _ = NSApplication.shared
@@ -170,8 +172,8 @@ final class BoardImageUndoTests: XCTestCase {
         }
         secondView.pasteImage(solid(40, 20))
         XCTAssertEqual(
-            controller.historyEntryCount, 1,
-            "a paste on the reopened board is a step on the stream too"
+            controller.historyEntryCount, 2,
+            "the first paste's step survived the cycle, and the second paste is a step of its own"
         )
 
         // The entry routes to the display the paste happened on, and a machine

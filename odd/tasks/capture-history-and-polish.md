@@ -502,3 +502,21 @@ part of this work.
   **Evidence**: whole suite exit 0, no signal line, bundle passed, **1166 started / 1166 passed / 0
   failed**; installed 00:5x. The two items still needing his eye: ⌘Z after a board cycle, and whether the
   "3 / 12" reads as the focus he was looking for.
+
+- **L35** (the log said it, twice, and both causes were mine).
+  **Undo after a mode cycle.** The instrumented run settles it: the app IS active
+  (`activation settled active=true key=true`), the key DOES arrive (`key monitor saw command-z`), `undo()`
+  IS called — with **`entries=0`**. The history was being emptied on the mode exit while the marks were
+  stored and restored: the user came back to a stroke on screen that had no undo step. Both exits
+  (`deactivate`, `closeBoard`) clear it with the comment "the history cannot resurrect them in a future
+  session", but the premise was wrong — the sessions come back with their stroke ids
+  (`testRestoredStrokesKeepTheirIds` pins it), so the entries still apply. The history survives the cycle
+  now, and the repair also fixed my own test's expectation (two steps after close/reopen+paste, not one).
+  **The history's focus.** The same log shows the model moving (`delta=1 from=0 to=1`) while the owner saw
+  the outline stay on the first cell: `CaptureHistoryCell` read the selection off `model` inside its own
+  body, and a cell whose stored properties are all unchanged — same model instance, same index, same
+  entry — is skipped by SwiftUI, so the header's counter updated and the outline did not. The selection is
+  now passed in as a `Bool` computed by the observing parent, so the cell cannot be skipped when it flips.
+  **Evidence**: whole suite exit 0, no signal line, bundle passed, **1167 started / 1167 passed / 0
+  failed**. A static render cannot catch the second bug (it renders a state, not an update), which is why
+  the log and the owner's eye were the instruments, not the selftest PNGs.

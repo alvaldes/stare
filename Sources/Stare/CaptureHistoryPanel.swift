@@ -89,6 +89,9 @@ final class CaptureHistoryPanel: NSPanel {
         }
         installKeyMonitor()
         installOutsideClickMonitors()
+        Diag.log(
+            "history shown entries=\(model.entries.count) selected=\(model.selectedIndex.map(String.init) ?? "nil") key=\(isKeyWindow)"
+        )
     }
 
     func hide() {
@@ -339,6 +342,7 @@ final class CaptureHistoryPanelModel: ObservableObject {
         thumbnailSize = thumbnailSizeProvider()
         entries = store.entries
         selectedIndex = entries.isEmpty ? nil : 0
+        Diag.log("history refresh entries=\(entries.count) selected=\(selectedIndex.map(String.init) ?? "nil")")
     }
 
     /// Selects `index` outright; an out-of-bounds index is ignored.
@@ -357,9 +361,13 @@ final class CaptureHistoryPanelModel: ObservableObject {
     }
 
     func moveSelection(_ delta: Int) {
-        guard let current = selectedIndex else { return }
+        guard let current = selectedIndex else {
+            Diag.log("history move ignored: nothing selected")
+            return
+        }
         let next = min(max(current + delta, 0), entries.count - 1)
         selectedIndex = next
+        Diag.log("history move delta=\(delta) from=\(current) to=\(next) entries=\(entries.count)")
     }
 
     /// Picks `index`: the capture's image goes through `onPick` and the panel
@@ -446,7 +454,12 @@ struct CaptureHistoryPanelContent: View {
                     ScrollView {
                         LazyVGrid(columns: columns, spacing: 10) {
                             ForEach(Array(model.entries.enumerated()), id: \.element.id) { index, entry in
-                                CaptureHistoryCell(model: model, index: index, entry: entry)
+                                CaptureHistoryCell(
+                                    model: model,
+                                    index: index,
+                                    entry: entry,
+                                    isSelected: model.selectedEntry?.id == entry.id
+                                )
                             }
                         }
                         .padding(.horizontal, 14)
@@ -476,6 +489,12 @@ struct CaptureHistoryCell: View {
     let model: CaptureHistoryPanelModel
     let index: Int
     let entry: PersistedCaptureEntry
+    /// The selection arrives as a VALUE, never read off `model` inside the cell:
+    /// a cell whose stored properties are all unchanged (the same model
+    /// instance, the same index, the same entry) is skipped by SwiftUI, so the
+    /// outline stayed on the first cell while the header's counter updated —
+    /// the arrows moved the model and nothing moved on screen.
+    let isSelected: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -506,10 +525,6 @@ struct CaptureHistoryCell: View {
                 .strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 2)
         )
         .onTapGesture { model.pick(at: index) }
-    }
-
-    private var isSelected: Bool {
-        model.selectedEntry?.id == entry.id
     }
 
     /// The one metadata line: when the capture was taken and its pixel size.
