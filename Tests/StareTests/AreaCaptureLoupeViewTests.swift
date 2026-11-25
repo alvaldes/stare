@@ -27,10 +27,10 @@ final class AreaCaptureLoupeViewTests: XCTestCase {
     /// the freeze ask exists (a no-op here), which is what marks the canvas
     /// as one that remembers its confirmed areas. Board canvases never get
     /// this wiring, so they never remember.
-    private func makeView() -> OverlayView {
+    private func makeView(state: EditorState = EditorState()) -> OverlayView {
         let view = OverlayView(
             frame: CGRect(origin: .zero, size: size),
-            state: EditorState(), onEscape: {})
+            state: state, onEscape: {})
         view.onAreaSelectionFrame = {}
         return view
     }
@@ -284,7 +284,13 @@ final class AreaCaptureLoupeViewTests: XCTestCase {
 
     // MARK: The loupe's paint path
 
-    func testTheLoupeRendersOverTheFrozenFrameWithoutFailing() throws {
+    /// The loupe really paints during a drag — a bitmap assertion, not just a
+    /// smoke render: the frozen frame here is magenta (min channel 0), so the
+    /// loupe's bright-first ring and crosshair are the only near-white pixels
+    /// in their neighbourhoods. Geometry: the last drag point (460, 310) in
+    /// the 900×600 view fits below-right, so the loupe's frame is
+    /// (484, 334, 120, 120) (`AreaCaptureLoupeTests` pins the plan).
+    func testTheLoupePaintsItsRingAndCrosshairDuringADrag() throws {
         let view = makeView()
         let window = try hostWindow(view)
         defer { window.orderOut(nil) }
@@ -294,13 +300,82 @@ final class AreaCaptureLoupeViewTests: XCTestCase {
         view.mouseDown(with: mouseEvent(.leftMouseDown, at: CGPoint(x: 450, y: 300), window: window))
         view.mouseDragged(with: mouseEvent(.leftMouseDragged, at: CGPoint(x: 460, y: 310), window: window))
 
-        // The loupe, its border and its crosshair all live in this paint pass;
-        // the pixel result is the manual check (real pixels only).
-        let rep = try XCTUnwrap(NSBitmapImageRep(
-            bitmapDataPlanes: nil, pixelsWide: Int(size.width), pixelsHigh: Int(size.height),
-            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
-        view.cacheDisplay(in: view.bounds, to: rep)
-        XCTAssertNotNil(rep.cgImage)
+        let rep = try render(view)
+        // The ring's top edge runs across the loupe frame's top.
+        XCTAssertTrue(
+            hasRingPixel(rep, near: CGPoint(x: 544, y: 335)),
+            "the loupe's ring must paint during a drag")
+        // The crosshair marks the pixel being chosen at the loupe's centre.
+        XCTAssertTrue(
+            hasRingPixel(rep, near: CGPoint(x: 544, y: 394)),
+            "the loupe's crosshair must mark the pixel being chosen")
     }
+
+    /// Whether the bitmap carries a near-white chrome pixel within `radius`
+    /// points of `point`: over a magenta frozen frame nothing but the loupe's
+    /// chrome (and the guides) can be nearly white everywhere.
+    private func hasRingPixel(_ rep: NSBitmapImageRep, near point: CGPoint, radius: CGFloat = 3) -> Bool {
+        for x in Int(point.x - radius)...Int(point.x + radius) {
+            for y in Int(point.y - radius)...Int(point.y + radius) {
+                guard x >= 0, y >= 0, x < rep.pixelsWide, y < rep.pixelsHigh,
+                    let color = rep.colorAt(x: x, y: y)
+                else { continue }
+                if min(color.redComponent, color.greenComponent, color.blueComponent) > 0.6 { return true }
+            }
+        }
+        return false
+    }
+
+    /// `showAreaLoupe` off, through a real preferences model: the ring and the
+    /// crosshair vanish, while the guides — the other piece of chrome — keep
+    /// painting, so turning one off removes EXACTLY that piece.
+    func testTurningTheLoupeOffRemovesOnlyTheLoupe() throws {
+        let model = PreferencesModel(store: InMemoryPreferenceStore())
+        model.capture.showAreaLoupe = false
+        let state = EditorState(preferences: model)
+        let view = makeView(state: state)
+        let window = try hostWindow(view)
+        defer { window.orderOut(nil) }
+
+        view.beginAreaSelection()
+        view.landAreaFrame(makeImage(width: 1800, height: 1200))
+        view.mouseDown(with: mouseEvent(.leftMouseDown, at: CGPoint(x: 450, y: 300), window: window))
+        view.mouseDragged(with: mouseEvent(.leftMouseDragged, at: CGPoint(x: 460, y: 310), window: window))
+
+        let rep = try render(view)
+        XCTAssertFalse(
+            hasRingPixel(rep, near: CGPoint(x: 544, y: 335)),
+            "with the preference off, no loupe ring paints where one did")
+        XCTAssertFalse(
+            hasRingPixel(rep, near: CGPoint(x: 544, y: 394)),
+            "with the preference off, no loupe crosshair paints where one did")
+        // The guides survive: the drag rect (450, 300)–(460, 310) grows a
+        // right-edge rule at x = 460 running below it, and its dim white
+        // dotted top stroke clears the 0.45 guide threshold there.
+        XCTAssertTrue(
+            hasGuideDot(rep, near: CGPoint(x: 460, y: 350)),
+            "turning the loupe off must not take the guides down with it")
+    }
+
+    /// The guides' dimmer chrome threshold (α 0.55 white tops out ≈0.55 in
+    /// the min channel); the loupe's ring is brighter on purpose.
+    private func hasGuideDot(_ rep: NSBitmapImageRep, near point: CGPoint, radius: CGFloat = 3) -> Bool {
+        for x in Int(point.x - radius)...Int(point.x + radius) {
+            for y in Int(point.y - radius)...Int(point.y + radius) {
+                guard x >= 0, y >= 0, x < rep.pixelsWide, y < rep.pixelsHigh,
+                    let color = rep.colorAt(x: x, y: y)
+                else { continue }
+                if min(color.redComponent, color.greenComponent, color.blueComponent) > 0.45 { return true }
+            }
+        }
+        return false
+    }
+}
+
+/// The same in-memory store the settings render tests use, so the probe never
+/// touches the user's real preferences.
+private final class InMemoryPreferenceStore: PreferenceStore {
+    private var values: [String: Any] = [:]
+    func object(forKey key: String) -> Any? { values[key] }
+    func set(_ value: Any?, forKey key: String) { values[key] = value }
 }

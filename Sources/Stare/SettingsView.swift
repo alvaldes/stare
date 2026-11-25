@@ -1571,6 +1571,7 @@ private struct CapturePane: View {
             // every card sits at its own height.
             VStack(spacing: SettingsMetrics.cardSpacing) {
                 destinationCard
+                areaChromeCard
                 formatCard
                 fileNameCard
                 saveSizeCard
@@ -1611,6 +1612,30 @@ private struct CapturePane: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    /// Area drag chrome (S1/S2): the magnifier and the dotted edge guides,
+    /// both ON by default — a user who dislikes them turns them off; nobody
+    /// has to discover them to get the good default. View chrome only: they
+    /// never appear in the capture.
+    private var areaChromeCard: some View {
+        SettingsCard(title: "Area drag", symbol: "plus.magnifyingglass") {
+            SettingRow(
+                title: "Loupe",
+                detail: "While an area drag runs, a magnifier follows the pointer showing the pixel being chosen. It appears only when the frame is frozen, so it never magnifies what is not real.",
+                content: Toggle("", isOn: $model.capture.showAreaLoupe)
+                    .labelsHidden()
+            )
+            SettingRow(
+                title: "Edge guides",
+                detail: "While an area drag runs, dotted lines run from the selection's edges out to the display's edges.",
+                content: Toggle("", isOn: $model.capture.showAreaGuides)
+                    .labelsHidden()
+            )
+            Text("Both are view chrome while you frame a capture; they never appear in the saved image.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

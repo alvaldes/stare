@@ -211,6 +211,17 @@ public struct CapturePreference: Codable, Equatable, Sendable {
     /// Whether the save carries the fixed shadow behind the capture.
     public var backdropShadow: Bool
 
+    /// Area drag chrome (S1/S2), appended last like every other generational
+    /// field: whether the `⇧S` drag's magnifier loupe paints over the frozen
+    /// frame. Default ON — a user who dislikes it turns it off; nobody has to
+    /// discover it to get the good default (S2). The loupe keeps its honesty
+    /// gate in the view either way: without a frozen frame it never paints.
+    public var showAreaLoupe: Bool
+
+    /// Whether the drag draws the dotted guides from the selection's four
+    /// edges out to the display's edges (S1). Default ON (S2).
+    public var showAreaGuides: Bool
+
     /// The capture preferences a fresh install gets, matching today's
     /// clipboard behaviour.
     public static let standard = CapturePreference()
@@ -226,7 +237,9 @@ public struct CapturePreference: Codable, Equatable, Sendable {
         fileNameTemplate: String = defaultFileNameTemplate,
         backdropPadding: Int = 0,
         backdropCornerRadius: Int = 0,
-        backdropShadow: Bool = false
+        backdropShadow: Bool = false,
+        showAreaLoupe: Bool = true,
+        showAreaGuides: Bool = true
     ) {
         self.format = format
         self.destination = destination.isUsablePath ? destination : .clipboard
@@ -237,6 +250,8 @@ public struct CapturePreference: Codable, Equatable, Sendable {
         self.backdropPadding = CaptureBackdrop.clampedPadding(backdropPadding)
         self.backdropCornerRadius = CaptureBackdrop.clampedCornerRadius(backdropCornerRadius)
         self.backdropShadow = backdropShadow
+        self.showAreaLoupe = showAreaLoupe
+        self.showAreaGuides = showAreaGuides
     }
 
     /// Encodes the document with its shape version first (S8): whatever this
@@ -253,6 +268,8 @@ public struct CapturePreference: Codable, Equatable, Sendable {
         try container.encode(backdropPadding, forKey: .backdropPadding)
         try container.encode(backdropCornerRadius, forKey: .backdropCornerRadius)
         try container.encode(backdropShadow, forKey: .backdropShadow)
+        try container.encode(showAreaLoupe, forKey: .showAreaLoupe)
+        try container.encode(showAreaGuides, forKey: .showAreaGuides)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -270,6 +287,9 @@ public struct CapturePreference: Codable, Equatable, Sendable {
         // The backdrop sits after the template (T11/S18), appended all the
         // same.
         case backdropPadding, backdropCornerRadius, backdropShadow
+        // The drag's chrome switches (S1/S2) sit after the backdrop, appended
+        // all the same — an older blob decodes with both at their ON default.
+        case showAreaLoupe, showAreaGuides
     }
 
     /// Lenient decoding: an unknown format falls back to `.png`, an unusable
@@ -307,6 +327,8 @@ public struct CapturePreference: Codable, Equatable, Sendable {
         let rawBackdropCornerRadius = try? container.decode(Int.self, forKey: .backdropCornerRadius)
         self.backdropCornerRadius = CaptureBackdrop.clampedCornerRadius(rawBackdropCornerRadius ?? 0)
         self.backdropShadow = (try? container.decode(Bool.self, forKey: .backdropShadow)) ?? false
+        self.showAreaLoupe = (try? container.decode(Bool.self, forKey: .showAreaLoupe)) ?? true
+        self.showAreaGuides = (try? container.decode(Bool.self, forKey: .showAreaGuides)) ?? true
     }
 
     /// Builds a capture file name: `<prefix>-<YYYY>-<MM>-<DD>-at-<HH>-<MM>-<SS>`

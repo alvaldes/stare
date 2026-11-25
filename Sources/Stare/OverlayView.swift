@@ -1296,6 +1296,42 @@ class OverlayView: NSView {
         context.strokePath()
     }
 
+    /// The area drag's dotted guides (S1): while a selection is being drawn,
+    /// each of its four edges runs out, dotted and subdued, to THIS display's
+    /// edges, so the eye can follow a line to the edge before committing. The
+    /// rules come from `AreaCaptureGuides.guides(for:bounds:)` — the same
+    /// `selectionRect` the capture at mouse-up crops with (S3) — and the type
+    /// has already clipped them to `bounds`, so none of them can imply an
+    /// edge outside this display. Subdued chrome: a dim dark rule under a dim
+    /// white dotted top stroke, the same dark-under/bright-on-top trick the
+    /// loupe's ring and the drawn cursors use — it reads on light and on dark
+    /// content and never fights the frame. View chrome only: never a
+    /// `Stroke`, never in `committedBounds`, never in the capture.
+    private func drawAreaGuides(in context: CGContext) {
+        guard state.showAreaGuides, isSelectingArea else { return }
+        let guides = AreaCaptureGuides.guides(for: selectionRect, bounds: bounds)
+        guard !guides.isEmpty else { return }
+        context.saveGState()
+        context.setLineDash(
+            phase: 0,
+            lengths: [AreaCaptureGuides.dotLength, AreaCaptureGuides.gapLength]
+        )
+        for guide in guides {
+            for (colour, width) in [
+                (CGColor(gray: 0, alpha: 0.35), AreaCaptureGuides.lineWidth + 1),
+                (CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.8), AreaCaptureGuides.lineWidth + 0.6),
+            ] {
+                context.setStrokeColor(colour)
+                context.setLineWidth(width)
+                context.move(to: CGPoint(x: guide.line.minX, y: guide.line.minY))
+                context.addLine(to: CGPoint(x: guide.line.maxX, y: guide.line.maxY))
+                context.strokePath()
+            }
+        }
+        context.setLineDash(phase: 0, lengths: [])
+        context.restoreGState()
+    }
+
     /// The selection marquee (T6/S8): a thin accent rectangle over the drag it
     /// belongs to, with no fill — the marks under it stay visible. It draws only
     /// while a select-tool drag is actually running, never otherwise.
@@ -1317,7 +1353,7 @@ class OverlayView: NSView {
     /// View chrome only: the capture composes from the frozen base and the
     /// marks, so the loupe can never enter the captured image.
     private func drawAreaLoupe(in context: CGContext) {
-        guard isSelectingArea, let point = areaLoupePoint, let base = frozenAreaBase else { return }
+        guard state.showAreaLoupe, isSelectingArea, let point = areaLoupePoint, let base = frozenAreaBase else { return }
         let pixelsPerPoint = CGFloat(base.width) / max(bounds.width, 1)
         guard let plan = AreaCaptureLoupe.plan(
             at: point,
@@ -1837,6 +1873,7 @@ class OverlayView: NSView {
 
         drawDrawingFrame(in: context)
         drawSelection(in: context)
+        drawAreaGuides(in: context)
         drawMarquee(in: context)
         drawSelectedMarkChrome(in: context)
         drawAreaLoupe(in: context)

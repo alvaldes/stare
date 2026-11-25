@@ -361,4 +361,68 @@ final class CapturePreferenceTests: XCTestCase {
         XCTAssertEqual(wrongType.maxSaveWidth, CapturePreference.defaultMaxSaveWidth)
         XCTAssertEqual(wrongType.downscaleMode, .off)
     }
+
+    // MARK: Area drag chrome (S1/S2) — loupe and guides, on by default
+
+    /// Both pieces of chrome ship ON (S2): a user who dislikes them turns them
+    /// off; nobody has to discover them to get the good default.
+    func testAreaChromeDefaultsOnForAFreshInstall() {
+        XCTAssertEqual(CapturePreference.standard.showAreaLoupe, true)
+        XCTAssertEqual(CapturePreference.standard.showAreaGuides, true)
+        XCTAssertEqual(CapturePreference().showAreaLoupe, true)
+        XCTAssertEqual(CapturePreference().showAreaGuides, true)
+    }
+
+    /// The append-only discipline is a promise about the DISK, not just the
+    /// protocol: the new chrome switches sit after the backdrop fields, and
+    /// no version bump happened — bumping would re-arm the S8 migration for
+    /// every stored blob.
+    func testAreaChromeIsAppendedWithoutBumpingTheVersion() throws {
+        XCTAssertEqual(CapturePreference.currentVersion, 2, "no version bump without a real migration")
+        // The blob carries the switches; the decode-both-ON test above is the
+        // user-facing half of the append-only discipline (a blob written
+        // before the fields existed still decodes whole).
+        var off = CapturePreference.standard
+        off.showAreaLoupe = false
+        let object = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: try JSONEncoder().encode(off)) as? [String: Any])
+        XCTAssertEqual(object["version"] as? Int, 2)
+        XCTAssertEqual(object["showAreaLoupe"] as? Bool, false)
+        XCTAssertEqual(object["showAreaGuides"] as? Bool, true)
+    }
+
+    /// Both switches round-trip through JSON.
+    func testAreaChromeRoundTripsThroughJSON() throws {
+        var saved = CapturePreference.standard
+        saved.showAreaLoupe = false
+        let data = try JSONEncoder().encode(saved)
+        XCTAssertEqual(try JSONDecoder().decode(CapturePreference.self, from: data), saved)
+        var bothOff = CapturePreference.standard
+        bothOff.showAreaLoupe = false
+        bothOff.showAreaGuides = false
+        let bothData = try JSONEncoder().encode(bothOff)
+        XCTAssertEqual(try JSONDecoder().decode(CapturePreference.self, from: bothData), bothOff)
+    }
+
+    /// A stored blob written before the chrome switches existed decodes with
+    /// BOTH ON — the S2 default — and keeps every other field the blob had.
+    func testAStoredBlobWithoutTheChromeFieldsDecodesBothOn() throws {
+        let decoded = try decode(
+            #"{"format":"png","destination":{"clipboard":true},"fileNamePrefix":"Stare","downscaleMode":"off","maxSaveWidth":1600,"fileNameTemplate":"","backdropPadding":0,"backdropCornerRadius":0,"backdropShadow":false}"#
+        )
+        XCTAssertEqual(decoded.showAreaLoupe, true, "the S2 default reaches the stored blob: the loupe is on")
+        XCTAssertEqual(decoded.showAreaGuides, true, "the S2 default reaches the stored blob: the guides are on")
+        XCTAssertEqual(decoded.downscaleMode, .off)
+        XCTAssertEqual(decoded.maxSaveWidth, 1600)
+        XCTAssertEqual(decoded.backdropShadow, false)
+    }
+
+    /// A blob with garbage chrome values falls back to ON, keeping the rest.
+    func testGarbageChromeValuesInBlobFallBackToOn() throws {
+        let decoded = try decode(
+            #"{"format":"png","destination":{"clipboard":true},"fileNamePrefix":"Shots","showAreaLoupe":"yes","showAreaGuides":1}"#
+        )
+        XCTAssertEqual(decoded.showAreaLoupe, true)
+        XCTAssertEqual(decoded.showAreaGuides, true)
+    }
 }

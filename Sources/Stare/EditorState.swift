@@ -218,6 +218,19 @@ final class EditorState: ObservableObject {
         didSet { writeIfNotSyncing { $0.redactionStyle = redactionStyle } }
     }
 
+    /// Mirrors of the area drag's chrome switches (S1/S2), which live inside
+    /// the capture document's own structure: whether the `⇧S` drag paints the
+    /// magnifier loupe, and whether it draws the dotted edge guides. Both
+    /// default ON and both reach the drag through here the way
+    /// `pointerStyle` serves the pointer highlight — a detached state
+    /// (capture editor, selftest) keeps the shipped ON defaults in memory.
+    @Published var showAreaLoupe: Bool {
+        didSet { writeIfNotSyncing { $0.capture.showAreaLoupe = showAreaLoupe } }
+    }
+    @Published var showAreaGuides: Bool {
+        didSet { writeIfNotSyncing { $0.capture.showAreaGuides = showAreaGuides } }
+    }
+
     /// Typed value behind the `overlayScope` string mirror; consumers that
     /// used to compare strings compare this instead.
     var overlayScopeValue: OverlayScope {
@@ -274,6 +287,7 @@ final class EditorState: ObservableObject {
             let toolsLayout = MainActor.assumeIsolated { preferences.toolbarTools }
             let whiteboard = MainActor.assumeIsolated { preferences.whiteboard }
             let redactionStyle = MainActor.assumeIsolated { preferences.redactionStyle }
+            let capture = MainActor.assumeIsolated { preferences.capture }
             pointerSize = CGFloat(style.size)
             pointerShape = style.preset == .squircle ? "squircle" : "circle"
             pointerGlow = style.glowIntensity > 0
@@ -298,6 +312,8 @@ final class EditorState: ObservableObject {
             boardScope = whiteboard.scope.rawValue
             boardShowBorder = whiteboard.showsBorder
             self.redactionStyle = redactionStyle
+            showAreaLoupe = capture.showAreaLoupe
+            showAreaGuides = capture.showAreaGuides
             MainActor.assumeIsolated {
                 self.tool = preferences.tool
                 self.ink = preferences.ink
@@ -321,6 +337,8 @@ final class EditorState: ObservableObject {
             boardPageBackground = WhiteboardDefaults.standard.background.rawValue
             boardScope = WhiteboardDefaults.standard.scope.rawValue
             boardShowBorder = WhiteboardDefaults.standard.showsBorder
+            showAreaLoupe = true
+            showAreaGuides = true
         }
         if let preferences {
             MainActor.assumeIsolated { subscribeToModel(preferences) }
@@ -391,6 +409,12 @@ final class EditorState: ObservableObject {
         }.store(in: &preferenceCancellables)
         model.$redactionStyle.dropFirst().sink { [weak self] style in
             self?.syncFromModel { $0.redactionStyle = style }
+        }.store(in: &preferenceCancellables)
+        model.$capture.dropFirst().sink { [weak self] capture in
+            self?.syncFromModel {
+                $0.showAreaLoupe = capture.showAreaLoupe
+                $0.showAreaGuides = capture.showAreaGuides
+            }
         }.store(in: &preferenceCancellables)
     }
 
