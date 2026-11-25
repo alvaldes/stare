@@ -49,6 +49,20 @@ Bring `main` in as it advances (`git merge main`) so the merge at the end stays 
   not from the edge it is docked to: the side with room for the panel wins, both-sides-fit faces the middle
   of the screen, and the dock setting only breaks the tie on the screen's centre line.
 
+- **S10** (owner's decision, 2026-11-25, chosen from the priced options): "Grilla de inks — Dos columnas ×
+  cuatro filas sólo en vertical. −112 pt de alto, +12 a +24 pt de ancho según el tamaño de celda." The inks
+  fold into two columns when the bar is vertical and keep their single row when it is horizontal; the dots
+  keep their 15 pt size and only the cell narrows, so the palette reads the same. The horizontal bar must not
+  change at all: it has the room, and one row is what a palette reads as.
+
+- **S11** (owner, after looking at the fold; verbatim): "si funciona pero ahora en la barra vertical se ve mas ancha
+  y no debe cambiar el ancho asi que lo que se puede hacer es bajarle el tamanno a los circulos de colores." The
+  vertical bar's width is not negotiable: it keeps the width it always had, and the fold is paid for with smaller
+  colour dots instead of a wider pill. The height saving S10 bought stands.
+
+- **S12** (owner, same round; verbatim): "al hacer click una vez sobre los '...' abre lo oculto y otro click lo
+  cierra." The more button is a toggle: one press opens the hidden tools, the next press closes them.
+
 ## Tasks
 
 | ID | Specs | Task | Route | Commit |
@@ -61,6 +75,9 @@ Bring `main` in as it advances (`git merge main`) so the merge at the end stays 
 | T6 | S7 | Owner feedback round 1: the extras get their own minimal panel, toward the screen; the card reads "More tools"; a roomy drop zone | inline (parent) | dca12b2 |
 | T7 | S8 | Owner feedback round 2: fix the inverted top/bottom dock, centre the panel on the button, make the preview button inert, let separators be removed | inline (parent) | 4f56c46, 4f1152e, 9ac827c, 4790c7b |
 | T8 | S9 | The extras panel's side comes from the room the bar leaves, not from the dock setting | inline (parent) | 66401aa |
+| T9 | S10 | The inks fold into two columns when the bar is vertical, single row when horizontal | worker | f11c9e2 |
+| T10 | S11 | The fold costs dot size, never bar width: the pill keeps its 24 pt of ink content | worker | f11c9e2 |
+| T11 | S12 | The more button toggles: a press on it closes the panel its own press opened | worker | 7997dca |
 
 **Slice note.** The `20570 authored changed lines in 96 commits since origin/main` the commit hook reports is the
 unpublished `main` history this branch sits on, not this batch: T1+T2 are ~250 authored lines across six
@@ -254,3 +271,88 @@ files. Delivery shape when publishing stays the owner's call, and `main` is merg
   against the old code (panel computed at 1440/0 and clamped in), then all seven `ToolbarOverflowPlacementTests`
   passed. The five pre-existing placement tests were left untouched and still pass, so the dock-matching
   behaviour that was already correct is pinned as it was.
+- **L29** (S10, T9, the backlog entry closed): the inks fold into two columns when the bar is vertical and
+  keep their single row when it is horizontal — the fold the owner priced ("−112 pt de alto, +12 a +24 pt de
+  ancho"). The rule itself lives in `StareCore.InkGrid.rows(columns:)` (order-preserving, remainder in the
+  last row, a width of 0 or less reads as 1; five tests in `InkGridTests`), and `ToolbarView.barItems` draws
+  it through a VStack of two-item HStacks with 4 pt of air both ways. Only the CELL narrows — the dot keeps
+  its 15 pt and the ring its 1–2 pt — so the palette reads the same in both orientations.
+  **Measured on the real hosted bar** (`ToolbarInkGridRenderTests`, detached state, layout pinned to
+  `.standard`): vertical **44×742 → 62×630** (−112 pt of height for +18 pt of width), horizontal **748×42
+  unchanged** before and after. The cell went 24 → **20 pt** vertically: two 20 pt cells + 4 pt of air =
+  44 pt of ink content against the 26 pt tool cell the column's width used to follow — the measured +18 pt
+  sits inside the owner's +12…+24 estimate, bought against the 112 pt of height the fold saves (four 24 pt
+  rows instead of eight). Verified: `swift test --filter InkGridTests` 5/5, `--filter ToolbarInkGridRenderTests` 2/2 (both
+  orientations' pins at ±2, plus the ≥100 pt saving pinned on its own so a revert fails loudly), full suite
+  **880 `StareCoreTests` + 344 `StareTests`** — every test passing except the two
+  `ToolbarPlacementChangeTests` placements, which fail **identically on HEAD before this change**: they
+  assert the reset's column against `NSScreen.screens.first` while the pointer this run sat on the second
+  display, whose left-dock default anchor (centre 1990.3, 641 on a 1920-offset screen) is exactly where the
+  (outside-the-primary, inside-the-target) frame reported. Same tree, same two failures, in a detached
+  scratch worktree of `9d6685c` — environmental (ToolbarPanelLiveResizeTests's known hazard), not from the
+  fold. Recorded here because it is not named in an existing known-failures heading; the tests belong to
+  the placement batch. The backlog entry "The inks still make the vertical bar long" is removed.
+- **L30** (S11, T10): the fold is paid for with the DOT, never with bar width — the owner looked at the
+  built app and reported "ahora en la barra vertical se ve mas ancha y no debe cambiar el ancho", so the
+  wider pill is dead. The vertical palette is now two 12 pt cells with NO gap between them (HStack spacing
+  0 inside the row), filling exactly the 24 pt of ink content the bar already reserves for inks — the 26 pt
+  tool cell is the widest thing in the column again, so the pill keeps the width the single-column bar
+  always had. Rows keep the fold's rhythm (24 pt tall, 4 pt of vertical air), so the 112 pt height saving
+  stands. The dots shrink 15 → 10 pt; the selected ring steps 2 → 1.5 pt (a 2 pt `strokeBorder` on a 10 pt
+  circle would eat 4 of its 10 pt and leave a 6 pt colour core — the swallowing the fold must not become;
+  1.5 pt leaves 7 pt of colour and stays plainly stronger than the unselected stroke, which stays 1 pt on
+  both sizes, leaving 8 pt of colour on a 10 pt dot). The horizontal bar is untouched: 24 pt cells,
+  15 pt dots, one row, the exact same drawing path (its `inkButton` default arguments are unchanged).
+  **Measured on the real hosted bar** (`ToolbarInkGridRenderTests`): vertical **44×742 → 60×630 at 20 pt
+  cells → 44×630 now** (the earlier 62×630 note in L29 was inside that test's ±2 accuracy; 60.0 is what
+  the probe reads), horizontal **748×42 unchanged** — the hard rule ("the folded vertical bar must not be
+  one point wider than the single-column bar", pinned as `fit.width ≤ 44`) and both the 44 and 630 pins
+  fail loudly on any relapse. Verified: `swift test --filter InkGrid` 5 `StareCoreTests` + 2 render,
+  `--filter ToolbarInkGridRenderTests` 2/2, `--filter ToolbarOverflowPanelTests` 11/11 — all green; full
+  suite runs recorded under L31.
+- **L31** (S12, T11): the more button toggles — "al hacer click una vez sobre los '...' abre lo oculto y
+  otro click lo cierra". **Diagnosis held.** The L26 rule (`closesOverflow(forEventIn:panel:)` — any
+  window but the panel's own closes it) returned true for the press over the more button itself because
+  the button lives in the BAR's window, not the panel's: a local event monitor receives the press before
+  SwiftUI dispatches it to the button, so the monitor hid the panel, and then the button's own toggle saw
+  `isVisible == false` and reopened it — the second press could never close. Proof: the old rule contains
+  the button's press in its own definition (its window is not the panel's), and the owner's exactly
+  inverted symptom matches that run order. The fix lives in the pure rule, not in the monitor:
+  `OverlayController.closesOverflow(forEventAt:in:panel:moreButtonFrame:)` does not close a press at
+  `point` inside the more button's frame **when the event's window is the bar's own window** (the frame
+  is bound to that window, so a canvas click at a coincidental point still closes); the monitor feeds it
+  `event.locationInWindow` (nil for keys, which have no pointer position and always close,
+  `ToolbarPanel.overflowButtonWindowFrame()` — the frame the placement path already reports, flipped
+  into window coordinates the same way `overflowButtonScreenCentre` flips it to screen space). If the
+  frame is not known yet (no first layout pass), the rule falls back to the old behaviour and closes —
+  in practice the frame is reported by the button's `onAppear` before anything can be clicked.
+  Honest limit: a headless test still cannot click a real SwiftUI button inside a non-key panel, so the
+  toggle itself is the owner's click check; what is pinned is the predicate — a press inside the more
+  button does not close, a press elsewhere in the bar closes, a press in the panel never closes, a press
+  in any other window or a nil window closes, and an unknown frame or a key closes. The four original
+  cases of the old rule survive unchanged inside the renamed test. Verified: `--filter
+  ToolbarOverflowPanelTests` 11/11 (0 failures, exit 0); full suite run 1 (this work tree): **880
+  StareCoreTests 0 failures + 349 StareTests 3 failures, exit 1** — the two
+  `ToolbarPlacementChangeTests` placements (KNOWN, PRE-EXISTING, ENVIRONMENTAL, L29) plus one
+  load-order flake, `CaptureHistoryPanelTests.testAPickWhileTheBoardIsOpenPastesOntoThePageAndNeverTouchesThePasteboard`:
+  window/mouse-timing sensitivity (`XCTAssertNotNil` at line 212), code this change never touches, and
+  it passes 12/12 in isolation on the same tree (exit 0). Full suite run 2: **880 StareCoreTests + 349
+  StareTests, 0 failures, exit 0** — even the two known environmental placements passed that run (the
+  pointer sat on the primary display), which is exactly their environmental shape.
+- **L32** (S11 follow-up, owner after looking at L30's build): "necesito un pequeno espacio entre las col de
+  los colores no importa si hay que bajarle mas al tamanno de los cirulos" — and, in the same message, "perfecto"
+  for L31's toggle. The air between the two columns comes out of the CELLS, not out of the dots: two 11 pt cells
+  with 2 pt between them still fill exactly the 24 pt of ink content, and a 10 pt dot inside an 11 pt cell leaves
+  3 pt of visible air between neighbouring dots — the same air the horizontal row puts between its 15 pt dots —
+  so no further shrink was needed and the owner's permission to shrink was not spent. Width and height are
+  unchanged by it: the render probe still measures 44×630 vertical and 748×42 horizontal, 2/2 green. The toggle
+  needs no further work; the owner confirmed the second press closes the panel.
+- **L33** (S11 follow-up 2, owner after looking at L32's build): "hay mucha separacion entre las filas y poca
+  entre las col arregla esto para que tenga el aire correcto entre cada cosa y se vea bien ni muy apretado ni con
+  demasiado espacio." The numbers agreed with his eye: a 10 pt dot inside an 11×24 cell left 7 pt above and below
+  plus 4 pt of VStack spacing, i.e. 18 pt between rows against 3 pt between columns. The cell was tall only by
+  inheritance from the tool row. The grid's cells are now 11×11 with 2 pt of spacing on both axes, so the air is
+  the same in both directions — 2 pt of spacing plus the 0.5 pt margin the cell leaves around each dot. Nothing
+  else moved: the dot stays 10 pt, the width stays 44 pt, and the height drops from 630 to **572** because the
+  rows themselves got shorter (four rows at a 13 pt pitch instead of 28). Measured: vertical 44×572, horizontal
+  748×42 unchanged; render pins updated and green.
