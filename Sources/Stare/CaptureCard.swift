@@ -42,6 +42,14 @@ final class CaptureCard: NSPanel {
             defer: false
         )
 
+        // The card TAKES the pointer's moves (B9): a non-activating panel does
+        // not get them by default, so a move over a card was delivered to the
+        // canvas underneath, which re-asserted its tool cursor. Dropping that
+        // move from a monitor never won on the board, because the canvas also
+        // re-asserts outside the monitored path. Taking the moves is the other
+        // direction: the canvas never hears about a move over the card at all.
+        acceptsMouseMovedEvents = true
+
         // Above the drawing layer and the palettes: a capture card is a result
         // the user asked for, so nothing Stare draws may cover it (S1).
         level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 2)
@@ -235,6 +243,14 @@ final class CaptureCardView: NSView, NSDraggingSource {
     }
 
     override func cursorUpdate(with event: NSEvent) {
+        NSCursor.arrow.set()
+    }
+
+    /// The card answers the pointer's own moves too, now that it takes them
+    /// (B9): the canvas re-asserts its tool cursor outside the cursor-rect path,
+    /// and a card that only answers `cursorUpdate` lets the crosshair come back
+    /// on the next move.
+    override func mouseMoved(with event: NSEvent) {
         NSCursor.arrow.set()
     }
 

@@ -1467,4 +1467,37 @@ final class DrawingSessionTests: XCTestCase {
         )
         XCTAssertEqual(restored, stroke, "the spotlight must survive the round trip whole")
     }
+
+    /// The premise that lets the undo history survive a mode cycle: a restored
+    /// session keeps every stroke's id. The controller's entries name marks by
+    /// id, and the board and the overlay restore their session on the way in —
+    /// if the ids changed, the steps would name marks that no longer exist.
+    func testRestoredStrokesKeepTheirIds() {
+        let stroke = Stroke(
+            tool: .pen,
+            ink: .red,
+            points: [CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 10)]
+        )
+        let restored = DrawingSession.restored(strokes: [stroke])
+        XCTAssertEqual(restored.strokes.first?.id, stroke.id)
+        XCTAssertEqual(restored.strokes.first?.points, stroke.points)
+    }
+
+    /// A mode's restore is undoable like a drawing: the journal comes back with
+    /// the marks, which is what makes ⌘Z work after a mode cycle instead of
+    /// finding an empty journal (the log showed every restored step skipped).
+    /// `restored(strokes:)` stays unjournalled on purpose — the capture editor
+    /// seeds the marks a capture ARRIVED with, and those are its baseline.
+    func testARestoredSessionCanUndoItsOwnMarks() {
+        let first = Stroke(tool: .pen, ink: .red, points: [CGPoint(x: 0, y: 0), CGPoint(x: 5, y: 5)])
+        let second = Stroke(tool: .pen, ink: .blue, points: [CGPoint(x: 9, y: 9), CGPoint(x: 12, y: 12)])
+        var restored = DrawingSession.restoredUndoable(strokes: [first, second])
+
+        XCTAssertTrue(restored.canUndo(markWithID: second.id), "the newest restored mark is undoable")
+        XCTAssertTrue(restored.undo())
+        XCTAssertEqual(restored.strokes.map(\.id), [first.id], "undo removed the newest restored mark")
+        XCTAssertTrue(restored.canUndo(markWithID: first.id))
+        XCTAssertTrue(restored.undo())
+        XCTAssertTrue(restored.strokes.isEmpty, "and then the one before it")
+    }
 }

@@ -12,10 +12,26 @@ import UniformTypeIdentifiers
 final class CaptureEditorController {
     private var windows: [CaptureEditorWindow] = []
 
+    /// Fires with the composed image every time the user takes one out of the
+    /// editor — a copy or a completed save (L7). The overlay wires it to the
+    /// same recording its own captures go through, so an edited variant lands
+    /// in the history like any other capture instead of vanishing with the
+    /// window.
+    var onDeliver: ((CGImage) -> Void)?
+
+    /// The windows this controller opened, open or closed on screen — the seam
+    /// a test needs to reach the content it built.
+    var windowsForTesting: [CaptureEditorWindow] { windows }
+
     func open(
         image: CGImage, capture: CapturePreference = .standard, redactionStyle: RedactionStyle = .blur
     ) {
-        let window = CaptureEditorWindow(image: image, capture: capture, redactionStyle: redactionStyle) { [weak self] closing in
+        let window = CaptureEditorWindow(
+            image: image,
+            capture: capture,
+            redactionStyle: redactionStyle,
+            onDeliver: onDeliver
+        ) { [weak self] closing in
             self?.windows.removeAll { $0 === closing }
         }
         windows.append(window)
@@ -33,8 +49,15 @@ final class CaptureEditorController {
 final class CaptureEditorWindow: NSWindow {
     override var canBecomeKey: Bool { true }
 
-    init(image: CGImage, capture: CapturePreference, redactionStyle: RedactionStyle = .blur, onClose: @escaping (CaptureEditorWindow) -> Void) {
+    init(
+        image: CGImage,
+        capture: CapturePreference,
+        redactionStyle: RedactionStyle = .blur,
+        onDeliver: ((CGImage) -> Void)? = nil,
+        onClose: @escaping (CaptureEditorWindow) -> Void
+    ) {
         let content = CaptureEditorContent(image: image, capture: capture, redactionStyle: redactionStyle)
+        content.onDeliver = onDeliver
         super.init(
             contentRect: CGRect(origin: .zero, size: content.preferredSize),
             styleMask: [.titled, .closable, .resizable],
@@ -65,6 +88,8 @@ final class CaptureEditorContent: NSView {
     private let state = EditorState()
     /// The preference the save panel defaults from (T11/S6).
     private let capture: CapturePreference
+    /// Where a composed variant goes once the user copies or saves it (L7).
+    var onDeliver: ((CGImage) -> Void)?
     var preferredSize: CGSize {
         let image = canvas.image
         let width = min(max(CGFloat(image.width) / 2, 480), 1100)
@@ -113,13 +138,30 @@ final class CaptureEditorContent: NSView {
             onRedo: { [weak self] in self?.canvas.redo() },
             onClear: { [weak self] in self?.canvas.clearMarks() },
             onCrop: { [weak self] in self?.canvas.beginCrop() },
-            onCopy: { [weak self] in self?.canvas.copyToPasteboard() },
+            onCopy: { [weak self] in
+                guard let self else { return }
+                self.canvas.copyToPasteboard()
+                self.deliverComposed()
+            },
             onSave: { [weak self] in
                 guard let self else { return }
-                self.canvas.savePanel(preference: self.capture)
+                let preference = self.capture
+                // Delivery waits for the write: a cancelled save panel produced
+                // nothing, so it records nothing.
+                self.canvas.savePanel(preference: preference) { [weak self] in
+                    self?.deliverComposed()
+                }
             },
             onClose: { [weak self] in self?.window?.close() }
         )
+    }
+
+    /// Hands the composed image to `onDeliver`, if any: one call site for both
+    /// paths (copy, saved) so the edited variant reaches the history the same
+    /// way whichever one produced it.
+    func deliverComposed() {
+        guard let composed = canvas.composedImage() else { return }
+        onDeliver?(composed)
     }
 
     override func layout() {
@@ -366,6 +408,49 @@ struct EditorCropRule {
 
     /// Repositions the region by a pixel delta, clamped so it never leaves
     /// the image: the size never changes.
+    /// The same corner resize with the START RECT's aspect ratio held: the
+    /// pointer drives one axis, the other follows so the shape never
+    /// distorts, and the corner opposite the dragged handle stays put.
+    ///
+    /// This is the Shift rule the board's V tool asks for, kept beside the
+    /// free one so every surface that resizes with these handles gets the same
+    /// answer instead of each writing its own aspect maths.
+    static func lockedRegion(
+        from start: CGRect,
+        dragging handle: CropHandle,
+        to pointer: CGPoint,
+        in bounds: CGRect
+    ) -> CGRect {
+        guard start.width > 0, start.height > 0 else {
+            return region(from: start, dragging: handle, to: pointer, in: bounds)
+        }
+        let free = region(from: start, dragging: handle, to: pointer, in: bounds)
+        let ratio = start.width / start.height
+        // The axis the pointer moved more drives the other: a vertical drag
+        // feels like it is setting the height, and the width follows.
+        let horizontal = abs(free.width - start.width) >= abs(free.height - start.height)
+        let width = horizontal ? free.width : free.height * ratio
+        let height = horizontal ? free.width / ratio : free.height
+        // Anchor the corner opposite the handle: right/bottom handles keep the
+        // origin, left/top ones keep the far edge.
+        // A handle on the leading or top edge moves THAT edge, so the opposite
+        // one is what stays put — the same anchor the free rule uses.
+        let movesLeading = handle == .left || handle == .topLeft || handle == .bottomLeft
+        let movesTop = handle == .top || handle == .topLeft || handle == .topRight
+        var locked = CGRect(
+            x: movesLeading ? free.maxX - width : free.minX,
+            y: movesTop ? free.maxY - height : free.minY,
+            width: width,
+            height: height
+        )
+        // Never let the lock push the shape off the canvas the drag began on.
+        if locked.maxX > bounds.maxX { locked.origin.x = max(bounds.minX, bounds.maxX - width) }
+        if locked.maxY > bounds.maxY { locked.origin.y = max(bounds.minY, bounds.maxY - height) }
+        if locked.minX < bounds.minX { locked.origin.x = bounds.minX }
+        if locked.minY < bounds.minY { locked.origin.y = bounds.minY }
+        return locked
+    }
+
     static func region(from start: CGRect, movedBy delta: CGPoint, in bounds: CGRect) -> CGRect {
         let x = min(max(start.minX + delta.x, bounds.minX), bounds.maxX - start.width)
         let y = min(max(start.minY + delta.y, bounds.minY), bounds.maxY - start.height)
@@ -1112,9 +1197,12 @@ final class CaptureEditorCanvas: NSView {
             case let .layerMove(id, _, grab):
                 _ = composition.move(id: id, by: CGSize(width: pixel.x - grab.x, height: pixel.y - grab.y))
             case let .layerResize(id, handle, start):
-                _ = composition.place(
-                    id: id,
-                    at: EditorCropRule.region(from: start, dragging: handle, to: pixel, in: fullBounds))
+                // Shift holds the layer's shape, the one rule every element
+                // resize follows (B4): nothing else in the editor binds it.
+                let region = event.modifierFlags.contains(.shift)
+                    ? EditorCropRule.lockedRegion(from: start, dragging: handle, to: pixel, in: fullBounds)
+                    : EditorCropRule.region(from: start, dragging: handle, to: pixel, in: fullBounds)
+                _ = composition.place(id: id, at: region)
             default: break
             }
             needsDisplay = true
@@ -1791,7 +1879,7 @@ final class CaptureEditorCanvas: NSView {
     /// name is `CapturePreference.fileName(at:)` — prefix plus timestamp —
     /// and the chosen format sets the panel's type and extension, instead of
     /// the hardcoded "Stare.png" (T11/S6).
-    func savePanel(preference: CapturePreference) {
+    func savePanel(preference: CapturePreference, onSaved: (() -> Void)? = nil) {
         guard let composed = composedImage() else { return }
         let panel = NSSavePanel()
         let isPNG = preference.format == .png
@@ -1804,6 +1892,7 @@ final class CaptureEditorCanvas: NSView {
             }
             try? data.write(to: url)
             Diag.log("editor saved \(url.lastPathComponent)")
+            onSaved?()
         }
     }
 }

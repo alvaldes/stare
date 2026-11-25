@@ -28,6 +28,14 @@ final class CaptureHistoryStore {
     /// The history keeps the newest 50 captures (S2a).
     static let maxEntries = 50
 
+    /// The one store the app runs on. The ⌥⇧I panel and the Settings pane both
+    /// read the history, and a Clear in one has to be the same history the
+    /// other sees: two stores on the same directory diverge in memory (each
+    /// caches images and an index) until each re-reads disk, so a capture
+    /// cleared in Settings could still sit in an open panel. Tests build their
+    /// own store on a throwaway directory and never touch this one.
+    static let shared = CaptureHistoryStore()
+
     /// The store's root: `…/Application Support/Stare/CaptureHistory` in the
     /// production path. Overridable for tests.
     let directory: URL

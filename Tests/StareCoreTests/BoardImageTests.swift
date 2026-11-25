@@ -50,23 +50,53 @@ final class BoardImageTests: XCTestCase {
         XCTAssertEqual(layer.viewRect(for: .identity), layer.rect, "at identity the page rect is the view rect")
     }
 
-    func testPasteIsClampedSoItNeverLandsOffTheVisiblePage() {
-        // An image bigger than the visible area is capped by the same clamp
-        // the capture editor applies to a drop: the length tops out at the
-        // canvas and the origin keeps a grabbable strip over it.
+    func testAnImageLargerThanTheVisibleAreaIsFittedWholeAndStaysCentred() {
+        // The owner's second pass: a pasted screen capture must not cover the
+        // board. It is fitted into a fraction of the visible area, whole.
+        // B3: an image bigger than the visible area used to be capped per
+        // axis — width to the canvas width, height to the canvas height —
+        // which squashed its proportions AND filled the board edge to edge,
+        // so a paste read as "not centred". It is fitted by ONE factor now,
+        // so it keeps its own shape and sits visibly inside the area.
         let big = BoardImage.pasted(
             solid(900, 700, 0, 1, 0),
             inView: CGRect(x: 0, y: 0, width: 800, height: 600),
             transform: .identity
         )
-        XCTAssertEqual(big.rect, CanvasComposition.clampedPlacement(
-            CGRect(x: -50, y: -50, width: 900, height: 700),
-            in: CGRect(x: 0, y: 0, width: 800, height: 600)
-        ))
-        // The clamp is the editor's own: a layer hanging off an edge keeps a
-        // grabbable strip over the visible page on every axis.
-        XCTAssertEqual(big.rect.width, 800)
-        XCTAssertEqual(big.rect.height, 600)
+        let area = CGRect(x: 0, y: 0, width: 800, height: 600)
+        XCTAssertEqual(big.rect.width / big.rect.height, 900.0 / 700.0, accuracy: 0.001, "the image keeps its shape")
+        XCTAssertLessThanOrEqual(big.rect.width, area.width * BoardImage.insertedAreaFraction)
+        XCTAssertLessThanOrEqual(big.rect.height, area.height * BoardImage.insertedAreaFraction)
+        XCTAssertEqual(big.rect.height, area.height * BoardImage.insertedAreaFraction, accuracy: 0.001,
+            "the tight axis fits the fraction of the page a paste may take — never the page edge to edge")
+        XCTAssertEqual(big.rect.midX, area.midX, accuracy: 0.001, "centred across")
+        XCTAssertEqual(big.rect.midY, area.midY, accuracy: 0.001, "centred down")
+    }
+
+    /// The bug this pins: the paste clamped in VIEW points while every later
+    /// clamp of the layer runs in PAGE points, so at zoom 2 the paste accepted a
+    /// placement 8 page points from the edge and the first drag pushed it to 16
+    /// — the layer jumped the moment the user touched it. Paste and drag now
+    /// agree, so a freshly pasted layer is already where the drag would put it.
+    func testAPastedLayerIsAlreadyInsideTheClampADragApplies() {
+        let view = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let zoomed = BoardTransform(offset: CGSize(width: 40, height: 25), zoom: 2)
+
+        let layer = BoardImage.pasted(solid(900, 700, 0, 1, 0), inView: view, transform: zoomed)
+
+        let pageArea = zoomed.rect(toPage: view)
+        XCTAssertEqual(
+            CanvasComposition.clampedPlacement(layer.rect, in: pageArea), layer.rect,
+            "the drag's own clamp must leave a fresh paste exactly where it is"
+        )
+    }
+
+    func testAPasteIntoAnEmptyVisibleAreaLandsAtThePageOriginAtItsOwnSize() {
+        // A paste while the board has no laid-out canvas cannot centre on
+        // nothing: centring on a zero rect put the layer at a negative
+        // half-size, which is the one placement a user can never find.
+        let layer = BoardImage.pasted(solid(100, 80, 1, 0, 0), inView: .zero, transform: .identity)
+        XCTAssertEqual(layer.rect, CGRect(x: 0, y: 0, width: 100, height: 80))
     }
 
     func testPasteStoresPageSpaceSoItPansAndZoomsWithThePage() {

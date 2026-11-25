@@ -1,4 +1,5 @@
 import AppKit
+import StareCore
 import SwiftUI
 
 /// The paste-style capture history panel (T2a/S2): a non-activating borderless
@@ -29,9 +30,14 @@ final class CaptureHistoryPanel: NSPanel {
     /// can return key focus to the surface that was working before it.
     var onHidden: (() -> Void)?
 
-    init(store: CaptureHistoryStore, onPick: @escaping (CGImage) -> Void = CaptureHistoryPanel.copyToPasteboard) {
+    init(
+        store: CaptureHistoryStore,
+        thumbnailSize: @escaping () -> Double = { HistoryPreference.defaultThumbnailSize },
+        onPick: @escaping (CGImage) -> Void = CaptureHistoryPanel.copyToPasteboard
+    ) {
         model = CaptureHistoryPanelModel(
             store: store,
+            thumbnailSize: thumbnailSize,
             onPick: onPick,
             onClose: {}
         )
@@ -82,12 +88,76 @@ final class CaptureHistoryPanel: NSPanel {
             makeFirstResponder(hostingView)
         }
         installKeyMonitor()
+        installOutsideClickMonitors()
+        Diag.log(
+            "history shown entries=\(model.entries.count) selected=\(model.selectedIndex.map(String.init) ?? "nil") key=\(isKeyWindow)"
+        )
     }
 
     func hide() {
         removeKeyMonitor()
+        removeOutsideClickMonitors()
         orderOut(nil)
         onHidden?()
+    }
+
+    // MARK: Clicking outside (B2)
+
+    /// The monitors that close the panel on the first click anywhere else —
+    /// Maccy's behaviour, which is what a paste-style palette teaches a user to
+    /// expect: the panel does not need Esc or a second shortcut to get out of
+    /// the way.
+    ///
+    /// Two monitors because one cannot see both worlds: a LOCAL one for clicks
+    /// inside Stare (another of our windows, or the board) and a GLOBAL one for
+    /// clicks in every other app. Mouse events need no accessibility grant;
+    /// the keyboard monitor is the one that would.
+    private var outsideClickMonitor: Any?
+    private var globalOutsideClickMonitor: Any?
+
+    /// Whether a click closes the panel: anything that is not the panel itself
+    /// and not inside its frame. Kept as a value rule so the decision is
+    /// testable without windows, monitors or a screen.
+    nonisolated static func hides(forClickOnPanelWindow windowIsPanel: Bool, insidePanelFrame: Bool) -> Bool {
+        !(windowIsPanel || insidePanelFrame)
+    }
+
+    private func installOutsideClickMonitors() {
+        removeOutsideClickMonitors()
+        outsideClickMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] event in
+            self?.handleClickOutside(event)
+            return event
+        }
+        globalOutsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.handleClickOutside(nil)
+            }
+        }
+    }
+
+    private func removeOutsideClickMonitors() {
+        if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor) }
+        if let globalOutsideClickMonitor { NSEvent.removeMonitor(globalOutsideClickMonitor) }
+        outsideClickMonitor = nil
+        globalOutsideClickMonitor = nil
+    }
+
+    /// A click on the panel belongs to the panel; one inside its frame is a
+    /// near miss the user still reads as the panel's. Everything else closes
+    /// it, and the click itself goes on to whatever it landed on.
+    private func handleClickOutside(_ event: NSEvent?) {
+        guard isVisible else { return }
+        let hides = Self.hides(
+            forClickOnPanelWindow: event?.window === self,
+            insidePanelFrame: frame.contains(NSEvent.mouseLocation)
+        )
+        guard hides else { return }
+        Diag.log("history closed by an outside click")
+        hide()
     }
 
     // MARK: Keyboard monitoring
@@ -138,11 +208,17 @@ final class CaptureHistoryPanel: NSPanel {
         case 53: // Esc
             hide()
             return true
-        case 123, 126: // ←, ↑: previous — one entry newer
+        case 123: // ←: one entry newer
             model.moveSelection(-1)
             return true
-        case 124, 125: // →, ↓: next — one entry older
+        case 124: // →: one entry older
             model.moveSelection(1)
+            return true
+        case 126: // ↑: one ROW newer — the cell directly above
+            model.moveSelection(-model.columnCount)
+            return true
+        case 125: // ↓: one ROW older — the cell directly below, in a grid of N columns that is N entries along
+            model.moveSelection(model.columnCount)
             return true
         case 36, 76: // Return, keypad Enter
             model.pickSelected()
@@ -247,16 +323,32 @@ final class CaptureHistoryPanelModel: ObservableObject {
     var onPick: (CGImage) -> Void
     var onClose: () -> Void
 
-    init(store: CaptureHistoryStore, onPick: @escaping (CGImage) -> Void, onClose: @escaping () -> Void) {
+    /// The grid cell width in points (B1). Read from the preferences on every
+    /// `refresh()`, so a change made in Settings reaches the next open: the
+    /// panel is a session-long window and its content must not pin a value
+    /// chosen before the user touched the slider.
+    @Published private(set) var thumbnailSize: Double
+    private let thumbnailSizeProvider: () -> Double
+
+    init(
+        store: CaptureHistoryStore,
+        thumbnailSize: @escaping () -> Double = { HistoryPreference.defaultThumbnailSize },
+        onPick: @escaping (CGImage) -> Void,
+        onClose: @escaping () -> Void
+    ) {
         self.store = store
+        self.thumbnailSizeProvider = thumbnailSize
+        self.thumbnailSize = thumbnailSize()
         self.onPick = onPick
         self.onClose = onClose
     }
 
     /// Reloads from the store and starts selected on the newest capture.
     func refresh() {
+        thumbnailSize = thumbnailSizeProvider()
         entries = store.entries
         selectedIndex = entries.isEmpty ? nil : 0
+        Diag.log("history refresh entries=\(entries.count) selected=\(selectedIndex.map(String.init) ?? "nil")")
     }
 
     /// Selects `index` outright; an out-of-bounds index is ignored.
@@ -267,10 +359,39 @@ final class CaptureHistoryPanelModel: ObservableObject {
 
     /// Arrow navigation: moves the selection by `delta`, clamped so it never
     /// leaves the entries.
+    /// How many cells the grid shows per row, reported by the view. The vertical
+    /// arrows move by a row — in a three-column grid the second element under the
+    /// first is the FOURTH, not the second — so the model has to know the width
+    /// the grid actually got.
+    private(set) var columnCount = 1
+
+    /// Recomputes the row width from the grid's measured width and the same
+    /// adaptive minimum the `GridItem` uses.
+    func updateColumnCount(forGridWidth width: CGFloat) {
+        let minimum = CGFloat(thumbnailSize)
+        let spacing: CGFloat = 10
+        guard width > 0 else { return }
+        let columns = max(1, Int((width + spacing) / (minimum + spacing)))
+        guard columns != columnCount else { return }
+        columnCount = columns
+        Diag.log("history grid columns=\(columns) width=\(Int(width))")
+    }
+
+    /// "3 / 12" — the selection's place in the history, or nil when nothing is
+    /// selected. The header shows it so the focus is legible, not only outlined.
+    var selectionPosition: String? {
+        guard let index = selectedIndex, !entries.isEmpty else { return nil }
+        return "\(index + 1) / \(entries.count)"
+    }
+
     func moveSelection(_ delta: Int) {
-        guard let current = selectedIndex else { return }
+        guard let current = selectedIndex else {
+            Diag.log("history move ignored: nothing selected")
+            return
+        }
         let next = min(max(current + delta, 0), entries.count - 1)
         selectedIndex = next
+        Diag.log("history move delta=\(delta) from=\(current) to=\(next) entries=\(entries.count)")
     }
 
     /// Picks `index`: the capture's image goes through `onPick` and the panel
@@ -313,15 +434,26 @@ final class CaptureHistoryPanelModel: ObservableObject {
 struct CaptureHistoryPanelContent: View {
     @ObservedObject var model: CaptureHistoryPanelModel
 
-    private let columns = [
-        GridItem(.adaptive(minimum: 170), spacing: 10),
-    ]
+    /// One adaptive column spec built from the preference (B1): the cell
+    /// width chosen in Settings, not a constant the panel decides on its own.
+    private var columns: [GridItem] {
+        [GridItem(.adaptive(minimum: model.thumbnailSize), spacing: 10)]
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Capture History")
                     .font(.headline)
+                // Which capture the keys are on, in words: the outline alone was
+                // not readable as "the one in focus", and a position makes the
+                // state legible even while the grid scrolls under it.
+                if let position = model.selectionPosition {
+                    Text(position)
+                        .font(.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 Button("Clear") { model.clearHistory() }
                     .disabled(model.isEmpty)
@@ -346,11 +478,27 @@ struct CaptureHistoryPanelContent: View {
                     ScrollView {
                         LazyVGrid(columns: columns, spacing: 10) {
                             ForEach(Array(model.entries.enumerated()), id: \.element.id) { index, entry in
-                                CaptureHistoryCell(model: model, index: index, entry: entry)
+                                CaptureHistoryCell(
+                                    model: model,
+                                    index: index,
+                                    entry: entry,
+                                    isSelected: model.selectedEntry?.id == entry.id
+                                )
                             }
                         }
                         .padding(.horizontal, 14)
                         .padding(.bottom, 14)
+                        // The grid tells the model how wide it is, so the
+                        // vertical arrows can move by a row (see columnCount).
+                        .background(
+                            GeometryReader { proxy in
+                                Color.clear
+                                    .onAppear { model.updateColumnCount(forGridWidth: proxy.size.width) }
+                                    .onChange(of: proxy.size.width) { _, width in
+                                        model.updateColumnCount(forGridWidth: width)
+                                    }
+                            }
+                        )
                     }
                     // Minimal scroll, not `anchor: .center`: centring on every
                     // move pins the selected cell to the middle of the panel, so
@@ -376,6 +524,12 @@ struct CaptureHistoryCell: View {
     let model: CaptureHistoryPanelModel
     let index: Int
     let entry: PersistedCaptureEntry
+    /// The selection arrives as a VALUE, never read off `model` inside the cell:
+    /// a cell whose stored properties are all unchanged (the same model
+    /// instance, the same index, the same entry) is skipped by SwiftUI, so the
+    /// outline stayed on the first cell while the header's counter updated —
+    /// the arrows moved the model and nothing moved on screen.
+    let isSelected: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -406,10 +560,6 @@ struct CaptureHistoryCell: View {
                 .strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 2)
         )
         .onTapGesture { model.pick(at: index) }
-    }
-
-    private var isSelected: Bool {
-        model.selectedEntry?.id == entry.id
     }
 
     /// The one metadata line: when the capture was taken and its pixel size.

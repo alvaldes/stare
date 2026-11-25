@@ -108,6 +108,15 @@ final class CardCursorRoutingTests: XCTestCase {
             contentRect: CGRect(x: 0, y: 0, width: 40, height: 40),
             styleMask: [.borderless], backing: .buffered, defer: true
         )
+        // A programmatic `NSWindow` comes with `isReleasedWhenClosed = true`,
+        // so `close()` releases it in ObjC terms WHILE ARC still owns it: an
+        // over-release that showed up later, at the end of the test, as
+        // `EXC_BAD_ACCESS` inside XCTest's memory checker
+        // (`objc_autoreleasePoolPop` → `objc_release`). It killed the whole
+        // `StareTests` bundle mid-run, and with it every suite after this one —
+        // the run still reported "0 failures". Every window the app builds sets
+        // this flag for the same reason; a test's own window has to as well.
+        stranger.isReleasedWhenClosed = false
         defer { stranger.close() }
         XCTAssertFalse(OverlayController.isCardWindow(stranger, cards: []))
     }

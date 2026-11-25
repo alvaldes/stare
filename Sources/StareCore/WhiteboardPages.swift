@@ -652,6 +652,17 @@ public final class WhiteboardPages {
         return true
     }
 
+    /// Puts a page's image layer back exactly as it was (L8 undo): `nil` removes
+    /// it, a layer restores it. Returns whether anything changed, so a popped
+    /// entry that no longer applies reports itself as spent.
+    @discardableResult
+    public func restorePageImage(_ image: BoardImage?, at index: Int) -> Bool {
+        guard pages.indices.contains(index) else { return false }
+        guard pages[index].image != image else { return false }
+        pages[index].image = image
+        return true
+    }
+
     /// ⌫ — removes the current page's image layer. Returns whether there was
     /// one to remove.
     @discardableResult

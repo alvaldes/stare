@@ -418,8 +418,8 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertTrue(blob.contains("\"redactionStyle\":\"randomizedPixelate\""))
 
         let dom = try! JSONSerialization.jsonObject(with: blob.data(using: .utf8)!) as! [String: Any]
-        XCTAssertEqual(dom.count, 11, "the blob carries exactly the eleven fields, nothing else")
-        for key in ["pointer", "general", "toolShortcuts", "hotkeys", "tool", "ink", "capture", "whiteboard", "updates", "hasCompletedOnboarding", "redactionStyle"] {
+        XCTAssertEqual(dom.count, 12, "the blob carries exactly the twelve fields, nothing else")
+        for key in ["pointer", "general", "toolShortcuts", "hotkeys", "tool", "ink", "capture", "whiteboard", "updates", "hasCompletedOnboarding", "redactionStyle", "history"] {
             XCTAssertTrue(dom.keys.contains(key), "\(key) still rides in the versioned blob")
         }
     }

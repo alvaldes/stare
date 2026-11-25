@@ -19,6 +19,26 @@ private enum HistoryEntry {
     /// same batch routing the clear entry keeps. `page` works exactly like
     /// the clear entry's: the page the move happened on, nil on the overlay.
     case batchMove(displayID: CGDirectDisplayID, page: Int?)
+    /// A board image-layer edit (L8): a paste, a move, a resize, a delete or an
+    /// Escape cleared the page's image. Carries the placement BEFORE and AFTER,
+    /// so undo puts back what was there (nil when the page carried nothing) and
+    /// redo re-applies the edit. `page` works exactly like the other
+    /// page-carrying entries. The layers share their `CGImage`: an entry holds
+    /// two references, never two copies of the picture.
+    case boardImage(
+        displayID: CGDirectDisplayID, page: Int?, before: BoardImage?, after: BoardImage?
+    )
+
+    /// The entry's kind, for the diagnostics: which step was skipped and why the
+    /// undo loop could not apply it.
+    var debugKind: String {
+        switch self {
+        case .mark: return "mark"
+        case .clear: return "clear"
+        case .batchMove: return "batchMove"
+        case .boardImage: return "boardImage"
+        }
+    }
 
     /// The display the entry routes to.
     var owningDisplayID: CGDirectDisplayID {
@@ -26,6 +46,7 @@ private enum HistoryEntry {
         case let .mark(displayID, _): return displayID
         case let .clear(displayID, _): return displayID
         case let .batchMove(displayID, _): return displayID
+        case let .boardImage(displayID, _, _, _): return displayID
         }
     }
 
@@ -54,6 +75,11 @@ private enum HistoryEntry {
             // deleted, the entry leaves.
             guard let moved = mapping(page) else { return nil }
             return .batchMove(displayID: id, page: moved)
+        case let .boardImage(id, page, before, after):
+            guard id == displayID else { return self }
+            guard let page else { return self }
+            guard let moved = mapping(page) else { return nil }
+            return .boardImage(displayID: id, page: moved, before: before, after: after)
         }
     }
 
@@ -71,6 +97,10 @@ private enum HistoryEntry {
         case let .mark(id, strokeID): return id == displayID && clearedIDs.contains(strokeID)
         case let .clear(id, entryPage): return id == displayID && entryPage == page
         case let .batchMove(id, entryPage): return id == displayID && entryPage == page
+        // The image layer is session state like the pages themselves, so the
+        // board's boot archive never held it and a hard clear cannot have wiped
+        // it: the entry survives with its placement intact.
+        case .boardImage: return false
         }
     }
 
@@ -226,9 +256,14 @@ final class OverlayController {
     /// The panel's pick routes through `deliverHistoryPick`, the seam T2b
     /// extends with a whiteboard route. Internal so the tests can drive the
     /// panel's real event path and observe where its hiding sends focus.
-    private let captureHistoryStore = CaptureHistoryStore()
+    private let captureHistoryStore = CaptureHistoryStore.shared
     private(set) lazy var captureHistoryPanel = CaptureHistoryPanel(
         store: captureHistoryStore,
+        // Read on every open, so the thumbnail size chosen in Settings (B1)
+        // reaches the next panel instead of the one built at launch.
+        thumbnailSize: { [weak self] in
+            self?.preferences?.history.thumbnailSize ?? HistoryPreference.defaultThumbnailSize
+        },
         onPick: { [weak self] image in self?.deliverHistoryPick(image) }
     )
     private var cancellables: Set<AnyCancellable> = []
@@ -391,6 +426,7 @@ final class OverlayController {
             guard let self else { return event }
             if event.modifierFlags.contains(.command),
                event.charactersIgnoringModifiers?.lowercased() == "z" {
+                Diag.log("key monitor saw command-z shift=\(event.modifierFlags.contains(.shift))")
                 if event.modifierFlags.contains(.shift) {
                     self.redo()
                 } else {
@@ -427,6 +463,9 @@ final class OverlayController {
     }
 
     private func wireEditor() {
+        // The editor's own captures come back through the same recording an
+        // overlay capture goes through (L7).
+        editor.onDeliver = { [weak self] composed in self?.deliverEdited(composed) }
         // The editor is a normal window: opening it while a layer is still
         // armed would leave it above, eating every click. The card's click and
         // the History pane's reopen share the handoff above.
@@ -475,6 +514,7 @@ final class OverlayController {
             case .mark: return nil
             case .clear(_, let page): return page
             case .batchMove(_, let page): return page
+            case .boardImage(_, let page, _, _): return page
             }
         }
     }
@@ -524,6 +564,19 @@ final class OverlayController {
         case .clipboard:
             copy(image, to: NSPasteboard.general)
         }
+    }
+
+    /// The editor's capture tail (L7): a composed variant the user copies or
+    /// saves is a new capture like any other, so it lands in both histories the
+    /// way `deliver` puts one there — the on-disk store and the session list.
+    /// No canvas, no display and no destination preference are involved: the
+    /// editor's own save panel already wrote the file the user chose, and the
+    /// card stays away so the editor in front is not covered by its own copy.
+    func deliverEdited(_ composed: CGImage) {
+        let date = Date()
+        captureHistoryStore.add(composed, date: date)
+        history.record(composed, at: date)
+        Diag.log("editor delivered \(composed.width)x\(composed.height)")
     }
 
     /// The capture history panel hid (pick, Esc, the toggle-off): return key
@@ -669,15 +722,39 @@ final class OverlayController {
         installCardCursorMonitor()
         Diag.log("activate displays=\(canvases.count) active=\(NSApp.isActive)")
 
-        // Activation is asynchronous: re-assert once it settles so the panels
-        // are ordered in front of the now-active app.
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.isActive else { return }
-            Diag.log("activate settled active=\(NSApp.isActive) key=\(NSApp.keyWindow != nil)")
-            for canvas in self.canvases.values { canvas.panel.orderFrontRegardless() }
-            self.toolbar?.orderFrontRegardless()
-            self.canvasUnderPointer()?.panel.makeKey()
-            NSCursor.crosshair.set()
+        // Ordering the panels and taking the keyboard are asynchronous: a mode
+        // cycle can lose that race (the log shows `active=false key=false`), and
+        // an inactive app never sees ⌘Z — this controller routes undo from a
+        // LOCAL monitor, which only receives our own events. That was the
+        // "undo stops working after closing and opening a mode" report.
+        for canvas in canvases.values { canvas.panel.orderFrontRegardless() }
+        toolbar?.orderFrontRegardless()
+        NSCursor.crosshair.set()
+        assertActivation()
+    }
+
+    /// Makes Stare the active app with its mode's panel key, retrying while the
+    /// system settles. One `async` hop is not enough: after a mode cycle the
+    /// activation loses to the app that was handed focus back, and it stays lost.
+    private func assertActivation(attempt: Int = 0) {
+        guard isActive || isBoardActive else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        let canvas = isBoardActive ? boardCanvasUnderPointer() : canvasUnderPointer()
+        canvas?.panel.orderFrontRegardless()
+        canvas?.panel.makeKeyAndOrderFront(nil)
+        if let canvas { canvas.panel.makeFirstResponder(canvas.view) }
+        let active = NSApp.isActive
+        let key = canvas?.panel.isKeyWindow == true
+        if active && key {
+            Diag.log("activation settled attempt=\(attempt) active=true key=true")
+            return
+        }
+        guard attempt < 10 else {
+            Diag.log("activation gave up attempt=\(attempt) active=\(active) key=\(key)")
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.assertActivation(attempt: attempt + 1)
         }
     }
 
@@ -749,9 +826,18 @@ final class OverlayController {
         guard sessionPersistenceEnabled, let archive = sessionStore?.load() else { return }
         for canvas in canvases.values {
             guard let stored = archive.displays[String(canvas.displayID)], !stored.isEmpty else { continue }
-            let restored = DrawingSession.restored(strokes: stored.compactMap(Stroke.init(persisted:)))
+            let restored = DrawingSession.restoredUndoable(strokes: stored.compactMap(Stroke.init(persisted:)))
             guard !restored.isEmpty else { continue }
             canvas.view.session = restored
+            // The marks came back; their undo steps come back with them, so ⌘Z
+            // after a mode cycle removes what the user is looking at instead of
+            // finding an empty history (the log showed `entries=2 / undo empty`:
+            // the steps that existed named work the restored session no longer
+            // held).
+            for stroke in restored.strokes {
+                historyOrder.append(.mark(displayID: canvas.displayID, strokeID: stroke.id))
+            }
+            Diag.log("sessions restored display=\(canvas.displayID) strokes=\(restored.strokes.count)")
         }
     }
 
@@ -767,7 +853,13 @@ final class OverlayController {
     /// leave). The pages stay in memory for the whole session.
     private func openBoard() {
         guard !isBoardActive, !NSScreen.screens.isEmpty else { return }
-        if isActive { deactivate() }
+        // NOT `deactivate()`: its default restores focus to the app the user came
+        // from, and that activation can land AFTER the `NSApp.activate` below —
+        // Stare ends up in the background with its panel non-key, so ⌘Z (which
+        // this controller routes from a local monitor and therefore needs our app
+        // to be the active one) never arrives. Switching modes is not leaving to
+        // another app.
+        if isActive { deactivate(restoringFocus: false) }
         if isPointerActive { stopPointerMode() }
         isBoardActive = true
 
@@ -782,6 +874,7 @@ final class OverlayController {
             canvas.view.showIntroHint()
         }
         boardCanvasUnderPointer()?.panel.makeKey()
+        Diag.log("board open active=\(NSApp.isActive) key=\(boardCanvasUnderPointer()?.panel.isKeyWindow == true) canvases=\(boardCanvases.count)")
         syncBoardIndicator()
         NSCursor.crosshair.set()
         showToolbar()
@@ -789,12 +882,7 @@ final class OverlayController {
         installCardCursorMonitor()
         Diag.log("board open displays=\(boardCanvases.count)")
 
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.isBoardActive else { return }
-            for canvas in self.boardCanvases.values { canvas.panel.orderFrontRegardless() }
-            self.toolbar?.orderFrontRegardless()
-            self.boardCanvasUnderPointer()?.panel.makeKey()
-        }
+        assertActivation()
     }
 
     /// Closing the board returns to the previous behaviour: the transparent
@@ -814,12 +902,10 @@ final class OverlayController {
         // app launches, stored here at the mode exit.
         saveSession()
         hideToolbar()
-        // The marks stay on their pages, so the undo history cannot resurrect
-        // them in a future overlay session: start the history clean — entries
-        // and the page records behind the mark entries alike.
-        historyOrder.removeAll()
-        redoOrder.removeAll()
-        pageOfMark.removeAll()
+        // The history is KEPT (L35): the pages and the marks survive the board
+        // closing, and they come back with their ids, so their undo steps still
+        // apply. Clearing here left the owner looking at a stroke on screen with
+        // nothing to undo — `entries=0` in the log right after returning.
         liveFrames.stop()
         removeKeyMonitor()
         removeCardCursorMonitor()
@@ -1158,9 +1244,8 @@ final class OverlayController {
             return
         }
         for canvas in canvases.values { canvas.clear() }
-        historyOrder.removeAll()
-        redoOrder.removeAll()
-        pageOfMark.removeAll()
+        // Same reason as the board's close: the sessions are stored and restored
+        // with their stroke ids, so the undo steps stay valid across a cycle.
         liveFrames.stop()
     }
 
@@ -1171,29 +1256,46 @@ final class OverlayController {
     /// names.
     func undo() {
         let canvases = activeCanvases
+        Diag.log(
+            "undo called active=\(NSApp.isActive) key=\(NSApp.keyWindow != nil) entries=\(historyOrder.count) canvases=\(canvases.count) board=\(isBoardActive) overlay=\(isActive)"
+        )
         if let canvas = activeCanvasUnderPointer(), canvas.discardActiveMark() { return }
+        // An entry that cannot be applied is KEPT, not discarded: a stale step
+        // sitting on top used to take the whole history down with it, which is
+        // exactly how ⌘Z went silent after a mode cycle. Walk past what cannot
+        // apply, undo the newest that can, and put the skipped ones back on top.
+        var skipped: [HistoryEntry] = []
         while let last = historyOrder.popLast() {
             if let canvas = canvases[last.owningDisplayID], canvas.undo(entry: last) {
+                historyOrder.append(contentsOf: skipped.reversed())
                 redoOrder.append(last)
-                Diag.log("undo display=\(last.owningDisplayID) remaining=\(historyOrder.count)")
+                Diag.log("undo display=\(last.owningDisplayID) remaining=\(historyOrder.count) skipped=\(skipped.count)")
                 return
             }
+            Diag.log("undo skipped kind=\(last.debugKind) display=\(last.owningDisplayID)")
+            skipped.append(last)
         }
-        Diag.log("undo empty")
+        historyOrder.append(contentsOf: skipped.reversed())
+        Diag.log("undo empty entries=\(historyOrder.count)")
     }
 
     /// Shift-Command-Z: puts back the newest undone change, on the display it
     /// came from — a removed mark, a transform, or the cleared batch.
     func redo() {
         let canvases = activeCanvases
+        Diag.log("redo called active=\(NSApp.isActive) entries=\(redoOrder.count) board=\(isBoardActive) overlay=\(isActive)")
+        var skipped: [HistoryEntry] = []
         while let last = redoOrder.popLast() {
             if let canvas = canvases[last.owningDisplayID], canvas.redo(entry: last) {
+                redoOrder.append(contentsOf: skipped.reversed())
                 historyOrder.append(last)
-                Diag.log("redo display=\(last.owningDisplayID) remaining=\(redoOrder.count)")
+                Diag.log("redo display=\(last.owningDisplayID) remaining=\(redoOrder.count) skipped=\(skipped.count)")
                 return
             }
+            skipped.append(last)
         }
-        Diag.log("redo empty")
+        redoOrder.append(contentsOf: skipped.reversed())
+        Diag.log("redo empty entries=\(redoOrder.count)")
     }
 
     // MARK: - Canvases
@@ -1325,6 +1427,18 @@ final class OverlayController {
             // The mark's page record goes with the retired entries (the redo
             // entry besides is a re-add the redo journal answers by id).
             self.pageOfMark.removeValue(forKey: MarkLocation(displayID: displayID, strokeID: id))
+        }
+        // Board only: the image layer exists on a whiteboard page. One step per
+        // edit, on the same stream the marks use, carrying the page it happened
+        // on (L8) — and an edit that changed nothing is no step.
+        if let boardView = view as? WhiteboardView {
+            boardView.onBoardImageEdited = { [weak self] before, after, page in
+                guard let self, before != after else { return }
+                historyOrder.append(
+                    .boardImage(displayID: displayID, page: page, before: before, after: after)
+                )
+                redoOrder.removeAll()
+            }
         }
         view.onClearMarks = { [weak self, weak view] in
             guard let self, let view else { return }
@@ -1875,6 +1989,9 @@ final class DisplayCanvas {
         case let .batchMove(_, page):
             guard let page, let boardView = whiteboardView(forPage: page) else { return view.undoBatchMove() }
             return boardView.undoBatchMove(onPage: page)
+        case let .boardImage(_, page, before, _):
+            guard let page, let boardView = whiteboardView(forPage: page) else { return false }
+            return boardView.restorePageImage(before, onPage: page)
         }
     }
 
@@ -1887,6 +2004,9 @@ final class DisplayCanvas {
         case let .batchMove(_, page):
             guard let page, let boardView = whiteboardView(forPage: page) else { return view.redoBatchMove() }
             return boardView.redoBatchMove(onPage: page)
+        case let .boardImage(_, page, _, after):
+            guard let page, let boardView = whiteboardView(forPage: page) else { return false }
+            return boardView.restorePageImage(after, onPage: page)
         }
     }
 

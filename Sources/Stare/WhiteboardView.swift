@@ -227,7 +227,10 @@ class WhiteboardView: OverlayView {
     }
 
     /// The page's image layer in view space, through the page transform like
-    /// the marks — the view is flipped, so the top-left rect draws directly.
+    /// the marks. The rect is drawn in the view's flipped space — and that is
+    /// exactly why the pixels have to be unflipped first: the image comes
+    /// top-down, so a plain `draw` lands it mirrored inside a correctly placed
+    /// frame. The capture card and the editor's canvas undo the same flip.
     /// The dashed outline is the layer's selection chrome: view-only, never
     /// captured (the capture composites the layer through
     /// `BoardImage.composited`, not through this paint).
@@ -235,7 +238,12 @@ class WhiteboardView: OverlayView {
         guard let layer = board.currentPage.image else { return }
         let rect = layer.viewRect(for: viewTransform)
         guard rect.intersects(bounds) else { return }
+        context.saveGState()
+        context.translateBy(x: 0, y: rect.midY)
+        context.scaleBy(x: 1, y: -1)
+        context.translateBy(x: 0, y: -rect.midY)
         context.draw(layer.image, in: rect)
+        context.restoreGState()
         if isBoardImageSelected {
             context.saveGState()
             context.setStrokeColor(CGColor(srgbRed: 0.25, green: 0.55, blue: 1, alpha: 1))
@@ -393,6 +401,7 @@ class WhiteboardView: OverlayView {
     /// the model (`WhiteboardPages.paste`). The new layer takes the selection
     /// so ⌫ can act on it right away — the editor's paste convention.
     func pasteImage(_ image: CGImage) {
+        let before = board.currentPage.image
         guard let layer = board.paste(image, inView: bounds) else {
             Diag.log("board image paste refused \(image.width)x\(image.height)")
             return
@@ -401,16 +410,48 @@ class WhiteboardView: OverlayView {
         imageGesture = nil
         needsDisplay = true
         Diag.log("board image pasted \(image.width)x\(image.height) rect=\(layer.rect) page=\(board.currentIndex + 1)")
+        noteBoardImageEdit(before: before)
     }
 
     /// Whether the current page's image layer takes the keys and gestures.
     private var isBoardImageSelected = false
 
+    /// Told after the current page's image layer changed (L8), with the
+    /// placement before and after: nil→layer is a paste, layer→layer a move or
+    /// a resize, layer→nil a delete or an Escape. The controller turns that
+    /// into one step on the same undo stream the marks use.
+    var onBoardImageEdited: ((BoardImage?, BoardImage?, Int) -> Void)?
+
+    /// The layer as it was when the running gesture began, so a drag reports one
+    /// edit (its start) instead of one per event.
+    private var imageGestureStartLayer: BoardImage?
+
+    /// Emits one image edit to the listener. Called at the END of an edit — a
+    /// paste, a finished drag, a delete — never per mouse event.
+    private func noteBoardImageEdit(before: BoardImage?) {
+        onBoardImageEdited?(before, board.currentPage.image, board.currentIndex)
+    }
+
+    /// Puts a page's image layer back for the undo stream (L8), refreshing the
+    /// paint and the selection it may no longer own.
+    @discardableResult
+    func restorePageImage(_ image: BoardImage?, onPage page: Int) -> Bool {
+        guard board.restorePageImage(image, at: page) else { return false }
+        isBoardImageSelected = false
+        needsDisplay = true
+        Diag.log("board image restored page=\(page + 1) present=\(image != nil)")
+        return true
+    }
+
     /// The running image gesture: the interior move-s, a corner grip resize-s
     /// — the capture editor's own ⌥ conventions, driven by the same grip and
     /// resize rules (`EditorCropRule`) the editor drives its layers with.
     private enum ImageGesture {
-        case move(grab: CGPoint)
+        /// `startPageRect` is the layer's placement when the drag began: a move
+        /// is applied as an ABSOLUTE destination from it, never as a delta on
+        /// top of the already-moved rect — doing the latter re-adds the whole
+        /// travel on every event and the layer runs away from the pointer.
+        case move(grab: CGPoint, startPageRect: CGRect)
         case resize(handle: CropHandle, startViewRect: CGRect)
     }
 
@@ -420,21 +461,25 @@ class WhiteboardView: OverlayView {
     /// the drag began, held fixed so the layer can never land off it.
     private var imageGestureCanvas: CGRect = .zero
 
-    /// A ⌥ press over the layer claims it (the editor's convention): the grip
+    /// A press with the select tool (V) over the layer claims it: the grip
     /// resize-s, the interior move-s, and the layer takes the selection so the
-    /// keys can act on it. A click with no layer under it falls through to
-    /// drawing — a board user's ⌥-click has no meaning anywhere else.
+    /// keys can act on it. A click with no layer under it falls through to the
+    /// tool's own behaviour, so selecting marks still works around it.
     private func grabBoardImage(at viewPoint: CGPoint) -> Bool {
         guard let layer = board.currentPage.image else { return false }
         let viewRect = layer.viewRect(for: viewTransform)
         let reach = EditorCropRule.defaultHandleReach
         guard viewRect.insetBy(dx: -reach, dy: -reach).contains(viewPoint) else { return false }
         isBoardImageSelected = true
+        imageGestureStartLayer = layer
         imageGestureCanvas = viewTransform.rect(toPage: bounds)
         if let handle = EditorCropRule.handle(at: viewPoint, on: viewRect) {
             imageGesture = .resize(handle: handle, startViewRect: viewRect)
         } else {
-            imageGesture = .move(grab: viewTransform.point(toPage: viewPoint))
+            imageGesture = .move(
+                grab: viewTransform.point(toPage: viewPoint),
+                startPageRect: layer.rect
+            )
         }
         needsDisplay = true
         return true
@@ -445,11 +490,27 @@ class WhiteboardView: OverlayView {
     /// documented ⌫ behaviour whenever it exists.
     private func deleteBoardImageIfSelected() -> Bool {
         guard isBoardImageSelected, selectedMarkIDs.isEmpty else { return false }
+        let before = board.currentPage.image
         guard board.removePageImage() else { return false }
         isBoardImageSelected = false
         needsDisplay = true
         Diag.log("board image deleted page=\(board.currentIndex + 1)")
+        noteBoardImageEdit(before: before)
         return true
+    }
+
+    /// Escape (keyCode 53) after the overlay's own clear: the page's image
+    /// layer leaves with the marks, so the hint's "esc clear page" is what the
+    /// key actually does. Not journalled — the image lane's edits (⌫, ⌥-drag)
+    /// are session values, not steps of the stroke journal.
+    private func removePageImageOnEscape() {
+        guard board.currentPage.image != nil else { return }
+        let before = board.currentPage.image
+        guard board.removePageImage() else { return }
+        isBoardImageSelected = false
+        needsDisplay = true
+        Diag.log("board image cleared by esc page=\(board.currentIndex + 1)")
+        noteBoardImageEdit(before: before)
     }
 
     // MARK: - Zooming (T5/S5)
@@ -840,8 +901,10 @@ class WhiteboardView: OverlayView {
             reassertCursor() // pan drag starts → closed hand (S3)
             return
         }
-        // ⌥ claims the page's image layer (T2b/S4): the editor's convention.
-        if event.modifierFlags.contains(.option), !event.modifierFlags.contains(.command) {
+        // The select tool (V) claims the page's image layer, the way the
+        // editor's canvas does: the image is content you select and transform,
+        // and it needs no modifier to remember (B4, the owner's second pass).
+        if state.tool == .select, !event.modifierFlags.contains(.command) {
             if grabBoardImage(at: convert(event.locationInWindow, from: nil)) { return }
         }
         super.mouseDown(with: event)
@@ -861,17 +924,25 @@ class WhiteboardView: OverlayView {
         if let gesture = imageGesture, board.currentPage.image != nil {
             let viewPoint = convert(event.locationInWindow, from: nil)
             switch gesture {
-            case let .move(grab):
+            case let .move(grab, startPageRect):
+                // The pointer's page-space travel since the grab, applied to
+                // the placement it started from: one point of travel is one
+                // page point at any zoom, so the layer stays under the pointer.
                 let pagePoint = viewTransform.point(toPage: viewPoint)
-                board.movePageImage(
-                    by: CGSize(width: pagePoint.x - grab.x, height: pagePoint.y - grab.y),
-                    clampedTo: imageGestureCanvas
+                let destination = startPageRect.offsetBy(
+                    dx: pagePoint.x - grab.x,
+                    dy: pagePoint.y - grab.y
                 )
+                board.placePageImage(at: destination, clampedTo: imageGestureCanvas)
             case let .resize(handle, startViewRect):
                 // The resize runs in view space — the grip rules are the
-                // editor's — and lands clamped in page space.
-                let region = EditorCropRule.region(
-                    from: startViewRect, dragging: handle, to: viewPoint, in: bounds)
+                // editor's — and lands clamped in page space. Shift holds the
+                // shape, the way it does everywhere the V tool resizes (B4).
+                let region = event.modifierFlags.contains(.shift)
+                    ? EditorCropRule.lockedRegion(
+                        from: startViewRect, dragging: handle, to: viewPoint, in: bounds)
+                    : EditorCropRule.region(
+                        from: startViewRect, dragging: handle, to: viewPoint, in: bounds)
                 board.placePageImage(at: viewTransform.rect(toPage: region), clampedTo: imageGestureCanvas)
             }
             needsDisplay = true
@@ -882,11 +953,16 @@ class WhiteboardView: OverlayView {
 
     override func mouseUp(with event: NSEvent) {
         if imageGesture != nil {
+            // One edit per drag, reported with the placement it started from:
+            // a move and a resize are single steps on the undo stream.
+            let before = imageGestureStartLayer
+            imageGestureStartLayer = nil
             // The gesture is over: the value change already sits on the layer
             // (applied live and clamped by the model). No journal step here —
             // see the undo note on `deleteBoardImageIfSelected`.
             imageGesture = nil
             needsDisplay = true
+            noteBoardImageEdit(before: before)
             return
         }
         let wasPanning = isPanning
@@ -904,6 +980,18 @@ class WhiteboardView: OverlayView {
     // MARK: - Keyboard
 
     override func keyDown(with event: NSEvent) {
+        // Escape clears the PAGE, and the page's image layer is part of it.
+        // The overlay's clear knows strokes only, so the layer used to survive
+        // a gesture whose hint promises "esc clear page". A mark selection
+        // still goes first — one stray click never costs the page — and, like
+        // every other image-lane edit (⌫, ⌥-drag), removing the layer is not
+        // journalled.
+        if event.keyCode == 53 {
+            let hadMarkSelection = !selectedMarkIDs.isEmpty
+            super.keyDown(with: event)
+            if !hadMarkSelection { removePageImageOnEscape() }
+            return
+        }
         // Space pans (the app-wide convention); holding it never draws.
         if event.keyCode == 49 {
             if !event.isARepeat {

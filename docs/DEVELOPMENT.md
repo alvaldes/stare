@@ -8,6 +8,27 @@ not re-learning. For what Stare does, see the [README](../README.md).
 ```sh
 swift build                 # compile
 swift test                  # unit tests, no GUI needed
+
+**Reading a `swift test` run.** The suite is two bundles, and a bundle that
+starts and never prints `Test Suite 'StareTests.xctest' passed` DIED mid-run —
+SwiftPM reports the dead process on stderr, interleaved into the middle of the
+stdout stream, and the run still prints `0 failures`. So a green-looking tail is
+not evidence. Check all three:
+
+```sh
+swift test 2>&1 | tee /tmp/t.log >/dev/null
+echo "exit=$?"                                  # 0, and stay 0
+grep -c "signal code 11" /tmp/t.log             # 0
+grep -c "Test Suite 'StareTests.xctest' passed" /tmp/t.log   # 1
+grep -cE "Test Case '.*' started" /tmp/t.log    # equal to the "passed" count
+```
+
+A killed bundle is usually an over-release: a programmatic `NSWindow` has
+`isReleasedWhenClosed = true`, so `close()` releases it in ObjC terms while ARC
+still owns it, and the crash lands later — inside XCTest's memory checker, at the
+end of a test, as `EXC_BAD_ACCESS` in `objc_autoreleasePoolPop`. Every window the
+app builds sets `isReleasedWhenClosed = false`; a window a TEST builds has to as
+well (`CardCursorRoutingTests`, which cost the bundle its last ~120 tests).
 Scripts/bundle.sh           # release build -> build/Stare.app
 Scripts/bundle.sh release install   # also copies to /Applications
 ```

@@ -3158,6 +3158,10 @@ enum SelfTest {
             && router.resolve("3") == .ink(.yellow)
         let mapPersisted = PreferencesModel(store: store).toolShortcuts[.laser] == "Z"
 
+        // The history panel at two selections: the B10 paint probe.
+        let historyProbe = Self.renderHistorySelectionProbe(to: "/tmp")
+        report.append("history selection probe pngs=\(historyProbe.count) paths=\(historyProbe.joined(separator: ","))")
+
         // The two new panes render in light and dark through the settings
         // report, which ran just before this one.
         let pngPaths = ["tools", "shortcuts"].flatMap { area in
@@ -3460,6 +3464,64 @@ enum SelfTest {
             report.append("FAIL: settings window not created")
         }
         return report
+    }
+
+    /// Renders the history panel at two selections, so the paint the arrows
+    /// drive can be LOOKED at instead of reasoned about (B10). Two PNGs; a
+    /// selection that does not move the highlight shows as two identical
+    /// images.
+    @MainActor
+    static func renderHistorySelectionProbe(to directory: String) -> [String] {
+        let storeDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("stare-history-probe-\(UUID().uuidString)", isDirectory: true)
+        let store = CaptureHistoryStore(directory: storeDirectory)
+        let colours: [(CGFloat, CGFloat, CGFloat)] = [(0.85, 0.2, 0.2), (0.2, 0.7, 0.3), (0.2, 0.4, 0.9)]
+        for (index, colour) in colours.enumerated() {
+            let context = CGContext(
+                data: nil, width: 120, height: 80, bitsPerComponent: 8,
+                bytesPerRow: 120 * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+            guard let context else { continue }
+            context.setFillColor(CGColor(srgbRed: colour.0, green: colour.1, blue: colour.2, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 120, height: 80))
+            if let image = context.makeImage() {
+                _ = store.add(image, date: Date().addingTimeInterval(TimeInterval(-60 * index)))
+            }
+        }
+        let model = CaptureHistoryPanelModel(store: store, onPick: { _ in }, onClose: {})
+        model.refresh()
+
+        var written: [String] = []
+        for selection in [0, 1] {
+            model.select(at: selection)
+            let size = CaptureHistoryPanel.contentSize
+            let hosting = NSHostingView(rootView: CaptureHistoryPanelContent(model: model)
+                .frame(width: size.width, height: size.height, alignment: .topLeading))
+            hosting.sizingOptions = []
+            hosting.frame = CGRect(origin: .zero, size: size)
+            let window = NSWindow(
+                contentRect: CGRect(origin: .zero, size: size),
+                styleMask: [.borderless], backing: .buffered, defer: false
+            )
+            window.appearance = NSAppearance(named: .darkAqua)
+            window.contentView = hosting
+            window.center()
+            window.orderFrontRegardless()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            hosting.layoutSubtreeIfNeeded()
+            if let rep = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) {
+                hosting.cacheDisplay(in: hosting.bounds, to: rep)
+                if let data = rep.representation(using: .png, properties: [:]) {
+                    let path = "\(directory)/stare-history-selected-\(selection).png"
+                    try? data.write(to: URL(fileURLWithPath: path))
+                    written.append(path)
+                }
+            }
+            window.orderOut(nil)
+        }
+        try? FileManager.default.removeItem(at: storeDirectory)
+        return written
     }
 
     /// Renders one Settings pane in a fixed appearance. The pane content

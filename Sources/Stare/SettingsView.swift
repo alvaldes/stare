@@ -140,13 +140,19 @@ struct SettingsView: View {
     @State private var area: SettingsArea = .general
     @Environment(\.colorScheme) private var colorScheme
 
+    /// The window's floor, handed in instead of repeated as literals (B7):
+    /// the root lays out to the same number `contentMinSize` stops the drag at.
+    let minimumContentSize: CGSize
+
     init(
         model: PreferencesModel,
         permission: PermissionProbe,
-        initialArea: SettingsArea = .general
+        initialArea: SettingsArea = .general,
+        minimumContentSize: CGSize = SettingsWindowController.minimumContentSize
     ) {
         self.model = model
         self.permission = permission
+        self.minimumContentSize = minimumContentSize
         _area = State(initialValue: initialArea)
     }
 
@@ -172,7 +178,7 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
-        .frame(minWidth: 860, minHeight: 560)
+        .frame(minWidth: minimumContentSize.width, minHeight: minimumContentSize.height)
         .onAppear { installTabMonitor() }
         .onDisappear { removeTabMonitor() }
     }
@@ -239,7 +245,7 @@ struct SettingsView: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(10)
+        .padding(SettingsMetrics.sidebarPadding)
         .frame(width: SettingsMetrics.sidebarWidth)
         .frame(maxHeight: .infinity)
         .background(.ultraThinMaterial)
@@ -249,18 +255,22 @@ struct SettingsView: View {
         Button {
             self.area = area
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: SettingsMetrics.sidebarRowSpacing) {
                 Image(systemName: area.symbol)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(self.area == area ? Color(nsColor: .controlAccentColor) : .secondary)
-                    .frame(width: 18)
+                    .frame(width: SettingsMetrics.sidebarRowSymbolWidth)
                 Text(area.title)
                     .font(.system(size: 13,
                                   weight: self.area == area ? .semibold : .regular))
                     .foregroundStyle(self.area == area ? Color(nsColor: .controlAccentColor) : Color.primary)
-                Spacer()
+                    // A row that reflows when it becomes the selected one
+                    // makes the whole list jump; the title is one line, and
+                    // the sidebar is sized for the semibold case.
+                    .lineLimit(1)
+                Spacer(minLength: 0)
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, SettingsMetrics.sidebarRowPadding)
             .padding(.vertical, 7)
             .background {
                 if self.area == area {
@@ -300,7 +310,7 @@ struct SettingsView: View {
         case .shortcuts: ShortcutsPane(model: model, cardsWidth: width)
         case .marker: MarkerPane(model: model, cardsWidth: width)
         case .capture: CapturePane(model: model, cardsWidth: width)
-        case .history: HistoryPane()
+        case .history: HistoryPane(model: model)
         case .whiteboard: WhiteboardPane(model: model, cardsWidth: width)
         case .permissions: PermissionsPane(permission: permission)
         case .about: AboutPane()
@@ -322,16 +332,15 @@ private struct OverlayPane: View {
             title: "Overlay",
             subtitle: "What drawing over the screen does, and where it reaches."
         ) {
-            SettingsColumns(width: cardsWidth, left: {
-                VStack(spacing: SettingsMetrics.cardSpacing) {
-                    drawingCard
-                    displaysCard
-                }
-            }, right: {
-                VStack(spacing: SettingsMetrics.cardSpacing) {
-                    laserCard
-                }
-            })
+            // One column (B8, owner's third pass): three short cards. Two
+            // columns put Laser beside Drawing — stretching it for nothing —
+            // and leave Displays alone in a second row with an empty half.
+            VStack(spacing: SettingsMetrics.cardSpacing) {
+                drawingCard
+                displaysCard
+                laserCard
+            }
+            .settingsSingleColumn()
         }
     }
 
@@ -1302,17 +1311,11 @@ private struct MarkerPane: View {
         ) {
             pointerStage
         } cards: {
-            SettingsColumns(width: cardsWidth, left: {
-                VStack(spacing: SettingsMetrics.cardSpacing) {
-                    shapeCard
-                    strokeCard
-                }
-            }, right: {
-                VStack(spacing: SettingsMetrics.cardSpacing) {
-                    motionCard
-                    colourCard
-                }
-            })
+            SettingsColumns(
+                width: cardsWidth,
+                left: [AnyView(shapeCard), AnyView(strokeCard)],
+                right: [AnyView(motionCard), AnyView(colourCard)]
+            )
         }
     }
 
@@ -1561,18 +1564,19 @@ private struct CapturePane: View {
 
     var body: some View {
         SettingsPane(title: "Capture", subtitle: "How captures are encoded and where they go.") {
-            SettingsColumns(width: cardsWidth, left: {
-                VStack(spacing: SettingsMetrics.cardSpacing) {
-                    destinationCard
-                    formatCard
-                }
-            }, right: {
-                VStack(spacing: SettingsMetrics.cardSpacing) {
-                    fileNameCard
-                    saveSizeCard
-                    backdropCard
-                }
-            })
+            // One column (B8): File name carries a paragraph of helper text,
+            // so in a 376 pt column it wrapped to fourteen lines and towered
+            // over whatever sat beside it — Destination ended up 80 % empty.
+            // At the single-column width the paragraph takes half the lines and
+            // every card sits at its own height.
+            VStack(spacing: SettingsMetrics.cardSpacing) {
+                destinationCard
+                formatCard
+                fileNameCard
+                saveSizeCard
+                backdropCard
+            }
+            .settingsSingleColumn()
         }
     }
 
@@ -1800,16 +1804,14 @@ private struct WhiteboardPane: View {
 
     var body: some View {
         SettingsPane(title: "Whiteboard", subtitle: "What a new board opens with (⌥⇧W).") {
-            SettingsColumns(width: cardsWidth, left: {
-                VStack(spacing: SettingsMetrics.cardSpacing) {
-                    backgroundCard
-                    pagesCard
-                }
-            }, right: {
-                VStack(spacing: SettingsMetrics.cardSpacing) {
-                    boardCard
-                }
-            })
+            // One column (B8): Background and Pages against a lone Board is
+            // the same 2-vs-1 shape Overlay had — a hole in the second row.
+            VStack(spacing: SettingsMetrics.cardSpacing) {
+                backgroundCard
+                pagesCard
+                boardCard
+            }
+            .settingsSingleColumn()
         }
     }
 
