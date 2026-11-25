@@ -231,3 +231,8 @@ files. Delivery shape when publishing stays the owner's call, and `main` is merg
   panel (`closesOverflow(forEventIn:panel:)`, pure and tested with two real windows) plus
   `NSApplication.didResignActive`, installed and removed with the panel's own life. Verified: 866
   `StareCoreTests` + 300 `StareTests`, 0 failures, exit 0.
+- **L27** (merge + the pre-existing crash is gone): `main` advanced to `1908445` (15 commits, the sibling
+  session's capture-history and cursor work) while this branch ran, so it was merged here before closing —
+  **clean, no conflicts**. With it, `Tests/StareTests/CardCursorRoutingTests` no longer segfaults: the full
+  `swift test` (no `--skip`) is **873 `StareCoreTests` + 342 `StareTests`, exit 0**, so L8's workaround is
+  retired and every number in this log from L8 onwards can be re-read as "the suite minus one crashing class".
