@@ -240,6 +240,40 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertEqual(prefs.updates, UpdateSchedulePreference.standard)
     }
 
+    /// S8 over the whole stored blob: a capture document written before the
+    /// template default changed — unstamped, carrying the old shipped default
+    /// `""` — loads with the shipped template in place, and every other
+    /// preference in the blob is untouched, exactly as the toolbar's own
+    /// migration guaranteed its neighbours.
+    func testStoredBlobWithTheOldCaptureDefaultMigratesAndKeepsTheRestOfTheBlob() throws {
+        var original = AppPreferences.standard
+        original.pointer.preset = .dot
+        original.pointer.size = 44
+        original.capture.fileNamePrefix = "Shots"
+        original.capture.destination = .folder(path: "/Users/al/Pictures/Stare")
+        original.capture.downscaleMode = .maxWidth
+        original.capture.maxSaveWidth = 900
+        original.capture.backdropShadow = true
+        original.capture.fileNameTemplate = "" // the old shipped default (T4)
+        original.tool = .spotlight
+        original.hasCompletedOnboarding = true
+
+        var object = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: try JSONEncoder().encode(original)) as? [String: Any]
+        )
+        var capture = try XCTUnwrap(object["capture"] as? [String: Any])
+        capture.removeValue(forKey: "version") // the pre-versioning document
+        object["capture"] = capture
+
+        let decoded = try JSONDecoder().decode(
+            AppPreferences.self,
+            from: try JSONSerialization.data(withJSONObject: object)
+        )
+        var expected = original
+        expected.capture.fileNameTemplate = CapturePreference.defaultFileNameTemplate
+        XCTAssertEqual(decoded, expected, "the migration moves the capture template and nothing else")
+    }
+
     // MARK: Legacy whiteboard blob compatibility (T13/S8)
 
     /// A whole preferences blob written before the System choice existed must

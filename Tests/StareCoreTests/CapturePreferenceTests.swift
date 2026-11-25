@@ -165,15 +165,120 @@ final class CapturePreferenceTests: XCTestCase {
     }
 
     func testMissingFieldsTakeStandard() throws {
-        // The template field is the one deliberate difference: a blob without
-        // it is an existing stored preference, and it decodes to the EMPTY
-        // template — the legacy route, byte for byte the names it already
-        // wrote — never to the fresh-install default, so no existing user's
-        // names change (S4).
-        let decoded = try decode(#"{}"#)
-        var expected = CapturePreference.standard
-        expected.fileNameTemplate = ""
+        // S8 canary — re-aimed once in S4 (L6), again in S8: without a
+        // `version` key the document predates version stamping, so `{}` is a
+        // pre-change document whose missing template field is the old shipped
+        // default `""`. The migration moves it to the shipped template, which
+        // makes the whole decode the standard document. A document that this
+        // build already versioned keeps the template-less state as stored:
+        // empty, the cleared choice, the legacy prefix name.
+        XCTAssertEqual(try decode(#"{}"#), CapturePreference.standard)
+        XCTAssertEqual(try decode(#"{"version":2}"#).fileNameTemplate, "")
+    }
+
+    // MARK: The default reaches a preference stored before it (S8)
+
+    /// The capture document the template-era builds stored: every field this
+    /// build writes, carrying the old shipped default `""` — and no `version`
+    /// key, because version stamping begins with this change. The owner's
+    /// stored blob is this document byte for byte.
+    private static let oldStoredCapture = #"{"format":"png","destination":{"clipboard":true},"fileNamePrefix":"Stare","downscaleMode":"off","maxSaveWidth":1600,"fileNameTemplate":"","backdropPadding":0,"backdropCornerRadius":0,"backdropShadow":false}"#
+
+    /// The old stored default migrates once to the shipped template: the
+    /// document carries no `version` key (it predates stamping), its stored
+    /// template is exactly `""` — the old default — and decoding answers the
+    /// template this build ships, so `Stare-{date}-at-{time}` finally reaches
+    /// the install that stored `""` before it existed. The rendered name is
+    /// unchanged: the template and the legacy branch produce the same name.
+    func testStoredOldBlobWithTheOldDefaultMigratesToTheShippedDefault() throws {
+        let decoded = try decode(Self.oldStoredCapture)
+        XCTAssertEqual(decoded.fileNameTemplate, CapturePreference.defaultFileNameTemplate)
+        XCTAssertEqual(
+            decoded.fileName(at: date(2026, 11, 21, 14, 5, 33), calendar: calendar),
+            "Stare-2026-11-21-at-14-05-33.png",
+            "the migration changes what the field says, never the name it renders"
+        )
+        // The same pre-change generation when a readable older version is
+        // present: nothing wrote one yet, but the rule is the shape's.
+        XCTAssertEqual(try decode(#"{"version":1,"fileNameTemplate":""}"#).fileNameTemplate, CapturePreference.defaultFileNameTemplate)
+    }
+
+    /// A stored template that is anything else is a user's choice, and the
+    /// migration never touches it — at any version, including the unstamped
+    /// generation.
+    func testStoredBlobWithACustomTemplateKeepsItByteForByte() throws {
+        let custom = "boards-{date}"
+        for (label, json) in [
+            ("unstamped", #"{"fileNameTemplate":"boards-{date}"}"#),
+            ("version 1", #"{"version":1,"fileNameTemplate":"boards-{date}"}"#),
+            ("version 2", #"{"version":2,"fileNameTemplate":"boards-{date}"}"#),
+        ] {
+            XCTAssertEqual(try decode(json).fileNameTemplate, custom, "a \(label) document keeps a chosen template")
+        }
+    }
+
+    /// A document at the current version carries a choice: an explicitly
+    /// cleared template stays empty, and the legacy branch keeps answering —
+    /// this is the state a user reaches by clearing the field after upgrading.
+    func testStoredBlobAtTheCurrentVersionWithAnEmptyTemplateStaysEmpty() throws {
+        for (label, json) in [
+            ("current", #"{"version":2,"fileNamePrefix":"Shots","fileNameTemplate":""}"#),
+            ("beyond", #"{"version":3,"fileNamePrefix":"Shots","fileNameTemplate":""}"#),
+        ] {
+            let decoded = try decode(json)
+            XCTAssertEqual(decoded.fileNameTemplate, "", "a \(label) version keeps the cleared template")
+            XCTAssertEqual(
+                decoded.fileName(at: date(2026, 11, 21, 14, 5, 33), calendar: calendar),
+                "Shots-2026-11-21-at-14-05-33.png",
+                "a \(label) version keeps the prefix naming the files"
+            )
+        }
+    }
+
+    /// The toolbar's hard-won rule (9efcbbd), kept here: a version this build
+    /// cannot read is a document this build does not understand — it counts as
+    /// current, and the migration never runs on it.
+    func testAGarbledVersionNeverMigratesTheTemplate() throws {
+        for garbled in ["\"abc\"", "true", "2.5", "null", "\"2\"", "[]"] {
+            let json = "{\"version\":" + garbled + ",\"fileNamePrefix\":\"Stare\",\"fileNameTemplate\":\"\"}"
+            XCTAssertEqual(
+                try decode(json).fileNameTemplate,
+                "",
+                "a document whose version is \(garbled) must be left exactly as stored"
+            )
+        }
+    }
+
+    /// The upgrade may move the template and nothing else: every other field
+    /// of the stored capture document survives a decode that migrates it.
+    func testTheMigrationTouchesNothingElseInTheStoredCaptureDocument() throws {
+        let decoded = try decode(
+            #"{"format":"jpeg","destination":{"folder":"/Users/al/Pictures/Stare"},"fileNamePrefix":"Shots","downscaleMode":"maxWidth","maxSaveWidth":900,"fileNameTemplate":"","backdropPadding":40,"backdropCornerRadius":12,"backdropShadow":true}"#
+        )
+        var expected = CapturePreference(
+            format: .jpeg,
+            destination: .folder(path: "/Users/al/Pictures/Stare"),
+            fileNamePrefix: "Shots"
+        )
+        expected.downscaleMode = .maxWidth
+        expected.maxSaveWidth = 900
+        expected.backdropPadding = 40
+        expected.backdropCornerRadius = 12
+        expected.backdropShadow = true
         XCTAssertEqual(decoded, expected)
+    }
+
+    /// Whatever this build itself saved is never migrated again: the document
+    /// it writes carries the current version, so a template the user cleared
+    /// afterwards reloads as the cleared choice — the after-upgrade empty.
+    func testADeliberatelyClearedTemplateSurvivesThisBuildsOwnSave() throws {
+        var cleared = CapturePreference.standard
+        cleared.fileNamePrefix = "Shots"
+        cleared.fileNameTemplate = ""
+        let data = try JSONEncoder().encode(cleared)
+        let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(object["version"] as? Int, CapturePreference.currentVersion, "this build stamps every capture document it writes")
+        XCTAssertEqual(try JSONDecoder().decode(CapturePreference.self, from: data), cleared)
     }
 
     // MARK: Round trip

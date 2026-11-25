@@ -130,12 +130,43 @@ public struct CapturePreference: Codable, Equatable, Sendable {
     /// says what it does and renders, byte for byte, the same name the
     /// legacy branch produced — `Stare-2026-11-21-at-14-05-33.png` — so the
     /// field documents itself instead of relying on an empty string. The
-    /// empty template keeps its meaning for preferences already stored on
-    /// disk (T10/S17): blobs saved before the field existed decode without
-    /// it, and every sanitisation refusal still lands on `""`, so neither
-    /// route may change an existing user's names — the empty case in
-    /// `fileName(at:)` stays for them, never a fresh-install state.
+    /// empty template keeps one meaning for preferences this build has
+    /// stored itself: since the version stamp (S8) a stored `""` at the
+    /// current version is the cleared choice, and every sanitisation refusal
+    /// still lands on `""`, so the empty case in `fileName(at:)` stays for
+    /// them, never a fresh-install state. A template stored before the stamp
+    /// with `""` — the old shipped default — migrates once on load (S8).
     public static let defaultFileNameTemplate = "Stare-{date}-at-{time}"
+
+    /// The stored document's shape version (S8). Version stamping began with
+    /// the change that shipped `defaultFileNameTemplate`: a document without
+    /// a `version` key predates it, and that — plus any readable older
+    /// version — is the only kind the one-time migration may move. Whatever
+    /// this build saves is stamped `currentVersion` and never looked at
+    /// again, so an explicitly cleared template survives every later load.
+    public static let currentVersion = 2
+
+    /// Whether this stored document may still be migrated (S8), on the
+    /// toolbar's pattern (S3, `ToolbarToolLayout.mayMigrate`): a document
+    /// that carries **no** version at all predates stamping and may move;
+    /// a version that exists but cannot be read as an integer is a document
+    /// this build does not understand, and reading it as 0 would re-run the
+    /// migration on a choice the user made — so it is treated as current,
+    /// never as pre-change. A readable older version still migrates.
+    private static func mayMigrate(_ container: KeyedDecodingContainer<CodingKeys>) -> Bool {
+        guard container.contains(.version) else { return true }
+        guard let version = try? container.decode(Int.self, forKey: .version) else { return false }
+        return version < currentVersion
+    }
+
+    /// Whether the stored template bytes are exactly the old shipped default
+    /// (S8): the field absent, or the empty string the template-era builds
+    /// shipped. Anything else — a custom template, a value a hand edit
+    /// mangled — is not one this build can prove was the shipped default, so
+    /// it stays and the lenient sanitising decides what it means, as always.
+    private static func storedTheOldDefault(_ rawTemplate: String?) -> Bool {
+        (rawTemplate ?? "").isEmpty
+    }
 
     /// The only words a `{…}` token may carry in a template (T10/S17). Any
     /// other word — or any brace left dangling, empty or nested — makes the
@@ -208,6 +239,22 @@ public struct CapturePreference: Codable, Equatable, Sendable {
         self.backdropShadow = backdropShadow
     }
 
+    /// Encodes the document with its shape version first (S8): whatever this
+    /// build writes is stamped `currentVersion` and never migrated again.
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(Self.currentVersion, forKey: .version)
+        try container.encode(format, forKey: .format)
+        try container.encode(destination, forKey: .destination)
+        try container.encode(fileNamePrefix, forKey: .fileNamePrefix)
+        try container.encode(downscaleMode, forKey: .downscaleMode)
+        try container.encode(maxSaveWidth, forKey: .maxSaveWidth)
+        try container.encode(fileNameTemplate, forKey: .fileNameTemplate)
+        try container.encode(backdropPadding, forKey: .backdropPadding)
+        try container.encode(backdropCornerRadius, forKey: .backdropCornerRadius)
+        try container.encode(backdropShadow, forKey: .backdropShadow)
+    }
+
     private enum CodingKeys: String, CodingKey {
         case format, destination, fileNamePrefix
         // The downscale settings sit at the end of the document (T7/S14), so
@@ -216,6 +263,10 @@ public struct CapturePreference: Codable, Equatable, Sendable {
         // The template sits after them (T10/S17) — fields are appended,
         // never inserted, so an older blob decodes with it at its default.
         case fileNameTemplate
+        // The document's own shape version (S8): written by this build on
+        // every encode, and the key that decides whether a stored document
+        // may still migrate.
+        case version
         // The backdrop sits after the template (T11/S18), appended all the
         // same.
         case backdropPadding, backdropCornerRadius, backdropShadow
@@ -223,9 +274,20 @@ public struct CapturePreference: Codable, Equatable, Sendable {
 
     /// Lenient decoding: an unknown format falls back to `.png`, an unusable
     /// destination to `.clipboard`, and an empty or unsafe prefix to
-    /// `"Stare"` — every other field of the document still decodes.
+    /// `"Stare"` — every other field of the document still decodes. A stored
+    /// document that predates the version stamp (no `version` key, or a
+    /// readable older one) carries the old shipped default `""` as its
+    /// template, and that default is migrated once to the shipped
+    /// `defaultFileNameTemplate` (S8), so the template default reaches the
+    /// installs that stored `""` before it existed. A template that reads as
+    /// anything else — a custom template, or a value a hand edit mangled — is
+    /// not one this build can prove was the shipped default, so it stays and
+    /// the lenient sanitising decides what it means, as always. At or beyond
+    /// `currentVersion` nothing moves: an explicitly empty template is the
+    /// cleared choice, never the old default.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let migrates = Self.mayMigrate(container)
         let rawFormat = try? container.decode(String.self, forKey: .format)
         self.format = rawFormat.flatMap(CaptureFormat.init(rawValue:)) ?? .png
         self.destination = (try? container.decode(CaptureDestination.self, forKey: .destination)) ?? .clipboard
@@ -237,6 +299,9 @@ public struct CapturePreference: Codable, Equatable, Sendable {
         self.maxSaveWidth = Self.clampedSaveWidth(rawMaxSaveWidth ?? Self.defaultMaxSaveWidth)
         let rawTemplate = try? container.decode(String.self, forKey: .fileNameTemplate)
         self.fileNameTemplate = Self.sanitisedTemplate(rawTemplate)
+        if migrates, Self.storedTheOldDefault(rawTemplate) {
+            self.fileNameTemplate = Self.defaultFileNameTemplate
+        }
         let rawBackdropPadding = try? container.decode(Int.self, forKey: .backdropPadding)
         self.backdropPadding = CaptureBackdrop.clampedPadding(rawBackdropPadding ?? 0)
         let rawBackdropCornerRadius = try? container.decode(Int.self, forKey: .backdropCornerRadius)
@@ -271,11 +336,13 @@ public struct CapturePreference: Codable, Equatable, Sendable {
         display: String? = nil
     ) -> String {
         guard !fileNameTemplate.isEmpty,
-            // The empty case is not dead: preferences stored before the field
-            // existed decode to `""` and every unusable template stores as
-            // `""`. Both must keep the legacy name byte for byte, so no
-            // existing user's saved names change — only a fresh install
-            // starts on the explicit default template above.
+            // The empty case is not dead: a template the user cleared after
+            // the version stamp (and every unusable template) stores as `""`,
+            // and both must keep the legacy name byte for byte, so no
+            // upgraded user's saved names change — the pre-stamp stored `""`
+            // is what the S8 migration moves once, and a `""` this build
+            // stored itself always carries the version, which is never
+            // migrated.
             let rendered = Self.renderedTemplate(
                 fileNameTemplate, date: date, calendar: calendar, app: app, display: display
             )

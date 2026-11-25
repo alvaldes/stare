@@ -293,20 +293,29 @@ final class CaptureFileNameTemplateTests: XCTestCase {
 
     // MARK: Lenient decoding of the new field
 
-    func testBlobWithoutTemplateFieldDecodesEmpty() throws {
-        let decoded = try JSONDecoder().decode(
+    func testBlobWithoutTheTemplateFieldDecodesByGeneration() throws {
+        // S8 canary — re-aimed once in S4 (L6), again in S8: the absent field
+        // still decodes to the empty template first, but on the unstamped
+        // generation that emptiness IS the old shipped default, so the
+        // migration answers the shipped template and this entry precedes the
+        // fresh install's own default. A document this build already
+        // versioned keeps the missing field as stored: empty, the cleared
+        // choice, the legacy prefix name.
+        let oldGeneration = try JSONDecoder().decode(
             CapturePreference.self,
             from: Data(#"{"format":"jpeg","destination":{"folder":"/tmp/shots"},"fileNamePrefix":"Shots"}"#.utf8)
         )
-        XCTAssertEqual(decoded.fileNameTemplate, "")
-        // The absent field decodes to the EMPTY template, never the
-        // fresh-install default: this is an existing stored preference, and
-        // empty keeps its legacy names byte for byte (S4).
+        XCTAssertEqual(oldGeneration.fileNameTemplate, CapturePreference.defaultFileNameTemplate)
+        let currentGeneration = try JSONDecoder().decode(
+            CapturePreference.self,
+            from: Data(#"{"version":2,"format":"jpeg","destination":{"folder":"/tmp/shots"},"fileNamePrefix":"Shots"}"#.utf8)
+        )
+        XCTAssertEqual(currentGeneration.fileNameTemplate, "")
         var expected = CapturePreference(
             format: .jpeg, destination: .folder(path: "/tmp/shots"), fileNamePrefix: "Shots"
         )
         expected.fileNameTemplate = ""
-        XCTAssertEqual(decoded, expected)
+        XCTAssertEqual(currentGeneration, expected)
     }
 
     func testUnknownOrUnsafeTemplateInBlobDecodesEmptyAndKeepsTheRest() throws {
