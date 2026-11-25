@@ -223,19 +223,14 @@ struct OnboardingView: View {
 
     // MARK: Footer
 
-    /// The bundle icon in full colour. `NSApp.applicationIconImage` returns a
-    /// desaturated variant on macOS 26 and the guide rendered a gray square,
-    /// so the real artwork is read from `Resources/AppIcon.icns` first.
+    /// The bundle icon in full colour, from the one shared source
+    /// (`AppIconArtwork`): `NSApp.applicationIconImage` returns a desaturated
+    /// variant on macOS 26 and the guide rendered a gray square, so the real
+    /// artwork from `Resources/AppIcon.icns` must win first (T2/S2 of batch A).
     ///
-    /// `let`, not `var`: the controller refreshes the model once a second, and a
-    /// computed property would re-decode the 612 KB icon file on every tick.
-    private static let appIcon: NSImage = {
-        if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
-           let icon = NSImage(contentsOf: url) {
-            return icon
-        }
-        return NSApp.applicationIconImage
-    }()
+    /// `let`, not `var`: the controller refreshes the model once a second, and
+    /// a computed property would keep re-reading; the source itself caches.
+    private static let appIcon: NSImage = AppIconArtwork.main
 
     private var footer: some View {
         HStack(spacing: 14) {

@@ -229,6 +229,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         return item
     }
 
+    /// The status item's canvas side, in points — one of the two named constants
+    /// that govern the glyph's size, with `nibInkCoverage` below. Measured
+    /// headlessly: an image of 22 pt keeps `NSStatusBar`'s button at its default
+    /// 22 pt height, so the item sits at exactly the system's own control size,
+    /// where a taller image grows the button instead (S1, batch A).
+    static let menuBarGlyphSidePoints: CGFloat = 22
+
     /// Stare's logo: the open nib the app icon and the landing carry, drawn as a
     /// path instead of shipped as a bitmap so it stays sharp at any scale and
     /// needs no bundle resource. It stays a template image, so the menu bar paints
@@ -237,8 +244,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     /// A PDF from the SVG artwork was the first attempt and does not work: librsvg
     /// drops the mask the holes are cut with, AppKit gets an empty `NSPDFImageRep`
     /// and the status item draws nothing.
-    private static func menuBarGlyph() -> NSImage {
-        NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
+    static func menuBarGlyph() -> NSImage {
+        NSImage(size: NSSize(width: menuBarGlyphSidePoints, height: menuBarGlyphSidePoints), flipped: false) { rect in
             guard let context = NSGraphicsContext.current?.cgContext else { return false }
             let scale = min(rect.width, rect.height) / nibDesignSize
             context.scaleBy(x: scale, y: scale)
@@ -259,10 +266,30 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     private static let nibDesignSize: CGFloat = 64
 
+    /// How much of the design box the rotated nib's ink must span. The original
+    /// fixed 87 % inset was measured against the flat box, but the rotated nib
+    /// only covers it partially, so the painted ink landed nowhere near that;
+    /// fitting the rotated shape instead puts the ink at the system weight.
+    private static let nibInkCoverage: CGFloat = 0.80
+
     /// The nib in the same 64-unit design box as `Resources/app-icon.svg`, whose
-    /// y axis points down like the SVG. Insets to 87% and a 32° rotation are what
-    /// keep it reading as a nib instead of a leaf at menu bar size.
-    private static let nibOutline: CGPath = {
+    /// y axis points down like the SVG. The 32° rotation is what keeps it reading
+    /// as a nib instead of a leaf; the rotated shape is then fitted and centred
+    /// by `place`, not inset by a fixed fraction of the box.
+    private static let nibOutline: CGPath = place(makeOutlineInDesignBox())
+
+    /// Breather hole plus a slit wide enough to split the tip into two tines at 16pt.
+    private static let nibHoles: CGPath = place({
+        let path = CGMutablePath()
+        path.addEllipse(in: CGRect(x: 28.8, y: 23.8, width: 6.4, height: 6.4))
+        path.addRect(CGRect(x: 30.2, y: 28.5, width: 3.6, height: 31))
+        return path
+    }())
+
+    /// The nib outline, untouched, in the 64-unit y-down design box of
+    /// `Resources/app-icon.svg`. The placement lives in `nibPlacement`, so
+    /// this is exactly the approved shape.
+    private static func makeOutlineInDesignBox() -> CGPath {
         let path = CGMutablePath()
         path.move(to: CGPoint(x: 32, y: 4))
         path.addCurve(
@@ -278,30 +305,40 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             control2: CGPoint(x: 24.5, y: 10.5)
         )
         path.closeSubpath()
-        return place(path)
-    }()
-
-    /// Breather hole plus a slit wide enough to split the tip into two tines at 16pt.
-    private static let nibHoles: CGPath = {
-        let path = CGMutablePath()
-        path.addEllipse(in: CGRect(x: 28.8, y: 23.8, width: 6.4, height: 6.4))
-        path.addRect(CGRect(x: 30.2, y: 28.5, width: 3.6, height: 31))
-        return place(path)
-    }()
-
-    /// Takes a path from the SVG's y-down design box into AppKit's y-up space.
-    private static func place(_ path: CGPath) -> CGPath {
-        let rotate = CGAffineTransform(translationX: 32, y: 32)
-            .rotated(by: 32 * .pi / 180)
-            .translatedBy(x: -32, y: -32)
-        let placement = CGAffineTransform(translationX: 4.2, y: 4.2)
-            .scaledBy(x: 0.87, y: 0.87)
-            .concatenating(rotate)
-        var transform = placement.concatenating(
-            CGAffineTransform(translationX: 0, y: nibDesignSize).scaledBy(x: 1, y: -1)
-        )
-        return path.copy(using: &transform) ?? path
+        return path
     }
+
+    /// Takes a path from the SVG's y-down design box into AppKit's y-up space:
+    /// the shape rotates about its own centre by the same 32° as before, then
+    /// the rotated outline's bounds are scaled to `nibInkCoverage` of the
+    /// design box and centred, and finally the box is flipped. One transform
+    /// for outline and holes, so they cannot drift apart.
+    private static func place(_ path: CGPath) -> CGPath {
+        var placement = nibPlacement
+        return path.copy(using: &placement) ?? path
+    }
+
+    /// The single placement transform, derived from the rotated outline so the
+    /// fit follows the real shape instead of a hand-tuned offset.
+    private static let nibPlacement: CGAffineTransform = {
+        let rotate = CGAffineTransform(translationX: nibDesignSize / 2, y: nibDesignSize / 2)
+            .rotated(by: 32 * .pi / 180)
+            .translatedBy(x: -nibDesignSize / 2, y: -nibDesignSize / 2)
+        var rotation = rotate
+        let rotatedOutline = makeOutlineInDesignBox().copy(using: &rotation)
+            ?? makeOutlineInDesignBox()
+        let bounds = rotatedOutline.boundingBoxOfPath
+        let fit = min(
+            (nibDesignSize * nibInkCoverage) / bounds.width,
+            (nibDesignSize * nibInkCoverage) / bounds.height
+        )
+        let scaled = CGAffineTransform(
+            translationX: nibDesignSize / 2 - fit * bounds.midX,
+            y: nibDesignSize / 2 - fit * bounds.midY
+        ).scaledBy(x: fit, y: fit)
+        let flip = CGAffineTransform(translationX: 0, y: nibDesignSize).scaledBy(x: 1, y: -1)
+        return flip.concatenating(scaled.concatenating(rotate))
+    }()
 
     @objc private func draw() { onDraw() }
     @objc private func clear() { onClear() }

@@ -355,10 +355,45 @@ struct AppMark: View {
     var size: CGFloat = 36
 
     var body: some View {
-        Image(nsImage: NSApp.applicationIconImage)
+        Image(nsImage: AppIconArtwork.main)
             .resizable()
             .frame(width: size, height: size)
             .accessibilityHidden(true)
+    }
+}
+
+/// The app's icon in full colour, resolved in ONE place: the real artwork from
+/// `Resources/AppIcon.icns` first — `NSApp.applicationIconImage` returns a
+/// desaturated variant on macOS 26 — falling back to `applicationIconImage`
+/// when the resource is absent (for example under `swift run`, which ships no
+/// bundle resources). `AppMark` and the setup guide share this single source
+/// so a third variant cannot drift in (T2/S2 of batch A).
+enum AppIconArtwork {
+    /// The cached result for the real bundle, so neither caller re-decodes
+    /// the 612 KB icon file on every render tick.
+    static var main: NSImage { Cached.main }
+
+    /// The named resolution: `AppIcon.icns` from the given bundle first, the
+    /// given fallback only when the resource is missing or undecodable — a
+    /// missing file must never resolve to nothing.
+    static func resolve(in bundle: Bundle) -> NSImage {
+        resolve(
+            resourceURL: bundle.url(forResource: "AppIcon", withExtension: "icns"),
+            fallback: NSApp.applicationIconImage
+        )
+    }
+
+    /// The head-testable core of the resolution above: read the artwork at
+    /// `resourceURL` when it decodes, otherwise return the fallback itself.
+    static func resolve(resourceURL: URL?, fallback: NSImage) -> NSImage {
+        if let resourceURL, let icon = NSImage(contentsOf: resourceURL) {
+            return icon
+        }
+        return fallback
+    }
+
+    private enum Cached {
+        static let main = resolve(in: .main)
     }
 }
 
