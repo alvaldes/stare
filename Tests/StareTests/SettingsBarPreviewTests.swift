@@ -99,6 +99,29 @@ final class SettingsBarPreviewTests: XCTestCase {
     /// bar rendered as a vertical column, scattering the swatches down the
     /// pane so no row carried several of them.
 
+    /// The preview is ALWAYS horizontal, whatever the model says (the owner's
+    /// call; v0.5's reason stands: the pane is for arranging what is on the bar,
+    /// and a scaled column reads as a sliver).
+    func testThePreviewRendersHorizontalWhateverTheBarOrientationIs() throws {
+        let horizontal = try Self.renderPane(cardsWidth: 766, orientation: .horizontal)
+        let vertical = try Self.renderPane(cardsWidth: 766, orientation: .vertical)
+
+        let horizontalRuns = try Self.inkRuns(in: horizontal)
+        let verticalRuns = try Self.inkRuns(in: vertical)
+
+        XCTAssertEqual(
+            verticalRuns.count, horizontalRuns.count,
+            "a vertical model's preview lays the coloured items out on the same row as a horizontal one")
+        for (verticalRun, horizontalRun) in zip(verticalRuns, horizontalRuns) {
+            XCTAssertLessThanOrEqual(
+                abs(verticalRun.center - horizontalRun.center), 2,
+                "the vertical model's preview must sit the coloured items where the horizontal one does")
+            XCTAssertLessThanOrEqual(
+                abs(verticalRun.width - horizontalRun.width), 2,
+                "the vertical model's preview must draw the coloured items at the horizontal one's size")
+        }
+    }
+
     // MARK: - The whole bar inside the stage (T2/S2)
 
     /// The preview draws the bar's more button and, by the owner's call, does

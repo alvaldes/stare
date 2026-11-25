@@ -77,6 +77,40 @@ final class ToolbarPlacementChangeTests: XCTestCase {
         )
     }
 
+    /// The owner's report, second half: switching to vertical kept the
+    /// horizontal height. A bar whose orientation changes while it is off screen
+    /// used to come back with the old frame — the resize request was dropped for
+    /// arriving while hidden, and the first placement trusted `frame.size`.
+    func testAHiddenBarTakesTheNewShapeWhenItComesBack() throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "the probe needs a real display")
+        let state = EditorState()
+        state.toolbarOrientation = .horizontal
+        state.toolbarBorder = .top
+        let panel = ToolbarPanel(state: state, onUndo: {}, onRedo: {}, onClear: {}, onDone: {})
+        defer { panel.orderOut(nil) }
+
+        panel.orderFront(nil)
+        runLoopTurns(6)
+        let horizontalSize = panel.frame.size
+        XCTAssertGreaterThan(horizontalSize.width, horizontalSize.height)
+
+        // Change the placement while the bar is not on screen, then bring it
+        // back the way the controller does.
+        panel.orderOut(nil)
+        state.toolbarOrientation = .vertical
+        runLoopTurns(6)
+        panel.positionNearPointerDisplay(placement: state.palettePlacementValue)
+        panel.orderFront(nil)
+        runLoopTurns(6)
+
+        XCTAssertGreaterThan(
+            panel.frame.height, panel.frame.width,
+            "the bar came back as \(panel.frame.size) after switching to vertical; it must be a column")
+        XCTAssertNotEqual(panel.frame.size, horizontalSize)
+        let visible = try XCTUnwrap(NSScreen.screens.first?.visibleFrame)
+        XCTAssertTrue(visible.contains(panel.frame), "\(panel.frame) must stay inside \(visible)")
+    }
+
     /// The bar moves by its gripper alone: a press on the pill's own body must
     /// leave the window where it is. (A synthetic press cannot run AppKit's real
     /// drag session, so the owner still checks the feel; what this pins is that

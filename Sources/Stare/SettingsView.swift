@@ -510,12 +510,11 @@ struct BarPane: View {
 
     private func syncToolbarPreview() {
         toolbarPreviewState.toolbarTools = model.toolbarTools
-        // The preview draws the bar as it will actually look: the same
-        // orientation, and the edge that orientation can really dock to (a
-        // column on a horizontal edge would anchor in the middle of the screen).
-        // The fit above is what keeps a tall column inside the stage.
-        toolbarPreviewState.toolbarOrientation = model.toolbarOrientation
-        toolbarPreviewState.toolbarBorder = model.toolbarBorder.docked(for: model.toolbarOrientation)
+        // The preview is ALWAYS horizontal (owner's call, and v0.5's reason still
+        // holds): the pane is for arranging what is on the bar, and a scaled
+        // column reads as a sliver. The orientation picker answers the rest.
+        toolbarPreviewState.toolbarOrientation = .horizontal
+        toolbarPreviewState.toolbarBorder = model.toolbarBorder
         toolbarPreviewState.tool = model.tool
         toolbarPreviewState.ink = model.ink
     }

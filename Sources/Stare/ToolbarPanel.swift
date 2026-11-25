@@ -265,9 +265,12 @@ final class ToolbarPanel: NSPanel {
     /// update: the hooks fire while SwiftUI is still settling, and changing
     /// the window frame mid-pass would re-enter the layout it answers.
     private func requestContentFit() {
+        // No `isVisible` guard: a bar whose orientation or tool set changed while
+        // it was off screen still has to take the new shape, or it comes back up
+        // with the old size and the new content clipped inside it — which is what
+        // "switching to vertical kept the horizontal height" looked like.
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.isVisible else { return }
-            self.refitToContentFittingSize()
+            self?.refitToContentFittingSize()
         }
     }
 
@@ -333,6 +336,10 @@ final class ToolbarPanel: NSPanel {
     /// `ToolbarGripperSpec.barRect` pins for the tests.
     func positionNearPointerDisplay(placement: PalettePlacement) {
         guard let target = targetScreen(for: placement) else { return }
+        // The bar may have changed shape while the panel was off screen. Take
+        // the content's own size first: positioning a stale one would clamp the
+        // new content into the old frame.
+        adoptContentFittingSize()
 
         let border = state.toolbarBorder.docked(for: state.toolbarOrientation)
         let anchor = savedAnchor()
@@ -344,6 +351,16 @@ final class ToolbarPanel: NSPanel {
             visibleFrame: target.visibleFrame
         )
         setFrameOrigin(rect.origin)
+    }
+
+    /// Takes the hosted content's current fitting size, if it differs from the
+    /// window's. Split out because both the first placement and the resize path
+    /// need it, and both must never trust `frame.size` to describe the content.
+    private func adoptContentFittingSize() {
+        guard let hosting = contentView as? ToolbarHostingView else { return }
+        let fit = hosting.fittingSize
+        guard fit.width > 0, fit.height > 0, fit != frame.size else { return }
+        setFrame(CGRect(origin: frame.origin, size: fit), display: false)
     }
 
     /// Resolves the display the palette should open on.

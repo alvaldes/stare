@@ -217,3 +217,11 @@ files. Delivery shape when publishing stays the owner's call, and `main` is merg
   **Not verified here:** how the vertical column READS at that scale (a 44×742 bar at ~0.49 is ~21 pt wide).
   The arrangement is legible, the glyphs are small; if the owner finds it too small the honest options are a
   taller stage or an explicit "actual size" toggle, never a scroll — that is what v0.5 rejected.
+- **L25** (S8, item 6 found and fixed): the bar came back with the OLD shape after a placement change made
+  while it was off screen. Two defects: `requestContentFit` dropped the resize for arriving while
+  `isVisible == false`, and `positionNearPointerDisplay` positioned `frame.size` — the pre-change size — so
+  the new content was clamped inside the old frame for good. Reproduced as RED with the fix stashed: the
+  panel returned `(748, 42)` after switching to vertical, which is exactly the owner's "se mantiene la altura
+  de horizontal". Fixed by never dropping a fit request and by adopting the content's fitting size before
+  positioning. The preview goes back to ALWAYS horizontal (owner's call, L24's change reverted); the pixel
+  test that pins it is back. Verified: 866 `StareCoreTests` + 299 `StareTests`, 0 failures, exit 0.
