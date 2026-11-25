@@ -362,3 +362,19 @@ past the ~400-line review guidance:
 Push, PR and merge stay the owner's decision; the branch is based on a local
 `main` that is 96 commits ahead of `origin/main`, which is pre-existing and not
 part of this work.
+
+- **L27** (the suite itself, the important one): the `StareTests` bundle died mid-run and the run still
+  reported `0 failures` — `SettingsWindowSizingTests` never executed in a whole-suite run, and my own
+  "1150 cases" style totals were counting a truncated bundle. Root cause found in the system crash
+  report (`~/Library/Logs/DiagnosticReports/xctest-*.ips`): `EXC_BAD_ACCESS` inside
+  `-[XCTMemoryChecker _assertInvalidObjectsDeallocatedAfterScope:]`, at `objc_autoreleasePoolPop` →
+  `objc_release`. That is an over-release, and it reproduced 3/3 in isolation:
+  `CardCursorRoutingTests.testAWindowThatIsNotACardIsNotACardMove` builds a bare `NSWindow`, and a
+  programmatic window comes with `isReleasedWhenClosed = true`, so `close()` released it in ObjC terms
+  while ARC still owned it. Every window the app builds already sets the flag; this test's own window did
+  not.
+  With `isReleasedWhenClosed = false` the bundle completes: **exit 0, zero `signal code 11`,
+  `StareTests.xctest` passed, 1150 started / 1150 passed / 0 failed** — 124 more tests than the truncated
+  runs ever ran, including every Settings suite. `docs/DEVELOPMENT.md` now says how to read a run (the
+  three checks: exit code, the signal line, and the bundle's own `passed` line), because the previous
+  green-looking tails were the reason this went unnoticed for several sessions.
