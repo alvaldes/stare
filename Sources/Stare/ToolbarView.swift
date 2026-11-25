@@ -593,8 +593,37 @@ struct ToolbarView: View {
             }
         }
 
-            ForEach(Ink.allCases) { ink in
-                inkButton(ink)
+            // S10/L29 + S11/L30: the palette folds into two columns when the bar
+            // is a column, and the fold is paid for with the DOT, never with bar
+            // width — the owner measured the wider pill and rejected it ("se ve
+            // mas ancha y no debe cambiar el ancho"). Two 11 pt cells with 2 pt of
+            // air between them fill exactly the 24 pt of ink content the bar
+            // already reserves for inks, so the 26 pt tool cell is the widest
+            // thing again and the pill keeps the 44 pt width the single-column bar
+            // always had (measured 44×742 before the fold → 60×630 at 20 pt cells
+            // → 44×630 now). The columns need to read as two, not as one blob
+            // (S11 follow-up): the dots stay 10 pt inside an 11 pt cell, which
+            // leaves 3 pt of visible air between neighbouring dots — the same air
+            // the horizontal row puts between its 15 pt dots — so no further dot
+            // shrink was needed. The rows keep the fold's rhythm: 24 pt tall, 4 pt
+            // of vertical air between them, so the 112 pt height saving stands.
+            // The selected ring is 1.5 pt so it stays visible on a 10 pt dot
+            // without eating the colour. The horizontal bar has the room and keeps
+            // the exact row it always drew: 24 pt cells, 15 pt dots, one row.
+            if isVertical {
+                VStack(spacing: 2) {
+                    ForEach(InkGrid.rows(columns: 2), id: \.self) { row in
+                        HStack(spacing: 2) {
+                            ForEach(row) { ink in
+                                inkButton(ink, cellWidth: 11, cellHeight: 11, dot: 10)
+                            }
+                        }
+                    }
+                }
+            } else {
+                ForEach(Ink.allCases) { ink in
+                    inkButton(ink)
+                }
             }
 
             if !extraActions.isEmpty {
@@ -803,23 +832,45 @@ struct ToolbarView: View {
         )
     }
 
-    private func inkButton(_ ink: Ink) -> some View {
+    /// One palette cell: the dot with its selection ring. The horizontal bar
+    /// keeps the cell and dot it always drew — 24 pt of air, a 15 pt dot, the
+    /// 1–2 pt ring — exactly as before the grid existed. The vertical bar's
+    /// folded grid pays for the fold with the dot, not with bar width
+    /// (S11/L30): two 11 pt cells 2 pt apart, each holding a 10 pt dot, fill the
+    /// same 24 pt of ink content a single column used to take.
+    private func inkButton(
+        _ ink: Ink,
+        cellWidth: CGFloat = 24,
+        cellHeight: CGFloat = 24,
+        dot: CGFloat = 15
+    ) -> some View {
         Button { state.ink = ink } label: {
             Circle()
                 .fill(color(for: ink))
-                .frame(width: 15, height: 15)
+                .frame(width: dot, height: dot)
                 .overlay(
                     Circle()
                         .strokeBorder(
                             state.ink == ink ? Color.primary : Color.primary.opacity(0.25),
-                            lineWidth: state.ink == ink ? 2 : 1
+                            lineWidth: state.ink == ink ? Self.selectedRingWidth(forDot: dot) : 1
                         )
                 )
-                .frame(width: 24, height: 24)
+                .frame(width: cellWidth, height: cellHeight)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(Text(verbatim: "\(ink.displayName) (\(ink.number))"))
+    }
+
+    /// The selected ring's width for a dot (S11/L30): 2 pt on the 15 pt dot it
+    /// always was, 1.5 pt on the folded 10 pt dot. A 2 pt `strokeBorder` on a
+    /// 10 pt circle would eat 4 of its 10 pt and leave a 6 pt colour core —
+    /// exactly the swallowing of the colour the fold must not become. 1.5 pt
+    /// is still plainly stronger than the unselected stroke (which stays at
+    /// 1 pt on both sizes: on 10 pt it leaves 8 pt of colour) and leaves 7 pt
+    /// of visible colour, so the active ink stays readable at a glance.
+    private static func selectedRingWidth(forDot dot: CGFloat) -> CGFloat {
+        dot >= 15 ? 2 : 1.5
     }
 
     private func iconButton(
