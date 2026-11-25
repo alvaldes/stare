@@ -423,11 +423,29 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertEqual(AppPreferences(store: store), prefs)
     }
 
-    // MARK: Redaction style (T6b/S13)
+    // MARK: Redaction style (T6b/S13, B2)
 
-    func testStandardCarriesTodaysBlurRedaction() {
-        XCTAssertEqual(AppPreferences.standard.redactionStyle, .blur)
-        XCTAssertEqual(AppPreferences(store: InMemoryPreferenceStore()).redactionStyle, .blur)
+    // Canary: this section was re-derived when the shipped default became the
+    // randomized pixelate (B2/S1). Its former form pinned `.blur` because that
+    // was T6b/S13's shipped default; only what a fresh install gets and what a
+    // missing or unreadable key decodes to changed — no effect parameter, no
+    // migration. An explicitly stored `blur` was a visible Redaction-picker
+    // choice (unlike the filename template's key), so it is never rewritten.
+
+    /// What a fresh preference document gets: the shipped pixelate (B2), both
+    /// from the memberwise default and from a store with no blob at all.
+    func testStandardCarriesTheShippedPixelateRedaction() {
+        XCTAssertEqual(AppPreferences.standard.redactionStyle, .randomizedPixelate)
+        XCTAssertEqual(AppPreferences(store: InMemoryPreferenceStore()).redactionStyle, .randomizedPixelate)
+    }
+
+    /// A stored `.blur` stays `.blur`: the Redaction picker offered it
+    /// visibly, so it may be a deliberate choice the app must not override.
+    func testAnExplicitStoredBlurIsNeverMigrated() {
+        let store = InMemoryPreferenceStore()
+        store.set(Data(#"{"redactionStyle":"blur"}"#.utf8), forKey: AppPreferences.storageKey)
+
+        XCTAssertEqual(AppPreferences(store: store).redactionStyle, .blur)
     }
 
     func testRoundTripsRedactionStyleThroughStore() {
@@ -458,21 +476,24 @@ final class AppPreferencesTests: XCTestCase {
         }
     }
 
-    /// A blob written before the field existed loads complete blur: today's
-    /// behaviour, leniently, without failing the whole document.
-    func testBlobPredatingTheRedactionFieldLoadsBlur() {
+    /// A blob written before the field existed loads the shipped pixelate
+    /// (B2): the lenient fallback for a missing key, without
+    /// failing the document, and the rest of the blob keeps what it carries.
+    func testBlobPredatingTheRedactionFieldLoadsTheShippedPixelate() {
         let store = InMemoryPreferenceStore()
         store.set(Data(#"{"capture":{"fileNamePrefix":"Shots"}}"#.utf8), forKey: AppPreferences.storageKey)
 
-        XCTAssertEqual(AppPreferences(store: store).redactionStyle, .blur)
+        XCTAssertEqual(AppPreferences(store: store).redactionStyle, .randomizedPixelate)
         XCTAssertEqual(AppPreferences(store: store).capture.fileNamePrefix, "Shots")
     }
 
-    func testUnknownRedactionRawValueFallsBackToBlur() {
+    /// A foreign raw value is unreadable, so it decodes to the shipped
+    /// default (B2: the pixelate), never failing the whole blob.
+    func testUnknownRedactionRawValueFallsBackToTheShippedPixelate() {
         let store = InMemoryPreferenceStore()
         store.set(Data(#"{"redactionStyle":"mosaic"}"#.utf8), forKey: AppPreferences.storageKey)
 
-        XCTAssertEqual(AppPreferences(store: store).redactionStyle, .blur)
+        XCTAssertEqual(AppPreferences(store: store).redactionStyle, .randomizedPixelate)
     }
 
     // MARK: Onboarding flag (T5/S3)

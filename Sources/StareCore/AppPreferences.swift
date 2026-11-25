@@ -46,10 +46,15 @@ public struct AppPreferences: Codable, Equatable, Sendable {
 
     /// What a blur mark produces over what it covers (T6b/S13): the audited
     /// gaussian blur (odd/tasks/capture-extras.md L4) or the randomized
-    /// pixelate beside it. Appended at the END of the versioned blob — an
-    /// append never reorders what a document already carried — and decoded
-    /// leniently: a missing or unknown value falls back to `.blur`, so every
-    /// blob written before this existed loads as today's behaviour.
+    /// pixelate beside it. Since B2 the shipped default is the randomized
+    /// pixelate. Appended at the END of the versioned blob — an append never
+    /// reorders what a document already carried — and decoded leniently: a
+    /// missing or unknown value falls back to the shipped `.randomizedPixelate`,
+    /// but an explicitly stored `blur` decodes as `.blur` because it was
+    /// reachable through the visible Redaction picker and is never migrated.
+    /// The stroke-level and session-level decode fallbacks (`Stroke(persisted:)`,
+    /// the session restore) stay `.blur`: a drawing saved before B2 keeps
+    /// painting exactly what it painted.
     public var redactionStyle: RedactionStyle
 
     /// The capture history's own look (B1): how wide a grid cell asks to be,
@@ -76,7 +81,8 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         whiteboard: WhiteboardDefaults = .standard,
         updates: UpdateSchedulePreference = .standard,
         hasCompletedOnboarding: Bool = false,
-        redactionStyle: RedactionStyle = .blur
+        // The shipped default (B2): a fresh install redacts with the pixelate.
+        redactionStyle: RedactionStyle = .randomizedPixelate
     ) {
         self.pointer = pointer
         self.general = general
@@ -126,9 +132,13 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         self.hasCompletedOnboarding = (try? container.decode(Bool.self, forKey: .hasCompletedOnboarding)) ?? false
         // Appended last (T6b/S13): like `tool` and `ink`, an unknown raw
         // value — a foreign document — falls back to the shipped default
-        // instead of failing the whole blob.
+        // instead of failing the whole blob. Since B2 that shipped default is
+        // the randomized pixelate, while an explicit `blur` — a visible
+        // Redaction-picker choice — decodes as `.blur` and is never migrated;
+        // the stroke- and session-level decode fallbacks stay `.blur`, so a
+        // pre-B2 drawing keeps painting exactly what it painted.
         self.redactionStyle = (try? container.decode(String.self, forKey: .redactionStyle))
-            .flatMap(RedactionStyle.init(rawValue:)) ?? .blur
+            .flatMap(RedactionStyle.init(rawValue:)) ?? .randomizedPixelate
         self.history = (try? container.decode(HistoryPreference.self, forKey: .history)) ?? .standard
     }
 
