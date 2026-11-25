@@ -1893,12 +1893,33 @@ final class OverlayController {
         overflowPanel = nil
     }
 
-    /// Whether an event that arrived in `window` closes the extras panel: any
-    /// window but the panel's own. Pure, so the rule is pinned without a live
+    /// Whether an event that arrived at `point` (in `window`'s own coordinates,
+    /// origin bottom-left; nil whenever the event carries no pointer position —
+    /// a key, say) closes the extras panel. The old rule was "any window but the
+    /// panel's own", and it closed the panel on the press over the more button
+    /// itself: the monitor hid the panel first, then the button's own toggle saw
+    /// a closed panel and reopened it, so the owner's second press could never
+    /// close it (S12/L31). The fix lives here, in the pure rule: a press inside
+    /// the more button's frame in the bar's own window does not close — that
+    /// button's toggle owns the open state, one press opens, the next closes.
+    /// `moreButtonFrame` is the frame `ToolbarPanel` already reports for the
+    /// panel's placement, flipped into the same window coordinates. An unknown
+    /// frame (nil — no first layout pass yet) or a foreign window falls back to
+    /// the old rule and closes. Pure, so the rule is pinned without a live
     /// event stream.
-    static func closesOverflow(forEventIn window: NSWindow?, panel: NSWindow?) -> Bool {
+    static func closesOverflow(
+        forEventAt point: CGPoint?,
+        in window: NSWindow?,
+        panel: NSWindow?,
+        moreButtonFrame: (window: NSWindow, frame: CGRect)? = nil
+    ) -> Bool {
         guard let panel else { return false }
-        return window !== panel
+        if window === panel { return false }
+        if let moreButtonFrame, window === moreButtonFrame.window,
+           let point, moreButtonFrame.frame.contains(point) {
+            return false
+        }
+        return true
     }
 
     private func installOverflowDismissMonitor() {
@@ -1907,7 +1928,18 @@ final class OverlayController {
             matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown, .scrollWheel]
         ) { [weak self] event in
             guard let self else { return event }
-            if Self.closesOverflow(forEventIn: event.window, panel: self.overflowPanel) {
+            // A key event carries no pointer position, so it can never name a
+            // press inside the more button; every other matched event does.
+            let pressPoint = event.type == .keyDown ? nil : event.locationInWindow
+            let moreButton: (window: NSWindow, frame: CGRect)? = self.toolbar.flatMap { toolbar in
+                toolbar.overflowButtonWindowFrame().map { (toolbar, $0) }
+            }
+            if Self.closesOverflow(
+                forEventAt: pressPoint,
+                in: event.window,
+                panel: self.overflowPanel,
+                moreButtonFrame: moreButton
+            ) {
                 self.hideOverflowPanel()
             }
             return event

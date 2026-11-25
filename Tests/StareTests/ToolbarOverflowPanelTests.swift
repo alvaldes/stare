@@ -67,14 +67,122 @@ final class ToolbarOverflowPanelTests: XCTestCase {
     /// tools — a press on the canvas, on the bar, a key, the app going away — and
     /// survives a press inside itself. Dragging the bar by its gripper is the case
     /// the owner named: the press lands in the bar's window, so the panel goes.
+    /// S12/L31 extends the rule with one exception, the more button's own frame:
+    /// a press over it is left to that button's toggle. The old cases are kept
+    /// exactly as they were so the extension cannot regress them.
     func testThePanelClosesOnAnyInteractionThatIsNotItsOwn() throws {
         let panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 40, height: 40), styleMask: [.borderless], backing: .buffered, defer: false)
         let elsewhere = NSWindow(contentRect: NSRect(x: 100, y: 0, width: 40, height: 40), styleMask: [.borderless], backing: .buffered, defer: false)
 
-        XCTAssertFalse(OverlayController.closesOverflow(forEventIn: panel, panel: panel), "its own tools must not close it")
-        XCTAssertTrue(OverlayController.closesOverflow(forEventIn: elsewhere, panel: panel), "the bar or the canvas closes it")
-        XCTAssertTrue(OverlayController.closesOverflow(forEventIn: nil, panel: panel), "a stray event closes it")
-        XCTAssertFalse(OverlayController.closesOverflow(forEventIn: elsewhere, panel: nil), "nothing to close")
+        XCTAssertFalse(OverlayController.closesOverflow(forEventAt: nil, in: panel, panel: panel, moreButtonFrame: nil), "its own tools must not close it")
+        XCTAssertTrue(OverlayController.closesOverflow(forEventAt: nil, in: elsewhere, panel: panel, moreButtonFrame: nil), "the bar or the canvas closes it")
+        XCTAssertTrue(OverlayController.closesOverflow(forEventAt: nil, in: nil, panel: panel, moreButtonFrame: nil), "a stray event closes it")
+        XCTAssertFalse(OverlayController.closesOverflow(forEventAt: nil, in: elsewhere, panel: nil, moreButtonFrame: nil), "nothing to close")
+    }
+
+    /// The more button's frame as the bar reports it for the panel's placement,
+    /// here as a fixture window standing in for the toolbar and its button.
+    private func moreButtonFixture() -> (window: NSWindow, frame: CGRect) {
+        let bar = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 200), styleMask: [.borderless], backing: .buffered, defer: false)
+        return (bar, CGRect(x: 60, y: 60, width: 26, height: 26))
+    }
+
+    /// The owner's report (S12): one press opened the hidden tools, and the next
+    /// one could never close them. The diagnosis: the close rule fired on the
+    /// press over the more button itself (it reached the monitor before SwiftUI's
+    /// button action), and the button's toggle then saw a closed panel and
+    /// reopened it. The fix is in the pure rule: a press inside the more button's
+    /// frame in the bar's window does not close — that button's own toggle owns
+    /// the open state.
+    func testAPressOnTheMoreButtonDoesNotCloseThePanel() {
+        let panel = makePanel()
+        let (bar, frame) = moreButtonFixture()
+        XCTAssertFalse(
+            OverlayController.closesOverflow(
+                forEventAt: CGPoint(x: frame.midX, y: frame.midY),
+                in: bar,
+                panel: panel,
+                moreButtonFrame: (bar, frame)
+            ),
+            "the more button's own toggle owns the open state")
+    }
+
+    /// Any other press in the bar's window still closes, even from the same
+    /// window the button lives in.
+    func testAPressElsewhereInTheBarStillClosesThePanel() {
+        let panel = makePanel()
+        let (bar, frame) = moreButtonFixture()
+        XCTAssertTrue(
+            OverlayController.closesOverflow(
+                forEventAt: CGPoint(x: frame.minX - 5, y: frame.midY),
+                in: bar,
+                panel: panel,
+                moreButtonFrame: (bar, frame)
+            ),
+            "a press elsewhere in the bar is not the button")
+    }
+
+    /// The panel's own window never closes it, whatever lands there.
+    func testAPressInThePanelNeverClosesIt() {
+        let panel = makePanel()
+        let (bar, frame) = moreButtonFixture()
+        XCTAssertFalse(
+            OverlayController.closesOverflow(
+                forEventAt: CGPoint(x: frame.midX, y: frame.midY),
+                in: panel,
+                panel: panel,
+                moreButtonFrame: (bar, frame)
+            ),
+            "the panel's own tools never close it")
+    }
+
+    /// The frame exemption is bound to the button's window: a press in another
+    /// window (the canvas) closes even at a point that happens to fall inside
+    /// the frame's rect, and a nil window is a stray event that closes.
+    func testAPressInAnyOtherWindowStillClosesThePanel() {
+        let panel = makePanel()
+        let (bar, frame) = moreButtonFixture()
+        let canvas = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 400), styleMask: [.borderless], backing: .buffered, defer: false)
+        XCTAssertTrue(
+            OverlayController.closesOverflow(
+                forEventAt: CGPoint(x: frame.midX, y: frame.midY),
+                in: canvas,
+                panel: panel,
+                moreButtonFrame: (bar, frame)
+            ),
+            "only the bar's own window can be the button")
+        XCTAssertTrue(
+            OverlayController.closesOverflow(
+                forEventAt: CGPoint(x: frame.midX, y: frame.midY),
+                in: nil,
+                panel: panel,
+                moreButtonFrame: (bar, frame)
+            ),
+            "a nil window is a stray event")
+    }
+
+    /// The frame is not known before the bar's first layout pass has reported
+    /// it, and a key event carries no pointer position. Both fall back to the
+    /// old rule (the panel closes) rather than guessing at a frame or a point.
+    func testAnUnknownFrameOrAnEventWithoutAPointStillClosesThePanel() {
+        let panel = makePanel()
+        let (bar, frame) = moreButtonFixture()
+        XCTAssertTrue(
+            OverlayController.closesOverflow(
+                forEventAt: CGPoint(x: frame.midX, y: frame.midY),
+                in: bar,
+                panel: panel,
+                moreButtonFrame: nil
+            ),
+            "with no known frame there is no exemption yet")
+        XCTAssertTrue(
+            OverlayController.closesOverflow(
+                forEventAt: nil,
+                in: bar,
+                panel: panel,
+                moreButtonFrame: (bar, frame)
+            ),
+            "a key event has no pointer position, so there is no press inside the frame")
     }
 
     /// Only the hidden tools are in the panel: nothing of the bar's own tail.

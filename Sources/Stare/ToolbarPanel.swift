@@ -261,6 +261,23 @@ final class ToolbarPanel: NSPanel {
         return CGPoint(x: inScreen.midX, y: inScreen.midY)
     }
 
+    /// The same reported frame in standard window coordinates (origin
+    /// bottom-left), or nil before the first layout pass. The overflow close
+    /// rule reads it so a press over the more button is left to that button's
+    /// own toggle instead of closing the panel the toggle is about to flip
+    /// (S12/L31); the placement path reads the identical frame flipped to
+    /// screen coordinates.
+    func overflowButtonWindowFrame() -> CGRect? {
+        guard let frame = overflowFrameBox.frame,
+              let hosting = contentView else { return nil }
+        return CGRect(
+            x: frame.minX,
+            y: hosting.bounds.height - frame.maxY,
+            width: frame.width,
+            height: frame.height
+        )
+    }
+
     /// Schedules a resize to the content's fitting size off the current
     /// update: the hooks fire while SwiftUI is still settling, and changing
     /// the window frame mid-pass would re-enter the layout it answers.
