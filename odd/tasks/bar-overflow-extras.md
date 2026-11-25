@@ -35,9 +35,9 @@ Bring `main` in as it advances (`git merge main`) so the merge at the end stays 
 | --- | --- | --- | --- | --- |
 | T1 | S1-S3 | Model: the shipped bar keeps the drawing tools, the pool holds the extras, an uncustomised saved bar upgrades | inline (parent) | 2d5138d |
 | T2 | S1, S6 | The `⁞` on the real bar: the control, the extras column/row, the collapse, the active-tool symbol | inline (parent) | 2d5138d |
-| T3 | S4 | The Settings pool as the bar's hidden section: titled, ordered, never inert | worker | |
-| T4 | S5 | The Settings preview shows the `⁞` and the draft's hidden tools | worker | |
-| T5 | S1-S6 | Docs: README, CHANGELOG, and this log | pending | |
+| T3 | S4 | The Settings pool as the bar's hidden section: titled, worded, never inert | worker | ed576a5 |
+| T4 | S5 | The Settings preview shows the `⁞` and the draft's hidden tools | worker | ed576a5 |
+| T5 | S1-S6 | Docs: README, CHANGELOG, and this log | inline (parent) | d7b31f6 |
 
 **Slice note.** The `20570 authored changed lines in 96 commits since origin/main` the commit hook reports is the
 unpublished `main` history this branch sits on, not this batch: T1+T2 are ~250 authored lines across six
@@ -84,3 +84,16 @@ files. Delivery shape when publishing stays the owner's call, and `main` is merg
   dominate the vertical bar now are the eight inks (224 pt) and the five-item tail (150 pt). Folding the
   inks into a two-column grid in the vertical bar is the next real cut; it is a visible change nobody asked
   for, so it is the owner's call and not part of this batch.
+- **L10** (evidence, T3/T4): the pool card is `BarPane.poolCardTitle` / `poolCardSymbol` /
+  `poolCardHelp` now — "Behind the ⁞", the control's own glyph, and a caption that says the tools are one
+  click away while drawing, keep their shortcuts, and move by dragging either way. No organiser mechanic
+  changed: chips in pool order, dashed end zone, Separator source chip, `canLeave`, the main-actor hop. The
+  stage's bar is built by the `BarPane.previewToolbar` seam pinning `toolPool: model.toolbarTools.hiddenTools`,
+  so the preview draws the draft's `⁞` and opens the draft's extras. Verified: 848 `StareCoreTests` + 288
+  `StareTests`, 0 failures, exit 0 (`--skip CardCursorRoutingTests`, L8). The open-overflow preview test opens
+  the real control with a synthetic press and reads the render — two saturated bands, the inks preserved at
+  the minimum width, the extras' accent scaled by the same fit factor — no hard-coded pixels.
+- **L11** (wording, T3): two strings still named the pool as a place to dump things —
+  "Drop to pool" on the end zone and the stage's "Drag a tool out of the pool onto the bar". They read
+  "Hide it here" and "Drag an item off the bar to hide it behind the ⁞" so the pane speaks one vocabulary;
+  no test pinned either string.
