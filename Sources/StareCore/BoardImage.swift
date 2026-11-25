@@ -36,10 +36,11 @@ public struct BoardImage: Equatable, Sendable {
     // MARK: - Placement geometry
 
     /// The clamped placement a new paste uses: centred on the visible view
-    /// area at the image's own pixel size, clamped into that area by the
-    /// capture editor's own clamp (`CanvasComposition.clampedPlacement`, the
-    /// same math a drop or a ⌘V paste goes through there), then mapped into
-    /// page space through `transform` so it pans and zooms with the page.
+    /// area at the image's own pixel size, fitted whole when it does not fit,
+    /// clamped into that area by the capture editor's own clamp
+    /// (`CanvasComposition.clampedPlacement`, the same math a drop or a ⌘V
+    /// paste goes through there), then mapped into page space through
+    /// `transform` so it pans and zooms with the page.
     /// The centre deliberately does not depend on the pointer, exactly like
     /// the editor's paste: a keyboard gesture with a defined centre.
     public static func pasted(
@@ -47,15 +48,52 @@ public struct BoardImage: Equatable, Sendable {
         inView visibleViewRect: CGRect,
         transform: BoardTransform
     ) -> BoardImage {
-        let size = CGSize(width: CGFloat(image.width), height: CGFloat(image.height))
+        let own = CGSize(width: CGFloat(image.width), height: CGFloat(image.height))
+        let area = visibleViewRect.standardized
+        guard area.width > 0, area.height > 0, area.width.isFinite, area.height.isFinite else {
+            // No visible area to centre in — a paste while the board has no
+            // laid-out canvas. Centring on nothing would put the layer at a
+            // negative half-size the user could never find, so it lands at
+            // the page origin at its own pixel size instead.
+            let atOrigin = CGRect(origin: .zero, size: own)
+            return BoardImage(image: image, rect: transform.rect(toPage: atOrigin))
+        }
+        let size = fittedSize(
+            own,
+            in: CGSize(
+                width: area.width * Self.insertedAreaFraction,
+                height: area.height * Self.insertedAreaFraction
+            )
+        )
         let centred = CGRect(
-            x: visibleViewRect.midX - size.width / 2,
-            y: visibleViewRect.midY - size.height / 2,
+            x: area.midX - size.width / 2,
+            y: area.midY - size.height / 2,
             width: size.width,
             height: size.height
         )
-        let clamped = CanvasComposition.clampedPlacement(centred, in: visibleViewRect)
+        let clamped = CanvasComposition.clampedPlacement(centred, in: area)
         return BoardImage(image: image, rect: transform.rect(toPage: clamped))
+    }
+
+    /// The most of the visible area a fresh paste may take. A capture bigger
+    /// than this shrinks to it, so a pasted screenshot reads as an object on
+    /// the page instead of covering the board edge to edge (the owner's second
+    /// pass: "no ocupe la pantalla completa"). An image that fits at its own
+    /// size is never enlarged.
+    public static let insertedAreaFraction: CGFloat = 0.6
+
+    /// The image's own pixel size, scaled DOWN by ONE factor when it does not
+    /// fit the area it is inserted into, so it keeps its shape. An image that
+    /// fits is left at its own size.
+    ///
+    /// The shared clamp cannot do this by itself: it caps each axis at the
+    /// canvas independently, which squeezes the picture AND leaves the origin
+    /// where the wider size had put it — the layer ends up distorted and off
+    /// centre, filling the page edge to edge.
+    public static func fittedSize(_ own: CGSize, in area: CGSize) -> CGSize {
+        guard own.width > 0, own.height > 0, area.width > 0, area.height > 0 else { return own }
+        let scale = min(1, area.width / own.width, area.height / own.height)
+        return CGSize(width: own.width * scale, height: own.height * scale)
     }
 
     /// The layer's place in the view: where the board draws it (and where a

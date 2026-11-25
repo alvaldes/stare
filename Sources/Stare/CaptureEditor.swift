@@ -366,6 +366,49 @@ struct EditorCropRule {
 
     /// Repositions the region by a pixel delta, clamped so it never leaves
     /// the image: the size never changes.
+    /// The same corner resize with the START RECT's aspect ratio held: the
+    /// pointer drives one axis, the other follows so the shape never
+    /// distorts, and the corner opposite the dragged handle stays put.
+    ///
+    /// This is the Shift rule the board's V tool asks for, kept beside the
+    /// free one so every surface that resizes with these handles gets the same
+    /// answer instead of each writing its own aspect maths.
+    static func lockedRegion(
+        from start: CGRect,
+        dragging handle: CropHandle,
+        to pointer: CGPoint,
+        in bounds: CGRect
+    ) -> CGRect {
+        guard start.width > 0, start.height > 0 else {
+            return region(from: start, dragging: handle, to: pointer, in: bounds)
+        }
+        let free = region(from: start, dragging: handle, to: pointer, in: bounds)
+        let ratio = start.width / start.height
+        // The axis the pointer moved more drives the other: a vertical drag
+        // feels like it is setting the height, and the width follows.
+        let horizontal = abs(free.width - start.width) >= abs(free.height - start.height)
+        let width = horizontal ? free.width : free.height * ratio
+        let height = horizontal ? free.width / ratio : free.height
+        // Anchor the corner opposite the handle: right/bottom handles keep the
+        // origin, left/top ones keep the far edge.
+        // A handle on the leading or top edge moves THAT edge, so the opposite
+        // one is what stays put — the same anchor the free rule uses.
+        let movesLeading = handle == .left || handle == .topLeft || handle == .bottomLeft
+        let movesTop = handle == .top || handle == .topLeft || handle == .topRight
+        var locked = CGRect(
+            x: movesLeading ? free.maxX - width : free.minX,
+            y: movesTop ? free.maxY - height : free.minY,
+            width: width,
+            height: height
+        )
+        // Never let the lock push the shape off the canvas the drag began on.
+        if locked.maxX > bounds.maxX { locked.origin.x = max(bounds.minX, bounds.maxX - width) }
+        if locked.maxY > bounds.maxY { locked.origin.y = max(bounds.minY, bounds.maxY - height) }
+        if locked.minX < bounds.minX { locked.origin.x = bounds.minX }
+        if locked.minY < bounds.minY { locked.origin.y = bounds.minY }
+        return locked
+    }
+
     static func region(from start: CGRect, movedBy delta: CGPoint, in bounds: CGRect) -> CGRect {
         let x = min(max(start.minX + delta.x, bounds.minX), bounds.maxX - start.width)
         let y = min(max(start.minY + delta.y, bounds.minY), bounds.maxY - start.height)
@@ -1112,9 +1155,12 @@ final class CaptureEditorCanvas: NSView {
             case let .layerMove(id, _, grab):
                 _ = composition.move(id: id, by: CGSize(width: pixel.x - grab.x, height: pixel.y - grab.y))
             case let .layerResize(id, handle, start):
-                _ = composition.place(
-                    id: id,
-                    at: EditorCropRule.region(from: start, dragging: handle, to: pixel, in: fullBounds))
+                // Shift holds the layer's shape, the one rule every element
+                // resize follows (B4): nothing else in the editor binds it.
+                let region = event.modifierFlags.contains(.shift)
+                    ? EditorCropRule.lockedRegion(from: start, dragging: handle, to: pixel, in: fullBounds)
+                    : EditorCropRule.region(from: start, dragging: handle, to: pixel, in: fullBounds)
+                _ = composition.place(id: id, at: region)
             default: break
             }
             needsDisplay = true
