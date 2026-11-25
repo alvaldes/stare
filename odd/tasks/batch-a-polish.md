@@ -47,6 +47,11 @@ app already promises. No shared architecture, so each is its own commit.
   preference stored before it keeps `""`, which routes to the prefix. The owner's install is exactly that
   case, so the default is invisible where it matters.
 
+- **S9** (owner, third look at the mark; verbatim): "2. aun se ve algo mejora el recorte en los bordes
+  redondeados". Trimming to the artwork's opaque BOUNDING BOX leaves the baked shadow alive in the four
+  corners, because a rounded square's box is exactly where the curve exposes what is behind it. The mark
+  must be cut to the shape, not to its box, and show no soft pixel at the corners.
+
 ## Tasks
 
 | ID | Specs | Task | Route | Commit |
@@ -59,6 +64,7 @@ app already promises. No shared architecture, so each is its own commit.
 | T6 | S6 | The Settings mark sits flat: no shadow under the artwork | worker | 8160d8f |
 | T7 | S7 | Vertical beam, crosshair for ellipse/rectangle/arrow, and the editor's cursor that actually shows | worker | b5bbaf2 |
 | T8 | S8 | The template default reaches a preference stored before it | worker | 4a7eb60 |
+| T9 | S9 | The mark is cut to its rounded shape, not to its bounding box | worker | fb2f831 |
 
 ## Log
 
@@ -508,3 +514,37 @@ app already promises. No shared architecture, so each is its own commit.
   template, the prefix row stands down (L7's rule follows the field), exactly a fresh install's pane.
   Test-first: RED `CapturePreference` has no member `currentVersion`, GREEN 85/0 focused; StareCoreTests
   890/0. Version numbering: none before, 2 after.
+- **L12** (S9, T9): the mark is cut to its ROUNDED SHAPE, and the radius is measured, not assumed.
+  **The shape**, from the artwork itself: `Resources/app-icon.svg` draws the card as a 64-design-box
+  rect with `rx 14.37` inside the `translate(100) scale(12.875)` card — 824 px square inside the 1024
+  canvas with a 185 px corner radius. **How measured** (2× render of the resolved image, alpha ≥ 0.5
+  scan): the intense edge-row/edge-column offsets (the arc's run-out on each box edge, both ends —
+  measured 169/170 px, tightly consistent everywhere) give a first guess, but the EXTREME edge row is
+  tangent to the arc and its shallow coverage ramp (the profile climbs 0 → 1 over ~19 px) reads a
+  radius a few percent INSIDE the true one. So the true radius is solved from the same alpha map
+  deeper in the arc, where the boundary is steep enough for its ≥ 0.5 contour to track it: contour
+  offset `d` at depth `k` = initial/2, solved through the arc's own equation
+  `d = r − sqrt(r² − (r−k)²)` → `r = d + k + sqrt(2·d·k)`; all eight depth probes (each edge row and
+  column, both of whose corners) returned **183–185 px**, consensus **184 px = 92.0 pt** — the
+  design's 185 px. The probe spread tolerance and the edge-offset consensus (both `max(6, side/100)`,
+  8 px here) refuse any shape the alpha map cannot read as a rounded square; radius zero (sharp
+  corners, fully-opaque alpha) or a disagreement keeps the plain L9 box trim — no clipping of images
+  that cannot be measured. **What was clipped**: `AppIconArtwork.clipToOpaqueShape` (renamed from
+  `trimToOpaqueBounds`; still the one seam behind `resolve`, which stays the single source for
+  `AppMark` and the setup guide) renders the bounds-cropped artwork into a fresh bitmap THROUGH
+  `NSBezierPath`'s rounded rect at the measured radius, so a pixel outside the shape is fully
+  transparent while the shape's bounds stay the card's own — nothing about size, colour, tint,
+  template-ness, `accessibilityHidden`, the `size` parameter or either call site moved.
+  **Verification numbers**: corner pixels BEFORE the cut (RED run) read alpha 0.098 at the two bottom
+  corners (the shadow's `dy=8` biases it down; top corners ≤ 0.05 by the same bias) — AFTER the cut,
+  all four corners read exactly **0.0** (named threshold 0.05); the four edge midpoints read 1.0,
+  well above the 0.5 pin; the resolved bounds stay the measured 412 × 412 pt card within the ±1 pt
+  pin, and the radius pin (92.5 ± 3 pt, plus the 412 pt bounds pin) keeps a future re-raster of the
+  icns from silently moving the cut. The scratch probe that measured all of this ran in
+  `/tmp/stare-t9-probe` and was removed after the runs. Tests in `AppIconImageTests` (now 9): the
+  two new S9 pins (corner transparency, edge midpoints) — RED observed first with corner alpha 0.098
+  > 0.05, focused run exit 1 — plus the radius pin, a fully-opaque fallback identity pin (degenerate
+  case), and the five pre-existing pins all green. Focused `--filter AppIconImageTests` exit 0, 9
+  tests, 0 failures; full `swift test` unpiped exit 0, StareTests 380 / StareCoreTests 890, 0
+  failures. What remains the owner's eye: the corners' look at 32/56 pt — the pixels now say the cut
+  is exact.
