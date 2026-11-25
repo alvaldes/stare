@@ -24,14 +24,15 @@ chat, an issue or a doc.
 
 From "look at this" to an image in someone's chat, without leaving your keyboard.
 
-1. **Press `⌥⇧A`.** A clear sheet covers every display, even full-screen apps.
+1. **Press `⌥⇧A`.** A clear sheet covers your screen, even full-screen apps.
    The app underneath keeps focus.
-2. **Mark it up.** Arrows, highlights, boxes, circles and numbered steps, in
-   eight inks. Every tool is one key.
+2. **Mark it up.** Arrows, highlights, boxes, numbered steps, a blur and a
+   spotlight, in eight inks. Every tool is one key.
 3. **Press `S`, then paste.** Your screen and your marks land on a card in the
-   corner. Copy it, save it or drag it out.
+   corner. Copy it, save it or drag it out. `⇧S` takes just an area, `⌥S` one
+   window.
 
-**Presenting? Point at it.** Press `⌥⇧M` and a ring follows your pointer, so
+**Presenting? Point at it.** Press `⌥⇧M` and a highlight follows your pointer, so
 everyone watching your screen knows where to look. Clicks and focus stay with
 the app you're presenting.
 

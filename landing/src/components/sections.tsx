@@ -168,11 +168,11 @@ export function Download() {
 const faqs = [
   {
     q: 'What does Stare need from my Mac?',
-    a: `${site.minimumMacOS} or later. Drawing works without any permission. To capture the screen, Stare needs the Screen Recording permission, which you allow once in System Settings.`,
+    a: `${site.minimumMacOS} or later. Drawing works without any permission. To capture the screen or read text from it, Stare needs the Screen Recording permission, which you allow once in System Settings.`,
   },
   {
     q: 'How is it different from a screenshot tool?',
-    a: 'You mark up the live screen first and capture second. There is no editor in between unless you want one, so pointing at something takes a couple of key presses.',
+    a: 'You mark up the live screen first and capture second, so pointing at something takes a couple of key presses. When you do want an editor, any capture opens in one to crop it, zoom in on a detail or drop another image on top.',
   },
   {
     q: 'Does drawing take focus away from the app I am using?',
@@ -180,11 +180,15 @@ const faqs = [
   },
   {
     q: 'Where do my captures go?',
-    a: 'Each capture appears as a card in the corner of the screen. Copy it, save it, or drag it into another app. Stare does not upload anything.',
+    a: 'Each capture appears as a card in the corner of the screen. Copy it, save it, drag it into another app, or pin it above your windows. Your last 50 captures stay in a history on your Mac (⌥⇧I), or you can save straight to a folder with your own file names. Stare does not upload anything.',
+  },
+  {
+    q: 'Can it copy the text on my screen?',
+    a: 'Yes. Press ⌥⇧O and drag over any text or QR code, and it lands on your clipboard as plain text. Recognition runs on your Mac, so nothing is uploaded.',
   },
   {
     q: 'Can I try it before installing?',
-    a: 'Yes. The demo on this page uses the same tools, inks and keys as the app.',
+    a: 'Yes. The demo on this page uses the drawing tools, inks and keys of the app. Moving marks, the capture editor and the whiteboard are only in the app.',
   },
 ]
 

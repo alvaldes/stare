@@ -4,9 +4,9 @@
 import type { Child } from 'hono/jsx'
 import { container, sectionTitle } from './sections'
 
-const MAC = "-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif"
+export const MAC = "-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif"
 
-function MiniWindow({ x, y, width, height }: { x: number; y: number; width: number; height: number }) {
+export function MiniWindow({ x, y, width, height }: { x: number; y: number; width: number; height: number }) {
   return (
     <g>
       <rect x={x} y={y} width={width} height={height} rx="10" fill="#fff" stroke="#d3d9e3" />
@@ -39,7 +39,7 @@ function SceneStart() {
   return (
     <svg viewBox="0 0 320 210" class="step-anim block w-full" aria-hidden="true">
       <MiniWindow x={40} y={14} width={240} height={140} />
-      {/* The drawing sheet that ⌥⇧A lays over every display */}
+      {/* The drawing sheet that ⌥⇧A lays over the screen */}
       <rect class="s1-sheet" x="30" y="6" width="260" height="156" rx="14" fill="#007aff" fill-opacity=".07" stroke="#007aff" stroke-opacity=".55" stroke-dasharray="5 4" />
       <g class="s1-bar">
         <rect x="104" y="22" width="112" height="18" rx="9" fill="#23262f" />
@@ -113,17 +113,17 @@ const steps: { scene: () => Child; title: string; body: string }[] = [
   {
     scene: SceneStart,
     title: 'Press ⌥⇧A',
-    body: 'A clear sheet covers every display, even full-screen apps. The app underneath keeps focus.',
+    body: 'A clear sheet covers your screen, even full-screen apps. The app underneath keeps focus.',
   },
   {
     scene: SceneMarkUp,
     title: 'Mark it up',
-    body: 'Arrows, highlights, boxes, circles and numbered steps, in eight inks. Every tool is one key.',
+    body: 'Arrows, highlights, boxes, numbered steps, a blur and a spotlight, in eight inks. Every tool is one key.',
   },
   {
     scene: SceneCapture,
     title: 'Press S, then paste',
-    body: 'Your screen and your marks land on a card in the corner. Copy it, save it or drag it out.',
+    body: 'Your screen and your marks land on a card in the corner. Copy it, save it or drag it out. ⇧S takes just an area, ⌥S one window.',
   },
 ]
 
