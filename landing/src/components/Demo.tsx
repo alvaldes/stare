@@ -72,6 +72,9 @@ export function Demo() {
         <div class="relative aspect-[5/3] overflow-hidden rounded-[clamp(10px,1.6vw,18px)] bg-graphite shadow-window ring-1 ring-graphite/10">
           <DemoScreen />
           <LivePage />
+          {/* Blur marks, filled in by client/demo.tsx: a CSS backdrop blur is
+              the only way to diffuse the live page, whose pixels can't be read. */}
+          <div id="demo-blurs" aria-hidden="true" class="pointer-events-none absolute inset-0" />
           <canvas
             id="demo-ink"
             aria-label="Drawing surface. Use the toolbar or keyboard shortcuts to mark up the screen."
@@ -81,6 +84,9 @@ export function Demo() {
             Draw anywhere on this screen
           </p>
           <div id="demo-flash" aria-hidden="true" class="pointer-events-none absolute inset-0 bg-white opacity-0" />
+          {/* Capture cards and the "start drawing" pill, filled in by client/demo.tsx.
+              Inside the screen so a card is as big, relative to it, as on a real display. */}
+          <div id="demo-cards" class="pointer-events-none absolute inset-0 @container" />
         </div>
         <div id="demo-ui" class="md:pointer-events-none md:absolute md:inset-0" />
         <noscript>
@@ -103,7 +109,10 @@ export function Demo() {
           <Kbd>1</Kbd>–<Kbd>8</Kbd> change ink
         </li>
         <li>
-          <Kbd>⌘Z</Kbd> undo
+          <Kbd>9</Kbd> fill <Kbd>0</Kbd> arrow head
+        </li>
+        <li>
+          <Kbd>⌘Z</Kbd> undo <Kbd>⇧⌘Z</Kbd> redo
         </li>
         <li>
           <Kbd>Esc</Kbd> clear

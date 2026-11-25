@@ -19,6 +19,8 @@ const SHAPES: Partial<Record<ToolId, [Point, Point]>> = {
   line: [{ x: 50, y: 118 }, { x: 270, y: 118 }],
   rectangle: [{ x: 62, y: 36 }, { x: 258, y: 124 }],
   ellipse: [{ x: 56, y: 32 }, { x: 264, y: 130 }],
+  blur: [{ x: 60, y: 46 }, { x: 196, y: 114 }],
+  spotlight: [{ x: 96, y: 34 }, { x: 224, y: 126 }],
 }
 
 /** A quick swoop across the lines, the way you sweep a laser while talking. */

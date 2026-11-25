@@ -28,7 +28,8 @@ describe('keyboard shortcuts match the app', () => {
     inks.forEach((ink, index) => {
       expect(resolveKey(key(String(index + 1)))).toEqual({ type: 'ink', ink })
     })
-    expect(resolveKey(key('9'))).toBeNull()
+    // 9 and 0 are style keys (fill, arrow head), never inks.
+    expect(resolveKey(key('9'))).not.toMatchObject({ type: 'ink' })
   })
 
   it('undoes with ⌘Z, clears with Esc, captures with S', () => {
@@ -41,7 +42,7 @@ describe('keyboard shortcuts match the app', () => {
   it('leaves modified keys to the browser', () => {
     expect(resolveKey(key('p', { metaKey: true }))).toBeNull()
     expect(resolveKey(key('S', { shiftKey: true }))).toBeNull()
-    expect(resolveKey(key('z', { metaKey: true, shiftKey: true }))).toBeNull()
+    expect(resolveKey(key('z', { metaKey: true, altKey: true }))).toBeNull()
     expect(resolveKey(key('z'))).toBeNull()
   })
 })

@@ -13,7 +13,7 @@ describe('text tool, as in the app', () => {
     const ids = TOOLS.map((t) => t.id)
     expect(ids.indexOf('text')).toBe(ids.indexOf('number') - 1)
     expect(TOOLS.find((t) => t.id === 'text')?.name).toBe('Text')
-    expect(TOOLS.map((t) => t.key).join('')).toBe('PHALROTCFE')
+    expect(TOOLS.map((t) => t.key).join('')).toBe('PHALROTCFEBD')
   })
 
   it('places committed text at the click point in the 20 pt system size', () => {

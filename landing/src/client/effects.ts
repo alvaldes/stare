@@ -50,7 +50,7 @@ export function lightUpShortcuts(): void {
 
     const action = resolveKey(event)
     const key =
-      action?.type === 'undo' ? '⌘Z' : action?.type === 'clear' ? 'Esc' : action ? event.key.toUpperCase() : null
+      action?.type === 'undo' || action?.type === 'redo' ? '⌘Z' : action?.type === 'clear' ? 'Esc' : action ? event.key.toUpperCase() : null
     if (!key) return
 
     for (const row of document.querySelectorAll<HTMLElement>(`[data-key="${CSS.escape(key)}"]`)) {

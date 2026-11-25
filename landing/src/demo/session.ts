@@ -2,10 +2,12 @@ import { arrowHeadBarbs, distance, distanceToPolyline, ellipseOutline, normalize
 import {
   BADGE_DIAMETER,
   type InkId,
+  isArea,
   isTransient,
   LASER_LIFETIME_MS,
   lineWidth,
   type Mark,
+  type MarkStyle,
   MINIMUM_SAMPLE_DISTANCE,
   type Point,
   TEXT_PADDING,
@@ -18,6 +20,9 @@ const FREEHAND: ReadonlySet<ToolId> = new Set(['pen', 'highlighter', 'laser'])
 /** A shape shorter than this is a stray click, not a mark. */
 const MINIMUM_SHAPE_LENGTH = 2
 
+/** What undo can reverse: a mark put on screen, or the batch Esc cleared. */
+type HistoryStep = { added: Mark } | { cleared: Mark[] }
+
 /**
  * The vector model of one drawing session: committed marks plus the stroke in
  * progress. Mirrors StareCore's DrawingSession, without any rendering.
@@ -25,16 +30,21 @@ const MINIMUM_SHAPE_LENGTH = 2
 export class DrawingSession {
   marks: Mark[] = []
   current: Mark | null = null
+  private undoSteps: HistoryStep[] = []
+  private redoSteps: HistoryStep[] = []
 
   get isEmpty(): boolean {
     return this.marks.length === 0 && this.current === null
   }
 
   /** `now` stamps transient marks so they can fade; other marks ignore it. */
-  begin(point: Point, tool: ToolId, ink: InkId, weight = 1, now = 0): void {
+  /** `style` is the app's `9` and `0`: only rectangles, ellipses and arrows keep it. */
+  begin(point: Point, tool: ToolId, ink: InkId, weight = 1, now = 0, style?: MarkStyle): void {
     const mark: Mark = { tool, ink, points: [point] }
     if (weight !== 1) mark.weight = weight
     if (isTransient(tool)) mark.createdAt = now
+    if (style?.filled && (tool === 'rectangle' || tool === 'ellipse')) mark.filled = true
+    if (style?.arrowHead === 'filled' && tool === 'arrow') mark.arrowHead = 'filled'
     this.current = mark
   }
 
@@ -60,7 +70,14 @@ export class DrawingSession {
       const [start, end] = mark.points
       if (!end || distance(start, end) < MINIMUM_SHAPE_LENGTH) return
     }
+    this.add(mark)
+  }
+
+  /** Every new mark is one undo step and forks the redo history, as in the app. */
+  private add(mark: Mark): void {
     this.marks.push(mark)
+    this.undoSteps.push({ added: mark })
+    this.redoSteps = []
   }
 
   /**
@@ -83,7 +100,7 @@ export class DrawingSession {
     if (text === '') return false
     const mark: Mark = { tool: 'text', ink, points: [origin], text, size: { width, height: TEXT_SIZE * weight } }
     if (weight !== 1) mark.weight = weight
-    this.marks.push(mark)
+    this.add(mark)
     return true
   }
 
@@ -95,16 +112,50 @@ export class DrawingSession {
   erase(point: Point, radius: number): number {
     const before = this.marks.length
     this.marks = this.marks.filter((mark) => !hitTest(mark, point, radius))
-    return before - this.marks.length
+    const erased = before - this.marks.length
+    // Erasing is an edit: the history forks and nothing comes back.
+    if (erased > 0) this.redoSteps = []
+    return erased
   }
 
+  /**
+   * Takes back the newest step still on screen: a mark the eraser or a fading
+   * laser already removed is skipped, as the app skips stale entries.
+   */
   undo(): void {
-    this.marks.pop()
+    for (let step = this.undoSteps.pop(); step; step = this.undoSteps.pop()) {
+      if ('cleared' in step) {
+        this.marks = [...step.cleared, ...this.marks]
+        this.redoSteps.push(step)
+        return
+      }
+      const index = this.marks.indexOf(step.added)
+      if (index === -1) continue
+      this.marks.splice(index, 1)
+      this.redoSteps.push(step)
+      return
+    }
   }
 
+  redo(): void {
+    const step = this.redoSteps.pop()
+    if (!step) return
+    if ('cleared' in step) {
+      const gone = new Set(step.cleared)
+      this.marks = this.marks.filter((mark) => !gone.has(mark))
+    } else {
+      this.marks.push(step.added)
+    }
+    this.undoSteps.push(step)
+  }
+
+  /** The Esc clear: every mark goes as one undoable step; an empty screen adds none. */
   clear(): void {
-    this.marks = []
     this.current = null
+    if (this.marks.length === 0) return
+    this.undoSteps.push({ cleared: this.marks })
+    this.marks = []
+    this.redoSteps = []
   }
 
   /**
@@ -160,6 +211,12 @@ function hitTest(mark: Mark, point: Point, radius: number): boolean {
     }
     case 'eraser':
       return false
+    case 'blur':
+    case 'spotlight': {
+      // Areas, not outlines: any point inside the dragged rectangle touches them.
+      const r = normalizedRect(start, end)
+      return point.x >= r.x && point.x <= r.x + r.width && point.y >= r.y && point.y <= r.y + r.height
+    }
     default:
       return distanceToPolyline(point, mark.points) <= reach
   }

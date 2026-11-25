@@ -2,7 +2,7 @@
 // are buttons marked with their tool icon or ink; pressing them (on your own
 // keyboard or here) draws a live sample in the panel that client/keyboard.tsx
 // mounts into #key-preview. The rest of the keyboard is quiet decoration.
-import { ACTION_ICONS, TOOL_ICONS } from '../demo/icons'
+import { ACTION_SYMBOLS, symbolStyle, TOOL_SYMBOLS } from '../demo/icons'
 import { INKS, TOOLS } from '../demo/model'
 import { container, sectionTitle } from './sections'
 import { Kbd } from './ui'
@@ -17,6 +17,7 @@ interface KeySpec {
   /** Name used by the page-wide shortcut highlighter (client/effects.ts). */
   flash?: string
   kind?: 'tool' | 'ink' | 'action' | 'modifier'
+  /** SF Symbol name of a Stare key. */
   icon?: string
   color?: string
   hint?: string
@@ -24,7 +25,7 @@ interface KeySpec {
 
 const tool = (key: string): KeySpec => {
   const info = TOOLS.find((t) => t.key === key)!
-  return { label: key, press: key.toLowerCase(), flash: key, kind: 'tool', icon: TOOL_ICONS[info.id], hint: info.name }
+  return { label: key, press: key.toLowerCase(), flash: key, kind: 'tool', icon: TOOL_SYMBOLS[info.id], hint: info.name }
 }
 const ink = (key: string): KeySpec => {
   const info = INKS.find((i) => i.key === key)!
@@ -36,8 +37,8 @@ const rows: KeySpec[][] = [
   [
     { label: 'esc', w: 1.5, press: 'Escape', flash: 'Esc', kind: 'action', hint: 'Clear' },
     ...['1', '2', '3', '4', '5', '6', '7', '8'].map(ink),
-    plain('9'),
-    plain('0'),
+    { label: '9', press: '9', flash: '9', kind: 'action', icon: ACTION_SYMBOLS.fill, hint: 'Fill' },
+    { label: '0', press: '0', flash: '0', kind: 'action', icon: ACTION_SYMBOLS.arrowHead, hint: 'Arrow head' },
     plain('-'),
     plain('='),
     plain('delete', 1.5),
@@ -61,8 +62,8 @@ const rows: KeySpec[][] = [
   [
     plain('caps lock', 1.8),
     tool('A'),
-    { label: 'S', press: 's', flash: 'S', kind: 'action', icon: ACTION_ICONS.capture, hint: 'Capture' },
-    plain('D'),
+    { label: 'S', press: 's', flash: 'S', kind: 'action', icon: ACTION_SYMBOLS.capture, hint: 'Capture' },
+    tool('D'),
     tool('F'),
     plain('G'),
     tool('H'),
@@ -75,11 +76,11 @@ const rows: KeySpec[][] = [
   ],
   [
     { label: '⇧ shift', w: 2.3, kind: 'modifier', hint: 'Start' },
-    { label: 'Z', press: 'z', meta: true, flash: '⌘Z', kind: 'action', icon: ACTION_ICONS.undo, hint: '⌘ Undo' },
+    { label: 'Z', press: 'z', meta: true, flash: '⌘Z', kind: 'action', icon: ACTION_SYMBOLS.undo, hint: '⌘ Undo' },
     plain('X'),
     tool('C'),
     plain('V'),
-    plain('B'),
+    tool('B'),
     plain('N'),
     plain('M'),
     plain(','),
@@ -145,15 +146,31 @@ function Key({ spec }: { spec: KeySpec }) {
         )}
       </span>
       {spec.icon ? (
-        <svg viewBox="0 0 24 24" class="size-[1.8cqw] self-end text-ink-sky drop-shadow-[0_0_0.5cqw_rgb(108_180_255/0.6)]" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d={spec.icon} />
-        </svg>
+        // The symbol sits on a 26 pt canvas with room around it; the negative
+        // margin lets the glyph, not the canvas, line up with the key's edge.
+        <span
+          aria-hidden="true"
+          class="sf-symbol -m-[0.55cqw] self-end text-ink-sky drop-shadow-[0_0_0.5cqw_rgb(108_180_255/0.6)]"
+          style={symbolStyle(spec.icon, '3cqw')}
+        />
       ) : (
         <span class="truncate text-[0.95cqw] text-white/55">{spec.hint}</span>
       )}
     </button>
   )
 }
+
+/** Global shortcuts and drawing-mode combinations, as the app ships them. */
+const combos: [string[], string][] = [
+  [['⌥', '⇧', 'A'], 'start drawing over any app'],
+  [['⌥', '⇧', 'W'], 'open the whiteboard'],
+  [['⇧', 'S'], 'capture an area you drag'],
+  [['⌥', 'S'], 'capture the front window'],
+  [['⌥', '⇧', 'O'], 'copy the text or QR code in an area'],
+  [['⌥', '⇧', 'I'], 'open your recent captures'],
+  [['⌘', 'Z'], 'undo the last mark'],
+  [['⇧', '⌘', 'Z'], 'redo it'],
+]
 
 export function Shortcuts() {
   return (
@@ -190,21 +207,22 @@ export function Shortcuts() {
                 </div>
               </div>
             </div>
-            {/* Two shortcuts are key combinations, which a keyboard of single
-                keys can't show on its own. */}
-            <ul class="flex flex-wrap gap-x-8 gap-y-3 text-[15px] text-muted md:mt-6" aria-label="Key combinations">
-              <li class="flex items-center gap-2">
-                <span class="flex items-center gap-1">
-                  <Kbd>⌥</Kbd>+<Kbd>⇧</Kbd>+<Kbd>A</Kbd>
-                </span>
-                start drawing over any app
-              </li>
-              <li class="flex items-center gap-2">
-                <span class="flex items-center gap-1">
-                  <Kbd>⌘</Kbd>+<Kbd>Z</Kbd>
-                </span>
-                undo the last mark
-              </li>
+            {/* The app's key combinations, which a keyboard of single keys
+                can't show on its own. */}
+            <ul class="grid gap-x-8 gap-y-3 text-[15px] text-muted sm:grid-cols-2 md:mt-6" aria-label="Key combinations">
+              {combos.map(([keys, what]) => (
+                <li class="flex items-center gap-2">
+                  <span class="flex shrink-0 items-center gap-1">
+                    {keys.map((k, i) => (
+                      <>
+                        {i > 0 && '+'}
+                        <Kbd>{k}</Kbd>
+                      </>
+                    ))}
+                  </span>
+                  {what}
+                </li>
+              ))}
             </ul>
           </div>
           {/* Filled in by client/keyboard.tsx; without JavaScript the keys still list every shortcut. */}

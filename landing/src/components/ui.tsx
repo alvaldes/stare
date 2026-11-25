@@ -1,5 +1,4 @@
 import type { Child } from 'hono/jsx'
-import { ACTION_ICONS } from '../demo/icons'
 import { repoUrl } from '../site'
 
 export function Kbd({ children }: { children: Child }) {
@@ -9,6 +8,9 @@ export function Kbd({ children }: { children: Child }) {
     </kbd>
   )
 }
+
+/** The page's own download arrow; the app's symbols are for the demo's bar. */
+const DOWNLOAD_ICON = 'M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19.5h14'
 
 /**
  * Renders as "Coming soon" pointing at the repository. The client script swaps
@@ -33,7 +35,7 @@ export function DownloadButton({ tone = 'dark' }: { tone?: 'dark' | 'light' }) {
         }`}
       />
       <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d={ACTION_ICONS.save} />
+        <path d={DOWNLOAD_ICON} />
       </svg>
       <span data-download-label>Coming soon</span>
     </a>

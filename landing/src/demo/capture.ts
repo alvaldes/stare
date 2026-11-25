@@ -27,15 +27,20 @@ export async function renderCapture(
 
   ctx.drawImage(image, 0, 0, canvas.width, canvas.height)
   ctx.scale(scale, scale)
-  // Like MarkCompositor, a capture never includes the laser.
-  drawSession(ctx, session, { transient: false })
+  // Like MarkCompositor, a capture never includes the laser, and a blur
+  // diffuses the screen it was drawn on.
+  drawSession(ctx, session, { transient: false, backdrop: image })
 
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Could not encode the capture'))), 'image/png')
   })
 }
 
-export async function copyImage(blob: Blob): Promise<void> {
-  // A promise-valued item keeps Safari's user-gesture requirement satisfied.
+/**
+ * Puts the capture on the clipboard, as the app does the moment it captures.
+ * Call it inside the key press or click: handing the clipboard a promise lets
+ * the PNG finish encoding without losing the user gesture browsers require.
+ */
+export async function copyImage(blob: Blob | Promise<Blob>): Promise<void> {
   await navigator.clipboard.write([new ClipboardItem({ 'image/png': Promise.resolve(blob) })])
 }

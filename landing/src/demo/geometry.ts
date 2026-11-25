@@ -1,4 +1,11 @@
-import { ARROW_HEAD_HALF_ANGLE, ARROW_HEAD_LENGTH, type Point } from './model'
+import {
+  ARROW_HEAD_HALF_ANGLE,
+  ARROW_HEAD_LENGTH,
+  type Point,
+  SPOTLIGHT_DIM_ALPHA,
+  SPOTLIGHT_EASE_STEPS,
+  SPOTLIGHT_FEATHER,
+} from './model'
 
 /** The two barbs of the arrow head, ported from StareCore's PathBuilder. */
 export function arrowHeadBarbs(start: Point, end: Point, weight = 1): Point[] {
@@ -55,4 +62,51 @@ export function ellipseOutline(rect: { x: number; y: number; width: number; heig
     const a = (i / steps) * Math.PI * 2
     return { x: cx + Math.cos(a) * (rect.width / 2), y: cy + Math.sin(a) * (rect.height / 2) }
   })
+}
+
+export interface GradientStop {
+  /** Position along the gradient, 0 at the lit centre to 1 at `reach`. */
+  offset: number
+  alpha: number
+}
+
+/**
+ * MarkRenderer.drawSpotlight's one radial gradient, in the light's own metric
+ * (the region's semi-axes are 1): clear up to the inscribed ellipse, then the
+ * dim eases in over a feather of the radii and holds at its deepest beyond.
+ * `reach` is the farthest canvas corner in that metric. Null when every
+ * corner sits inside the light, so there is nothing to dim.
+ */
+export function spotlightGradient(
+  rect: { x: number; y: number; width: number; height: number },
+  canvas: { width: number; height: number },
+): { reach: number; stops: GradientStop[] } | null {
+  if (rect.width <= 0 || rect.height <= 0) return null
+  const semiWidth = rect.width / 2
+  const semiHeight = rect.height / 2
+  const cx = rect.x + semiWidth
+  const cy = rect.y + semiHeight
+
+  let reach = 0
+  for (const [x, y] of [
+    [0, 0],
+    [canvas.width, 0],
+    [canvas.width, canvas.height],
+    [0, canvas.height],
+  ]) {
+    reach = Math.max(reach, Math.hypot((x - cx) / semiWidth, (y - cy) / semiHeight))
+  }
+  if (reach <= 1) return null
+  reach = Math.max(reach, 1 + SPOTLIGHT_FEATHER)
+
+  const feather = Math.max(0.001, Math.min(SPOTLIGHT_FEATHER, (reach - 1) * 0.98))
+  const stops: GradientStop[] = [
+    { offset: 0, alpha: 0 },
+    { offset: 1 / reach, alpha: 0 },
+  ]
+  for (const step of SPOTLIGHT_EASE_STEPS) {
+    stops.push({ offset: (1 + step * feather) / reach, alpha: SPOTLIGHT_DIM_ALPHA * step * step * (3 - 2 * step) })
+  }
+  stops.push({ offset: Math.min(1, (1 + feather) / reach), alpha: SPOTLIGHT_DIM_ALPHA })
+  return { reach, stops }
 }

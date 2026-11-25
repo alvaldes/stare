@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from 'hono/jsx'
 import { render } from 'hono/jsx/dom'
 import { type DemoAction, resolveKey } from '../demo/keymap'
-import { INKS, type InkId, TOOLS, type ToolId } from '../demo/model'
+import { INKS, type InkId, type MarkStyle, TOOLS, type ToolId } from '../demo/model'
 import { drawMark } from '../demo/render'
 import { SAMPLE_HEIGHT, SAMPLE_WIDTH, sampleMarks } from '../demo/samples'
 
@@ -23,6 +23,8 @@ const TOOL_NOTES: Record<ToolId, string> = {
   number: 'Numbered steps. Undo one and the rest renumber.',
   eraser: 'Wipes whole marks as you drag over them. There is no undo for it, like the app.',
   laser: 'Point while you talk. It fades on its own and never shows up in a capture.',
+  blur: 'Drag over anything private. It stays unreadable in the capture.',
+  spotlight: 'Drag around what matters and everything else dims.',
 }
 
 interface Shown {
@@ -42,12 +44,45 @@ function describe(action: DemoAction): Shown {
       return { key: info.key, title: `${info.name} ink`, note: 'Every tool picks it up until you change it.' }
     }
     case 'undo':
-      return { key: '⌘Z', title: 'Undo', note: 'Takes back the last mark, one at a time.' }
+      return { key: '⌘Z', title: 'Undo', note: 'Takes back the last mark, one at a time, or everything Esc cleared.' }
+    case 'redo':
+      return { key: '⇧⌘Z', title: 'Redo', note: 'Puts back what undo took.' }
+    case 'fill':
+      return { key: '9', title: 'Fill', note: 'The next rectangle or ellipse gets a wash of its ink. Press again for an outline.' }
+    case 'arrowHead':
+      return { key: '0', title: 'Arrow head', note: 'Switches the next arrow between an open head and a solid one.' }
     case 'clear':
-      return { key: 'Esc', title: 'Clear all', note: 'Wipes every mark and leaves drawing mode.' }
+      return { key: 'Esc', title: 'Clear all', note: 'Wipes every mark in one step. ⌘Z brings them back.' }
     case 'capture':
-      return { key: 'S', title: 'Capture', note: 'Saves the screen with your marks to a card you can paste.' }
+      return { key: 'S', title: 'Capture', note: 'Copies the screen with your marks and shows it on a card in the corner.' }
+    case 'start':
+      return { key: '⌥⇧A', title: 'Start drawing', note: 'Lays the sheet over any app. Your marks come back with it.' }
   }
+}
+
+/** A few lines of pretend text to mark up. */
+function drawPretendText(ctx: CanvasRenderingContext2D): void {
+  ctx.fillStyle = '#dfe4ec'
+  for (const [x, y, w] of [[46, 52, 190], [46, 76, 228], [46, 100, 160], [46, 124, 204]]) {
+    ctx.beginPath()
+    ctx.roundRect(x, y, w, 9, 4.5)
+    ctx.fill()
+  }
+}
+
+/** The sample's white page with its text, for the blur to diffuse. */
+function pretendPage(): HTMLCanvasElement {
+  const page = document.createElement('canvas')
+  page.width = SAMPLE_WIDTH * 2
+  page.height = SAMPLE_HEIGHT * 2
+  const ctx = page.getContext('2d')
+  if (ctx) {
+    ctx.scale(2, 2)
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, SAMPLE_WIDTH, SAMPLE_HEIGHT)
+    drawPretendText(ctx)
+  }
+  return page
 }
 
 export function mountKeyboardPanel(root: HTMLElement, keyboard: HTMLElement): void {
@@ -57,7 +92,14 @@ export function mountKeyboardPanel(root: HTMLElement, keyboard: HTMLElement): vo
 function Panel({ keyboard }: { keyboard: HTMLElement }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const flashRef = useRef<HTMLDivElement>(null)
-  const state = useRef({ tool: 'pen' as ToolId, ink: 'red' as InkId, t: 1, frame: 0 }).current!
+  const state = useRef({
+    tool: 'pen' as ToolId,
+    ink: 'red' as InkId,
+    style: { filled: false, arrowHead: 'open' } as MarkStyle,
+    t: 1,
+    frame: 0,
+    page: null as HTMLCanvasElement | null,
+  }).current!
   const [shown, setShown] = useState<Shown>({
     key: 'P',
     title: 'Pen',
@@ -79,14 +121,15 @@ function Panel({ keyboard }: { keyboard: HTMLElement }) {
     if (!ctx) return
     ctx.setTransform(width / SAMPLE_WIDTH, 0, 0, height / SAMPLE_HEIGHT, 0, 0)
     ctx.clearRect(0, 0, SAMPLE_WIDTH, SAMPLE_HEIGHT)
-    // A few lines of pretend text to mark up.
-    ctx.fillStyle = '#dfe4ec'
-    for (const [x, y, w] of [[46, 52, 190], [46, 76, 228], [46, 100, 160], [46, 124, 204]]) {
-      ctx.beginPath()
-      ctx.roundRect(x, y, w, 9, 4.5)
-      ctx.fill()
-    }
-    sampleMarks(state.tool, state.ink, t).forEach((mark, i) => drawMark(ctx, mark, mark.tool === 'number' ? i + 1 : null))
+    drawPretendText(ctx)
+    state.page ??= pretendPage()
+    const surface = { backdrop: state.page, bounds: { width: SAMPLE_WIDTH, height: SAMPLE_HEIGHT } }
+    sampleMarks(state.tool, state.ink, t).forEach((mark, i) => {
+      const styled = { ...mark }
+      if (state.style.filled && (mark.tool === 'rectangle' || mark.tool === 'ellipse')) styled.filled = true
+      if (state.style.arrowHead === 'filled' && mark.tool === 'arrow') styled.arrowHead = 'filled'
+      drawMark(ctx, styled, mark.tool === 'number' ? i + 1 : null, undefined, surface)
+    })
   }
 
   const animate = (from: number, to: number) => {
@@ -109,6 +152,15 @@ function Panel({ keyboard }: { keyboard: HTMLElement }) {
 
   const perform = (action: DemoAction) => {
     if (action.type === 'tool') state.tool = action.tool
+    // The style keys show their effect on the shape they change.
+    if (action.type === 'fill') {
+      state.style.filled = !state.style.filled
+      if (state.tool !== 'ellipse') state.tool = 'rectangle'
+    }
+    if (action.type === 'arrowHead') {
+      state.style.arrowHead = state.style.arrowHead === 'open' ? 'filled' : 'open'
+      state.tool = 'arrow'
+    }
     if (action.type === 'ink') {
       state.ink = action.ink
       setInk(action.ink)

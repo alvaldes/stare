@@ -666,6 +666,277 @@
     }
   }
 
+  /* "More than a screenshot" scenes (components/Captures.tsx), on the same
+     rules as the steps: complete at rest, paused until revealed. */
+  .c1-sel {
+    transform-box: fill-box;
+    transform-origin: left top;
+    animation: c1-sel 5s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+  }
+  .c1-loupe {
+    animation: c1-loupe 5s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+  }
+  .c1-dim {
+    animation: c1-dim 5s ease-out infinite;
+  }
+  @keyframes c1-sel {
+    0%,
+    12% {
+      transform: scale(0.05);
+      opacity: 0;
+    }
+    16% {
+      opacity: 1;
+    }
+    60%,
+    88% {
+      transform: none;
+      opacity: 1;
+    }
+    96%,
+    100% {
+      opacity: 0;
+    }
+  }
+  @keyframes c1-loupe {
+    0%,
+    12% {
+      transform: translate(-142px, -78px);
+      opacity: 0;
+    }
+    16% {
+      opacity: 1;
+    }
+    60%,
+    88% {
+      transform: none;
+      opacity: 1;
+    }
+    96%,
+    100% {
+      opacity: 0;
+    }
+  }
+  @keyframes c1-dim {
+    0%,
+    6% {
+      opacity: 0;
+    }
+    12%,
+    90% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+
+  .c2-pin {
+    animation: c2-pin 6s ease-in-out infinite;
+  }
+  @keyframes c2-pin {
+    0%,
+    100% {
+      transform: none;
+      opacity: 1;
+    }
+    30% {
+      transform: translate(-10px, 8px);
+      opacity: 1;
+    }
+    55% {
+      transform: translate(-10px, 8px);
+      opacity: 0.55;
+    }
+    75% {
+      transform: translate(0, 4px);
+      opacity: 1;
+    }
+  }
+
+  .c3-sel {
+    animation: c3-sel 6s steps(1, end) infinite;
+  }
+  .c3-copied {
+    animation: c3-copied 6s ease-out infinite;
+  }
+  @keyframes c3-sel {
+    0% {
+      transform: none;
+    }
+    18% {
+      transform: translateX(80px);
+    }
+    36% {
+      transform: translate(80px, 60px);
+    }
+    54%,
+    100% {
+      transform: translate(160px, 60px);
+    }
+  }
+  @keyframes c3-copied {
+    0%,
+    62% {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    68%,
+    92% {
+      opacity: 1;
+      transform: none;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+
+  .c4-scan {
+    animation: c4-scan 5s ease-in-out infinite;
+  }
+  .c4-clip {
+    animation: c4-clip 5s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+  }
+  @keyframes c4-scan {
+    0%,
+    10% {
+      transform: none;
+      opacity: 0;
+    }
+    14% {
+      opacity: 1;
+    }
+    44% {
+      transform: translateY(46px);
+      opacity: 1;
+    }
+    48%,
+    100% {
+      transform: translateY(46px);
+      opacity: 0;
+    }
+  }
+  @keyframes c4-clip {
+    0%,
+    46% {
+      opacity: 0;
+      transform: translateX(-12px);
+    }
+    56%,
+    90% {
+      opacity: 1;
+      transform: none;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+
+  .c5-crop {
+    transform-box: view-box;
+    transform-origin: 160px 96px;
+    animation: c5-crop 6s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+  }
+  .c5-img {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: c5-img 6s cubic-bezier(0.34, 1.56, 0.64, 1) infinite;
+  }
+  @keyframes c5-crop {
+    0%,
+    10% {
+      transform: scale(1.12, 1.28);
+    }
+    40%,
+    100% {
+      transform: none;
+    }
+  }
+  @keyframes c5-img {
+    0%,
+    50% {
+      opacity: 0;
+      transform: translate(30px, -24px) scale(0.8);
+    }
+    62%,
+    92% {
+      opacity: 1;
+      transform: none;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+
+  .c6-paste {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: c6-paste 6s cubic-bezier(0.34, 1.56, 0.64, 1) infinite;
+  }
+  .c6-sketch {
+    animation: c6-sketch 6s ease-in-out infinite;
+  }
+  .c6-note {
+    animation: c6-note 6s ease-out infinite;
+  }
+  @keyframes c6-paste {
+    0%,
+    6% {
+      opacity: 0;
+      transform: scale(0.85);
+    }
+    16%,
+    92% {
+      opacity: 1;
+      transform: none;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+  @keyframes c6-sketch {
+    0%,
+    22% {
+      stroke-dashoffset: 1;
+    }
+    56%,
+    92% {
+      stroke-dashoffset: 0;
+      opacity: 1;
+    }
+    100% {
+      stroke-dashoffset: 0;
+      opacity: 0;
+    }
+  }
+  @keyframes c6-note {
+    0%,
+    58% {
+      opacity: 0;
+    }
+    66%,
+    92% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+
+  /* An SF Symbol from public/sf, masked and filled with the text colour so it
+     follows the button's state like the app's template images. */
+  .sf-symbol {
+    display: inline-block;
+    flex-shrink: 0;
+    background-color: currentColor;
+    mask-repeat: no-repeat;
+    mask-position: center;
+    mask-size: contain;
+    -webkit-mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+    -webkit-mask-size: contain;
+  }
+
   /* The creator's note stays out of sight until client/creatorNote.ts plays
      it, so it never flashes in and out. Without JavaScript it simply shows. */
   .js #creator-note:not([data-played]) {

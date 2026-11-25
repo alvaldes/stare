@@ -12,6 +12,8 @@ export type ToolId =
   | 'number'
   | 'laser'
   | 'eraser'
+  | 'blur'
+  | 'spotlight'
 
 export interface ToolInfo {
   id: ToolId
@@ -31,6 +33,8 @@ export const TOOLS: readonly ToolInfo[] = [
   { id: 'number', name: 'Numbered step', key: 'C' },
   { id: 'laser', name: 'Laser pointer', key: 'F' },
   { id: 'eraser', name: 'Eraser', key: 'E' },
+  { id: 'blur', name: 'Blur', key: 'B' },
+  { id: 'spotlight', name: 'Spotlight', key: 'D' },
 ]
 
 export type InkId = 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'white' | 'black'
@@ -75,13 +79,23 @@ export interface Mark {
   text?: string
   /** A text mark's measured box, in screen points. */
   size?: { width: number; height: number }
+  /** A rectangle or ellipse drawn with its ink wash (the app's `9`). */
+  filled?: boolean
+  /** An arrow drawn with the solid head (the app's `0`). */
+  arrowHead?: 'filled'
+}
+
+/** How the next mark is drawn: the app's `9` and `0` toggles. */
+export interface MarkStyle {
+  filled: boolean
+  arrowHead: 'open' | 'filled'
 }
 
 /** Stroke width in points, as in the app. */
 export function lineWidth(tool: ToolId): number {
   if (tool === 'highlighter') return 18
   if (tool === 'number') return 2
-  if (tool === 'text' || tool === 'eraser') return 0
+  if (tool === 'text' || tool === 'eraser' || tool === 'blur') return 0
   return 3
 }
 
@@ -103,6 +117,22 @@ export const MINIMUM_SAMPLE_DISTANCE = 0.75
 export function isTransient(tool: ToolId): boolean {
   return tool === 'laser'
 }
+
+/** Areas, not outlines: the blur and the spotlight cover the dragged rectangle. */
+export function isArea(tool: ToolId): boolean {
+  return tool === 'blur' || tool === 'spotlight'
+}
+
+/** StareCore's BlurEffect.defaultRadius, in screen points. */
+export const BLUR_RADIUS = 15
+
+/** StareCore's MarkRenderer spotlight: deepest dim, feather and its eased steps. */
+export const SPOTLIGHT_DIM_ALPHA = 0.55
+export const SPOTLIGHT_FEATHER = 1.2
+export const SPOTLIGHT_EASE_STEPS = [0.25, 0.5, 0.75]
+
+/** The ink wash under a filled rectangle or ellipse. */
+export const SHAPE_FILL_OPACITY = 0.3
 
 /** The app's text: the regular system font at 20 points, in the ink colour. */
 export const TEXT_SIZE = 20

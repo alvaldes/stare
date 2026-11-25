@@ -13,9 +13,9 @@ function draw(session: DrawingSession, tool: ToolId, points: Point[], ink: InkId
 }
 
 describe('eraser, as in the app', () => {
-  it('is picked with E and sits last in the toolbar', () => {
+  it('is picked with E and follows the laser in the toolbar', () => {
     expect(resolveKey(bare('e'))).toEqual({ type: 'tool', tool: 'eraser' })
-    expect(TOOLS[TOOLS.length - 1]).toEqual({ id: 'eraser', name: 'Eraser', key: 'E' })
+    expect(TOOLS[TOOLS.findIndex((t) => t.id === 'laser') + 1]).toEqual({ id: 'eraser', name: 'Eraser', key: 'E' })
     expect(ERASER_RADIUS).toBe(8)
   })
 
