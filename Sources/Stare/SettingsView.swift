@@ -508,6 +508,58 @@ struct BarPane: View {
         toolbarPreviewState.ink = model.ink
     }
 
+    // MARK: The hidden section (T3/S4)
+
+    /// What the pool card says it is (T3/S4): the bar's hidden section, not
+    /// a graveyard — the tools the bar keeps behind its `⁞`. Constants, not
+    /// literals in the body, so a test pins the exact reading instead of
+    /// inspecting SwiftUI internals.
+    static let poolCardTitle = "Behind the ⁞"
+    /// The card's symbol is the bar's own overflow glyph, so the card and
+    /// the control it names are one mark.
+    static let poolCardSymbol = ToolbarOverflowSpec.glyph
+    /// The card's caption: what lives here — the tools behind the bar's `⁞`,
+    /// one click away while drawing, shortcuts kept — and the two drags that
+    /// move a tool between the sections: onto the bar to bring it back, off
+    /// the bar to hide it here. A tool is never nowhere. The trailing
+    /// sentences keep the mechanics the old caption said: a placed separator
+    /// comes back through any spot here, and the bar's first tool cannot
+    /// leave.
+    static let poolCardHelp = """
+    These tools sit behind the bar's ⁞ — one click away while drawing, and \
+    they keep their shortcuts. Drag one onto the bar to bring it back, and \
+    drag a bar tool onto a spot here to hide it again. A tool is never \
+    nowhere. A placed separator comes back off the bar through any spot \
+    here, and the bar's first tool cannot leave — the preview dims it.
+    """
+
+    /// The real bar the stage renders (T4/S5): the draft's item list AND the
+    /// draft's pool, so the preview is the whole bar — the `⁞` included —
+    /// drawing what is hidden behind it in the draft, not the saved layout's.
+    /// The pool is pinned as a value (`toolPool:`) instead of left to the
+    /// state's mirror because what the user arranges is the draft's second
+    /// run. Internal, not private, so a test can pin the configuration —
+    /// `showsOverflow` and `hiddenTools` on the very view the stage renders —
+    /// through the same seam the other bar seams use.
+    var previewToolbar: ToolbarView {
+        ToolbarView(
+            state: toolbarPreviewState,
+            onUndo: {}, onRedo: {}, onClear: {}, onDone: {},
+            toolItems: model.toolbarTools.items,
+            toolPool: model.toolbarTools.hiddenTools,
+            organiser: ToolbarOrganiserHooks(
+                dragProvider: { ToolbarDragPayload.item($0).provider },
+                drop: { target, edge, payload in
+                    handleBarDrop(target: target, edge: edge, payload: .item(payload))
+                },
+                sourceDrop: { target, edge in
+                    handleBarDrop(target: target, edge: edge, payload: .addSeparator)
+                },
+                fixed: { item in !model.toolbarTools.canLeave(item) }
+            )
+        )
+    }
+
     /// The pool: the tools that are not on the bar, in the pool's order,
     /// plus the separator — always available, never stored, one drop adds
     /// one. Chips drag into the bar and reorder among themselves by their
@@ -594,7 +646,7 @@ struct BarPane: View {
         HStack(spacing: 4) {
             Image(systemName: "plus")
                 .font(.system(size: 9, weight: .medium))
-            Text("Drop to pool")
+            Text("Hide it here")
                 .font(.system(size: 10))
         }
         .foregroundStyle(.tertiary)
@@ -731,24 +783,10 @@ struct BarPane: View {
     private var toolbarStage: some View {
         SettingsStage(
             label: "On the bar",
-            note: "Drag a tool out of the pool onto the bar."
+            note: "Drag an item off the bar to hide it behind the ⁞."
         ) {
-            ToolbarView(
-                state: toolbarPreviewState,
-                onUndo: {}, onRedo: {}, onClear: {}, onDone: {},
-                toolItems: model.toolbarTools.items,
-                organiser: ToolbarOrganiserHooks(
-                    dragProvider: { ToolbarDragPayload.item($0).provider },
-                    drop: { target, edge, payload in
-                        handleBarDrop(target: target, edge: edge, payload: .item(payload))
-                    },
-                    sourceDrop: { target, edge in
-                        handleBarDrop(target: target, edge: edge, payload: .addSeparator)
-                    },
-                    fixed: { item in !model.toolbarTools.canLeave(item) }
-                )
-            )
-            .fixedSize()
+            previewToolbar
+                .fixedSize()
             .background(
                 GeometryReader { geo in
                     Color.clear.preference(key: ToolbarPreviewSizeKey.self, value: geo.size)
@@ -814,9 +852,9 @@ struct BarPane: View {
     }
 
     private var poolCard: some View {
-        SettingsCard(title: "In the pool", symbol: "tray") {
+        SettingsCard(title: Self.poolCardTitle, symbol: Self.poolCardSymbol) {
             toolbarPoolRow
-            Text("Pool tools keep their shortcuts while off the bar. Drag a chip onto the bar, or a placed separator back onto any pool spot. The bar's first tool cannot leave — the preview dims it.")
+            Text(Self.poolCardHelp)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

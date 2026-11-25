@@ -120,6 +120,59 @@ final class SettingsBarPreviewTests: XCTestCase {
 
     // MARK: - The whole bar inside the stage (T2/S2)
 
+    /// T4/S5: with the `⁞` open, the preview still fits the stage by scaling
+    /// instead of clipping: the extras open as their own row (a second
+    /// saturated band — the active hidden tool's accent marks it), and every
+    /// row keeps the fit factor's share of the pane width. Both assertions
+    /// compare the two rendered widths against each other through the fit
+    /// ratio, never hard-coded pixel geometry: the natural size the stage
+    /// measures is the size the ratio divides.
+    func testThePreviewKeepsScalingWhenTheOverflowIsOpen() throws {
+        let defaultRender = try Self.renderPane(
+            cardsWidth: Self.defaultCardsWidth, orientation: .horizontal,
+            tool: .spotlight, openOverflow: true
+        )
+        let minimumRender = try Self.renderPane(
+            cardsWidth: Self.minimumCardsWidth, orientation: .horizontal,
+            tool: .spotlight, openOverflow: true
+        )
+
+        let defaultBands = Self.saturatedBands(in: defaultRender)
+        let minimumBands = Self.saturatedBands(in: minimumRender)
+
+        // Opened: the ⁞'s own mark leaves the tool row; the marked hidden tool
+        // (spotlight, active) sits in the extras row, a second saturated band.
+        guard defaultBands.count == 2, minimumBands.count == 2 else {
+            XCTFail(
+                "T4/S5: the open preview must show two saturated bands — the tool row and the "
+                    + "extras row (default \(defaultBands.count), minimum \(minimumBands.count))")
+            return
+        }
+        XCTAssertGreaterThan(
+            minimumBands[1].top, minimumBands[0].bottom,
+            "S1: the extras open as a second row of the pill — a separate band below the tools")
+
+        // The tool row carries the inks, as always; scaled, with the extras
+        // open: the minimum width carries the default width's ink, fitted.
+        let inkAtDefault = try Self.inkRuns(in: defaultRender).reduce(0) { $0 + $1.width }
+        let inkAtMinimum = try Self.inkRuns(in: minimumRender).reduce(0) { $0 + $1.width }
+        let fitted = (Self.minimumCardsWidth - SettingsMetrics.stageChrome)
+            / (Self.defaultCardsWidth - SettingsMetrics.stageChrome)
+        XCTAssertGreaterThanOrEqual(
+            inkAtMinimum, inkAtDefault * fitted * 0.97,
+            "T4/S5: with the overflow open the preview still scales — nothing was cut to hold the extras row")
+
+        // The extras row itself scales with the same fit: the marked
+        // spotlight's accent run at the minimum width is the default width's
+        // run shrunk by the fit factor. A preview that kept the extras at
+        // their unscaled size (or swapped them for chrome elsewhere in the
+        // pane, which never scales) fails here.
+        XCTAssertGreaterThanOrEqual(
+            minimumBands[1].widestRunWidth,
+            defaultBands[1].widestRunWidth * fitted - 2,
+            "T4/S5: the open extras row scales by the same fit factor as the tool row")
+    }
+
     /// S2: at the minimum window width (cards 625) the preview keeps every
     /// item. The rule is what the two widths have in common, not an exact
     /// total: how many runs the marked tool's accent fill splits into depends
@@ -172,10 +225,16 @@ final class SettingsBarPreviewTests: XCTestCase {
     /// (cards width plus the pane's own horizontal padding) inside a real
     /// on-screen borderless window, then `cacheDisplay`.
     @MainActor
-    static func renderPane(cardsWidth: CGFloat, orientation: ToolbarOrientation) throws -> RenderedPane {
+    static func renderPane(
+        cardsWidth: CGFloat,
+        orientation: ToolbarOrientation,
+        tool: Tool? = nil,
+        openOverflow: Bool = false
+    ) throws -> RenderedPane {
         let model = PreferencesModel(store: InMemoryPreferenceStore())
         model.toolbarTools = ToolbarToolLayout.standard
         model.toolbarOrientation = orientation
+        if let tool { model.tool = tool }
         let permission = PermissionProbe(
             permission: ScreenRecordingPermission(client: StubScreenRecordingClient())
         )
@@ -204,10 +263,72 @@ final class SettingsBarPreviewTests: XCTestCase {
         // The preference keys the stage's fit factor reads settle on this
         // run-loop hop, exactly the settle time the other render tests use.
         RunLoop.current.run(until: Date().addingTimeInterval(0.35))
+        if openOverflow {
+            // T4/S5: open the `⁞` the way opening happens — a press on the
+            // real control. Where the control sits comes from the closed
+            // render's own pixels: with `tool` set to a hidden tool the bar
+            // marks its `⁞` with the accent, and that accent is the tool
+            // band's widest saturated run (28 pt against the 15 pt ink
+            // swatches). The press is delivered through the hosting window
+            // itself.
+            let probeRep = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+            hosting.cacheDisplay(in: hosting.bounds, to: probeRep)
+            let probe = try Self.scan(representation: probeRep, size: size)
+            let probeBands = Self.saturatedBands(in: RenderedPane(scan: probe))
+            let toolBand = try XCTUnwrap(
+                probeBands.max { $0.saturatedPixels < $1.saturatedPixels },
+                "the closed preview's tool row must be visible to find the `⁞`"
+            )
+            let accent = try XCTUnwrap(
+                toolBand.runs.max { $0.end - $0.start < $1.end - $1.start },
+                "the marked `⁞` must be the tool band's widest saturated run"
+            )
+            let click = Self.point(
+                atPixelX: (accent.start + accent.end) / 2,
+                pixelY: (toolBand.top + toolBand.bottom) / 2,
+                scan: probe
+            )
+            let down = try XCTUnwrap(NSEvent.mouseEvent(
+                with: .leftMouseDown,
+                location: click,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 0,
+                clickCount: 1,
+                pressure: 1
+            ), "synthetic mouse down")
+            let up = try XCTUnwrap(NSEvent.mouseEvent(
+                with: .leftMouseUp,
+                location: click,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime + 0.01,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 0,
+                clickCount: 1,
+                pressure: 0
+            ), "synthetic mouse up")
+            window.sendEvent(down)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            window.sendEvent(up)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            // The toggle and the stage's re-measurement settle on this hop.
+            RunLoop.current.run(until: Date().addingTimeInterval(0.35))
+        }
         let representation = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
         hosting.cacheDisplay(in: hosting.bounds, to: representation)
         window.orderOut(nil)
 
+        let scan = try Self.scan(representation: representation, size: size)
+        return RenderedPane(scan: scan)
+    }
+
+    /// The pane's pixels as a `PixelScan`: the render redrawn into an sRGB
+    /// RGBA8 buffer with the render's scale, so reads do not depend on the
+    /// bitmap rep's own colour space.
+    private static func scan(representation: NSBitmapImageRep, size: CGSize) throws -> PixelScan {
         let image = try XCTUnwrap(representation.cgImage)
         let width = image.width, height = image.height
         let context = try XCTUnwrap(
@@ -221,11 +342,96 @@ final class SettingsBarPreviewTests: XCTestCase {
         let buffer = try XCTUnwrap(context.data)
         let pointer = buffer.bindMemory(to: UInt8.self, capacity: width * height * 4)
         let data = Array(UnsafeBufferPointer(start: pointer, count: width * height * 4))
-        return RenderedPane(
-            scan: PixelScan(
-                scale: CGFloat(width) / size.width, width: width, height: height, data: data
-            )
+        return PixelScan(
+            scale: CGFloat(width) / size.width, width: width, height: height, data: data
         )
+    }
+
+    /// A scan pixel position as a window point: the buffer covers the whole
+    /// hosting view, drawn with row 0 at the TOP (the shape `cacheDisplay`
+    /// produces), so the point's y runs up from the window's bottom-left
+    /// corner across the buffer's own full height — the hosting view's
+    /// height, not the pane's design height.
+    private static func point(atPixelX x: Int, pixelY y: Int, scan: PixelScan) -> CGPoint {
+        CGPoint(x: CGFloat(x) / scan.scale, y: CGFloat(scan.height - y) / scan.scale)
+    }
+
+    /// A band of consecutive rows that carry saturated pixels, so the open
+    /// preview's two rows (the tool row and the extras row) tell themselves
+    /// apart. A closed bar is one band; an open one is a tool band plus the
+    /// extras band below it. `top` and `bottom` are in scan pixel rows; the
+    /// widths are in points.
+    struct SaturatedBand {
+        let top: Int
+        let bottom: Int
+        /// The band's qualifying runs, in pixel space `[start, end]` x-ranges.
+        let runs: [(start: Int, end: Int)]
+        let widestRunWidth: CGFloat
+        let saturatedPixels: Int
+    }
+
+    /// Every saturated band in the pane, in scan-row order: rows whose
+    /// saturated runs are at least three pixels wide group into contiguous
+    /// bands, with the same run-gap tolerance `inkRuns` uses.
+    static func saturatedBands(in render: RenderedPane) -> [SaturatedBand] {
+        let scan = render.scan
+        var rows: [(y: Int, runs: [(start: Int, end: Int)], pixels: Int)] = []
+        for y in 0..<scan.height {
+            var runs: [(start: Int, end: Int)] = []
+            var current: (start: Int, end: Int)?
+            var lastSaturatedX = -10
+            var x = 0
+            var pixels = 0
+            while x < scan.width {
+                if saturated(scan.rgb(x: x, y: y)) {
+                    pixels += 1
+                    if var run = current {
+                        if x - lastSaturatedX <= 2 {
+                            run.end = x
+                            current = run
+                        } else {
+                            runs.append(run)
+                            current = (x, x)
+                        }
+                    } else {
+                        current = (x, x)
+                    }
+                    lastSaturatedX = x
+                }
+                x += 1
+            }
+            if let run = current { runs.append(run) }
+            let wide = runs.filter { $0.end - $0.start + 1 >= 3 }
+            if !wide.isEmpty {
+                rows.append((y, wide, pixels))
+            }
+        }
+
+        var bands: [SaturatedBand] = []
+        var group: [(y: Int, runs: [(start: Int, end: Int)], pixels: Int)] = []
+        func flush() {
+            guard !group.isEmpty else { return }
+            let runs = group.flatMap(\.runs)
+            let scale = scan.scale
+            bands.append(SaturatedBand(
+                top: group.first!.y,
+                bottom: group.last!.y,
+                runs: runs,
+                widestRunWidth: CGFloat(runs.map { $0.end - $0.start + 1 }.max()!) / scale,
+                saturatedPixels: group.reduce(0) { $0 + $1.pixels }
+            ))
+            group = []
+        }
+        for row in rows {
+            if let last = group.last, row.y == last.y + 1 {
+                group.append(row)
+            } else {
+                flush()
+                group = [row]
+            }
+        }
+        flush()
+        return bands
     }
 
     /// The ink swatch widths the assertions compare.
