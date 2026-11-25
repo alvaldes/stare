@@ -221,6 +221,11 @@ final class OverlayController {
     private let captureHistoryStore = CaptureHistoryStore()
     private(set) lazy var captureHistoryPanel = CaptureHistoryPanel(
         store: captureHistoryStore,
+        // Read on every open, so the thumbnail size chosen in Settings (B1)
+        // reaches the next panel instead of the one built at launch.
+        thumbnailSize: { [weak self] in
+            self?.preferences?.history.thumbnailSize ?? HistoryPreference.defaultThumbnailSize
+        },
         onPick: { [weak self] image in self?.deliverHistoryPick(image) }
     )
     private var cancellables: Set<AnyCancellable> = []

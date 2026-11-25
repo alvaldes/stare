@@ -52,6 +52,12 @@ public struct AppPreferences: Codable, Equatable, Sendable {
     /// blob written before this existed loads as today's behaviour.
     public var redactionStyle: RedactionStyle
 
+    /// The capture history's own look (B1): how wide a grid cell asks to be,
+    /// so a window shows a few large previews or many small ones. Appended at
+    /// the END for the same reason `redactionStyle` is, and decoded leniently
+    /// so every earlier blob loads with the shipped thumbnail size.
+    public var history: HistoryPreference = HistoryPreference()
+
     /// The preferences a fresh install gets, matching the look the app ships
     /// today.
     public static let standard = AppPreferences()
@@ -95,7 +101,7 @@ public struct AppPreferences: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case pointer, general, toolShortcuts, hotkeys, tool, ink, capture, whiteboard, updates, hasCompletedOnboarding, redactionStyle
+        case pointer, general, toolShortcuts, hotkeys, tool, ink, capture, whiteboard, updates, hasCompletedOnboarding, redactionStyle, history
     }
 
     /// Lenient decoding: a missing or undecodable field falls back to its
@@ -123,6 +129,7 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         // instead of failing the whole blob.
         self.redactionStyle = (try? container.decode(String.self, forKey: .redactionStyle))
             .flatMap(RedactionStyle.init(rawValue:)) ?? .blur
+        self.history = (try? container.decode(HistoryPreference.self, forKey: .history)) ?? .standard
     }
 
     /// Encodes the preferences as JSON under the versioned key. `tool` and
@@ -142,6 +149,7 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         try container.encode(updates, forKey: .updates)
         try container.encode(hasCompletedOnboarding, forKey: .hasCompletedOnboarding)
         try container.encode(redactionStyle.rawValue, forKey: .redactionStyle)
+        try container.encode(history, forKey: .history)
     }
 
     /// Encodes the preferences as JSON under the versioned key. Legacy keys
@@ -336,5 +344,51 @@ public enum PreferencesMigration {
             whiteboard.showsBorder = store.bool(forKey: legacyBoardBorderKey, default: true)
         }
         return whiteboard
+    }
+}
+
+/// The capture history's own persisted look (B1). Today it is the thumbnail
+/// size: the width a grid cell asks for in the history panel, so the window
+/// shows a few large previews or many small ones.
+///
+/// The value is clamped in the initialiser and in the setter, the way
+/// `PointerStyle.size` is: a hand-edited or foreign document can carry
+/// anything, and a cell narrower than its own controls or wider than the panel
+/// is not a preference, it is a broken window.
+public struct HistoryPreference: Codable, Equatable, Sendable {
+    /// The smallest and largest thumbnail width the pane offers, in points.
+    /// The floor keeps a cell's metadata line readable and the ceiling keeps
+    /// two of them on one row of the shipped panel width.
+    public static let thumbnailSizeRange: ClosedRange<Double> = 120...280
+    /// The size a fresh install gets: the grid the panel shipped with.
+    public static let defaultThumbnailSize: Double = 170
+
+    /// Thumbnail width in points, always clamped to `thumbnailSizeRange`.
+    public var thumbnailSize: Double {
+        didSet { thumbnailSize = Self.clamp(thumbnailSize, to: Self.thumbnailSizeRange) }
+    }
+
+    /// The history settings a fresh install gets.
+    public static let standard = HistoryPreference()
+
+    public init(thumbnailSize: Double = defaultThumbnailSize) {
+        self.thumbnailSize = Self.clamp(thumbnailSize, to: Self.thumbnailSizeRange)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case thumbnailSize
+    }
+
+    /// Lenient decoding, like the rest of the blob: a missing or foreign value
+    /// falls back to the shipped size instead of failing the whole document.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let stored = (try? container.decode(Double.self, forKey: .thumbnailSize)) ?? Self.defaultThumbnailSize
+        self.thumbnailSize = Self.clamp(stored, to: Self.thumbnailSizeRange)
+    }
+
+    private static func clamp(_ value: Double, to range: ClosedRange<Double>) -> Double {
+        guard value.isFinite else { return defaultThumbnailSize }
+        return min(max(value, range.lowerBound), range.upperBound)
     }
 }

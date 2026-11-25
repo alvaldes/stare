@@ -114,6 +114,11 @@ final class PreferencesModel: ObservableObject {
     @Published var redactionStyle: RedactionStyle {
         didSet { persist() }
     }
+    /// Mirror of the capture history's look (B1); writing it persists the
+    /// whole blob.
+    @Published var history: HistoryPreference {
+        didSet { persist() }
+    }
     /// Mirror of when the last update check succeeded (T10/S6): nil until one
     /// does, stamped by `noteUpdateCheck` — and seedable when a test harness
     /// runs detached on an in-memory store; never guessed in production.
@@ -157,6 +162,7 @@ final class PreferencesModel: ObservableObject {
         self.updateSchedule = loaded.updates.schedule
         self.updateLastCheck = loaded.updates.lastCheck
         self.redactionStyle = loaded.redactionStyle
+        self.history = loaded.history
     }
 
     /// Writes the one blob from the mirrors. Everything else keeps reading
@@ -183,6 +189,7 @@ final class PreferencesModel: ObservableObject {
         preferences.whiteboard = whiteboard
         preferences.updates = UpdateSchedulePreference(schedule: updateSchedule, lastCheck: updateLastCheck)
         preferences.redactionStyle = redactionStyle
+        preferences.history = history
         preferences.save(to: store)
     }
 

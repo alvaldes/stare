@@ -1,4 +1,5 @@
 import AppKit
+import StareCore
 import SwiftUI
 
 /// The paste-style capture history panel (T2a/S2): a non-activating borderless
@@ -29,9 +30,14 @@ final class CaptureHistoryPanel: NSPanel {
     /// can return key focus to the surface that was working before it.
     var onHidden: (() -> Void)?
 
-    init(store: CaptureHistoryStore, onPick: @escaping (CGImage) -> Void = CaptureHistoryPanel.copyToPasteboard) {
+    init(
+        store: CaptureHistoryStore,
+        thumbnailSize: @escaping () -> Double = { HistoryPreference.defaultThumbnailSize },
+        onPick: @escaping (CGImage) -> Void = CaptureHistoryPanel.copyToPasteboard
+    ) {
         model = CaptureHistoryPanelModel(
             store: store,
+            thumbnailSize: thumbnailSize,
             onPick: onPick,
             onClose: {}
         )
@@ -82,12 +88,73 @@ final class CaptureHistoryPanel: NSPanel {
             makeFirstResponder(hostingView)
         }
         installKeyMonitor()
+        installOutsideClickMonitors()
     }
 
     func hide() {
         removeKeyMonitor()
+        removeOutsideClickMonitors()
         orderOut(nil)
         onHidden?()
+    }
+
+    // MARK: Clicking outside (B2)
+
+    /// The monitors that close the panel on the first click anywhere else —
+    /// Maccy's behaviour, which is what a paste-style palette teaches a user to
+    /// expect: the panel does not need Esc or a second shortcut to get out of
+    /// the way.
+    ///
+    /// Two monitors because one cannot see both worlds: a LOCAL one for clicks
+    /// inside Stare (another of our windows, or the board) and a GLOBAL one for
+    /// clicks in every other app. Mouse events need no accessibility grant;
+    /// the keyboard monitor is the one that would.
+    private var outsideClickMonitor: Any?
+    private var globalOutsideClickMonitor: Any?
+
+    /// Whether a click closes the panel: anything that is not the panel itself
+    /// and not inside its frame. Kept as a value rule so the decision is
+    /// testable without windows, monitors or a screen.
+    nonisolated static func hides(forClickOnPanelWindow windowIsPanel: Bool, insidePanelFrame: Bool) -> Bool {
+        !(windowIsPanel || insidePanelFrame)
+    }
+
+    private func installOutsideClickMonitors() {
+        removeOutsideClickMonitors()
+        outsideClickMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] event in
+            self?.handleClickOutside(event)
+            return event
+        }
+        globalOutsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.handleClickOutside(nil)
+            }
+        }
+    }
+
+    private func removeOutsideClickMonitors() {
+        if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor) }
+        if let globalOutsideClickMonitor { NSEvent.removeMonitor(globalOutsideClickMonitor) }
+        outsideClickMonitor = nil
+        globalOutsideClickMonitor = nil
+    }
+
+    /// A click on the panel belongs to the panel; one inside its frame is a
+    /// near miss the user still reads as the panel's. Everything else closes
+    /// it, and the click itself goes on to whatever it landed on.
+    private func handleClickOutside(_ event: NSEvent?) {
+        guard isVisible else { return }
+        let hides = Self.hides(
+            forClickOnPanelWindow: event?.window === self,
+            insidePanelFrame: frame.contains(NSEvent.mouseLocation)
+        )
+        guard hides else { return }
+        Diag.log("history closed by an outside click")
+        hide()
     }
 
     // MARK: Keyboard monitoring
@@ -247,14 +314,29 @@ final class CaptureHistoryPanelModel: ObservableObject {
     var onPick: (CGImage) -> Void
     var onClose: () -> Void
 
-    init(store: CaptureHistoryStore, onPick: @escaping (CGImage) -> Void, onClose: @escaping () -> Void) {
+    /// The grid cell width in points (B1). Read from the preferences on every
+    /// `refresh()`, so a change made in Settings reaches the next open: the
+    /// panel is a session-long window and its content must not pin a value
+    /// chosen before the user touched the slider.
+    @Published private(set) var thumbnailSize: Double
+    private let thumbnailSizeProvider: () -> Double
+
+    init(
+        store: CaptureHistoryStore,
+        thumbnailSize: @escaping () -> Double = { HistoryPreference.defaultThumbnailSize },
+        onPick: @escaping (CGImage) -> Void,
+        onClose: @escaping () -> Void
+    ) {
         self.store = store
+        self.thumbnailSizeProvider = thumbnailSize
+        self.thumbnailSize = thumbnailSize()
         self.onPick = onPick
         self.onClose = onClose
     }
 
     /// Reloads from the store and starts selected on the newest capture.
     func refresh() {
+        thumbnailSize = thumbnailSizeProvider()
         entries = store.entries
         selectedIndex = entries.isEmpty ? nil : 0
     }
@@ -313,9 +395,11 @@ final class CaptureHistoryPanelModel: ObservableObject {
 struct CaptureHistoryPanelContent: View {
     @ObservedObject var model: CaptureHistoryPanelModel
 
-    private let columns = [
-        GridItem(.adaptive(minimum: 170), spacing: 10),
-    ]
+    /// One adaptive column spec built from the preference (B1): the cell
+    /// width chosen in Settings, not a constant the panel decides on its own.
+    private var columns: [GridItem] {
+        [GridItem(.adaptive(minimum: model.thumbnailSize), spacing: 10)]
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {

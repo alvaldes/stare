@@ -260,3 +260,73 @@ final class CaptureHistoryPanelTests: XCTestCase {
         XCTAssertEqual(boardPanel.firstResponder, view, "the surface that was working before the panel is first responder again")
     }
 }
+
+/// B1: the panel's grid cell width comes from the preference, read on every
+/// open — a Settings change reaches the next ⌥⇧I instead of waiting for a
+/// relaunch, which is what a captured-at-launch value would do.
+@MainActor
+final class CaptureHistoryThumbnailSizeTests: XCTestCase {
+    private final class Box: @unchecked Sendable {
+        var value: Double
+        init(_ value: Double) { self.value = value }
+    }
+
+    func testThePanelReadsTheThumbnailSizeEveryTimeItRefreshes() {
+        let box = Box(240)
+        let model = CaptureHistoryPanelModel(
+            store: CaptureHistoryStore(directory: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString, isDirectory: true)),
+            thumbnailSize: { box.value },
+            onPick: { _ in },
+            onClose: {}
+        )
+
+        model.refresh()
+        XCTAssertEqual(model.thumbnailSize, 240, "the first open reads the preference")
+
+        box.value = 130
+        model.refresh()
+        XCTAssertEqual(model.thumbnailSize, 130, "the next open picks up the change without a relaunch")
+    }
+}
+
+/// B2: the history closes on the first click anywhere else, the way a
+/// paste-style palette does. The decision is a value rule — the monitors only
+/// feed it — so it is pinned without windows, screens or event taps.
+@MainActor
+final class CaptureHistoryOutsideClickTests: XCTestCase {
+    func testAClickOutsideClosesThePanel() {
+        XCTAssertTrue(
+            CaptureHistoryPanel.hides(forClickOnPanelWindow: false, insidePanelFrame: false),
+            "a click on another window or another app closes the history"
+        )
+    }
+
+    func testAClickOnThePanelOrInsideItsFrameLeavesItUp() {
+        XCTAssertFalse(
+            CaptureHistoryPanel.hides(forClickOnPanelWindow: true, insidePanelFrame: false),
+            "the panel's own click is the panel's"
+        )
+        XCTAssertFalse(
+            CaptureHistoryPanel.hides(forClickOnPanelWindow: false, insidePanelFrame: true),
+            "a click inside the panel's frame is still the panel's, even if the window beneath took it"
+        )
+    }
+
+    func testOpeningAndClosingThePanelLeavesNoMonitorsBehind() throws {
+        try XCTSkipIf(NSScreen.main == nil, "no display: the panel cannot be ordered on screen")
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let panel = CaptureHistoryPanel(store: CaptureHistoryStore(directory: directory))
+        var hidden = 0
+        panel.onHidden = { hidden += 1 }
+
+        panel.showPanel()
+        panel.hide()
+        panel.showPanel()
+        panel.hide()
+
+        XCTAssertEqual(hidden, 2, "each close runs the hook once")
+        XCTAssertFalse(panel.isVisible)
+    }
+}
