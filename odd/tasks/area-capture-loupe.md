@@ -20,13 +20,22 @@ a crosshair, a magnified patch and dotted rules spanning the screen.
   the loupe draw must come from the same geometry the selection commits, so the
   lines can never promise an edge the capture does not take.
 
+- **S4** (owner, after using the build; verbatim): "la guia y la lupa debe salir desde que se presiona shift+S no
+  al hacer click. y cuando arrastro se quedan 2 guias digamos la que se registro al hacer click y la que esta en
+  el puntero pero debe haber solo 1 la del puntero." The guides are the POINTER'S crosshair, not the selection's
+  edges: one vertical and one horizontal rule running through the pointer to this display's edges, present from
+  the moment area mode arms (no click needed), and during a drag the origin's rules must not be drawn — only the
+  pointer's. The loupe appears from that same moment. This supersedes L3's decision that nothing is drawn before
+  a rect exists.
+
 ## Tasks
 
 | ID | Specs | Task | Route | Commit |
 | --- | --- | --- | --- | --- |
 | T1 | S1-S3 | The loupe and the guides, drawn from the selection's own geometry | worker | d13d7ec |
 | T2 | S2 | Two preferences, on by default, wired to the drawing | worker | d13d7ec |
-| T3 | S1-S2 | Docs: README, CHANGELOG and this log | worker | |
+| T3 | S4 | The guides follow the pointer from ⇧S, and only the pointer's during a drag | worker | 9ba9d97 |
+| T4 | S1-S2 | Docs: README, CHANGELOG and this log | worker | |
 
 ## Log
 
@@ -90,3 +99,61 @@ a crosshair, a magnified patch and dotted rules spanning the screen.
   ON; the version stamp stays 2. Suites: AreaCaptureGuideTests 9, CapturePreferenceTests 33 (28 pre-existing,
   all still green), AreaCaptureGuidesViewTests 4, AreaCaptureLoupeViewTests 10; full-suite counts recorded at
   delivery.
+- **L4** (S4, the owner using the build, and a correction of L3): the first version extended the selection's
+  four edges, which reads as two rules per axis as soon as the drag starts — the origin's and the pointer's — and
+  drew nothing at all before the first click. The owner's model is the reference image's: guides ARE the pointer's
+  crosshair, they appear when area mode arms, and during the drag there is exactly one per axis, the pointer's.
+  L3's third decision ("no guides before a rect exists") is reversed by this.
+- **L5** (S4, worker): the guides are now the POINTER's crosshair, armed-state included — the whole model is
+  different, not a patch on L3's.
+  **What changed** — `AreaCaptureGuides.guides(at:bounds:)` replaces `guides(for:bounds:)`: given the pointer's
+  point and this display's bounds it answers exactly two rules, the vertical and the horizontal through the
+  point, each spanning the whole display out to its edges. The four-edge extension is gone, so during a drag
+  there is exactly ONE rule per axis, the pointer's — the origin's edges are never read and `selectionRect` is
+  no longer an input of the plan (the capture is untouched: the guides never enter `committedBounds`, never
+  become a `Stroke`, and paint exactly where L3's paint pass paints — same dotLength 1, gapLength 3, dim dark
+  under dim white α 0.8 top stroke). The clipping is the same rule per axis: a pointer outside the display's
+  span on an axis draws no rule on that axis, no rule sits exactly on a display edge, empty bounds and a nil
+  pointer draw nothing.
+  **How the pointer is tracked armed (no click)** — three deliveries into one point:
+  (1) `beginAreaSelection` reads the pointer straight off the screen at arm time
+  (`NSEvent.mouseLocation` through `window.convertPoint(fromScreen:)` — the sync pattern of the pointer
+  highlight, NOT a second `NSCursor` path), so the chrome is present before any move at all;
+  (2) the canvas now HEARS bare moves: the tracking area gained `.mouseMoved` — the window already opts in
+  (`OverlayWindow.acceptsMouseMovedEvents`), and the missing option was why `mouseMoved` (which existed but
+  only re-asserted the cursor) never ran; armed moves land the point, as a click's `mouseDown` and every
+  `mouseDragged` always did;
+  (3) `mouseExited` drops the point while armed, so a pointer on another display draws nothing on this
+  canvas; `mouseEntered` places it at once on re-entry, before the first move tick.
+  The variable is renamed `areaLoupePoint` → `areaPointerPoint` — the guides read it equally. Preferences are
+  untouched: `showAreaGuides` removes exactly the rules, `showAreaLoupe` exactly the loupe (the loupe's
+  frozen-frame gate is not moved), and the chrome is still drawn in `draw(_:)` only.
+  **Sampled pixels (before, L3's committed build d13d7ec)** — the origin's rules exists ON SCREEN during a
+  drag: L3's own bitmap proved it — its right-edge rule at (400, 450) read (0.65, 0.78, 0.67) over the green
+  scene and α 0.32 shroud, and the model also ruled x = 100 and y = 100 (the drag's origin) along the same
+  shared paint pass, so origin samples like (100, 450) and (650, 100) carried the same ~0.65 chrome min channel
+  there; and armed with no click, every rule sample was bare (L3 drew nothing before mousing down) — L4
+  records the owner's rejection of exactly this.
+  **Sampled pixels (after, this change)** — same real-view bitmap probes (`NSBitmapImageRep.colorAt`, real
+  `NSEvent`s, primary-screen-confined window, green frozen frame 1800×1200):
+  armed with a bare `mouseMoved` to (400, 200), no click: chrome at (400, 450) on the pointer's vertical rule,
+  at (700, 200) on its horizontal, and the loupe's ring paints at (484, 224) (frame (424, 224, 120, 120)) —
+  chrome from ⇧S alone, the owner's first half answered.
+  mid-drag (100, 100)→(400, 300): the pointer's rule samples (400, 450) and (650, 300) read max-min-channel
+  0.655 (the same composited chrome L3 measured), while the ORIGIN's samples (100, 450) and (650, 100) read
+  0.0706 — the bare green scene under the shroud's red component, no rule: only the pointer's crosshair
+  (measured with an in-test probe print since removed; the suite persists the assertion as
+  `hasChromeDot` at the pointer's rules and `!hasChromeDot` at the origin's).
+  a pointer parked on a display edge (0, 200) draws no rule along the edge (column scan x = 1 clean outside
+  the horizontal rule's own neighbourhood) and keeps the perpendicular rule; a pointer leaving the display
+  (`mouseExited`) draws nothing anywhere and a pointer on it draws everything.
+  **Verification numbers** — AreaCaptureGuideTests 7 (eight-and-clipping cases replaced by the crosshair's
+  two-rules, nil/empty-display, outside-both-axes, edge-drop-per-axis, off-origin, orientation, constants),
+  AreaCaptureGuidesViewTests 6 (armed-no-click, drag-only-pointer-rules, edge-clamp, pointer-left, guides-off
+  removes-only-guides, detached defaults), AreaCaptureLoupeViewTests 10 all still green (the remembered
+  rectangle's render pins its own pointer via `mouseMoved` so the armed seed cannot flick the sampled
+  pixels). RED was observed for real: with the plan typed to `at:bounds:` the old suite failed to compile
+  (`incorrect argument label … expected 'at:bounds:'`, AreaCaptureGuideTests.swift:23) before the new tests
+  were written. Full suite, final state: `swift test > .build/w15.log 2>&1` EXIT=0 — StareTests 387, 0
+  failures; StareCoreTests 902, 0 failures (baseline was 904 + 385: the pure guide file went 9 → 7, the view
+  guide file 4 → 6; net −0 across both).
