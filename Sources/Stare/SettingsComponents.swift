@@ -368,6 +368,22 @@ struct AppMark: View {
 /// when the resource is absent (for example under `swift run`, which ships no
 /// bundle resources). `AppMark` and the setup guide share this single source
 /// so a third variant cannot drift in (T2/S2 of batch A).
+///
+/// Everything that resolves is also held FLAT (T6/S6): the icns artwork
+/// carries a macOS-style drop shadow baked into its own pixels — the SVG's
+/// `feDropShadow` (`filter id="shadow"`, dx 0 dy 8, σ 10, opacity .3),
+/// rasterised in by `Scripts/icons.sh`; there is no shadow-free PNG behind it
+/// and no SwiftUI modifier draws one (nothing in the app uses `.shadow()`).
+/// Measured in the decoded icns: a 512 pt canvas whose opaque 412 pt square
+/// sits inside it with ~50 pt of padding per side, and the padding around the
+/// square is soft-alpha shadow ink (hundreds of thousands of pixels at the
+/// 2× probe render, capped at the flood opacity's 30 %). So the resolved
+/// image is cropped to the opaque shape's own bounds by alpha: every shadow
+/// pixel lives outside that square. The cost of the crop, stated: the mark
+/// now draws the tile edge to edge of its `size` frame, so the visible square
+/// is ~24 % larger in side than the padding-padded canvas made it (512/412)
+/// — the identity behaviour (colour, no tint, not a template,
+/// `accessibilityHidden`, both call sites, the `size` parameter) is untouched.
 enum AppIconArtwork {
     /// The cached result for the real bundle, so neither caller re-decodes
     /// the 612 KB icon file on every render tick.
@@ -375,7 +391,8 @@ enum AppIconArtwork {
 
     /// The named resolution: `AppIcon.icns` from the given bundle first, the
     /// given fallback only when the resource is missing or undecodable — a
-    /// missing file must never resolve to nothing.
+    /// missing file must never resolve to nothing. Either branch is trimmed
+    /// to its opaque bounds so the baked shadow never reaches the mark.
     static func resolve(in bundle: Bundle) -> NSImage {
         resolve(
             resourceURL: bundle.url(forResource: "AppIcon", withExtension: "icns"),
@@ -384,12 +401,95 @@ enum AppIconArtwork {
     }
 
     /// The head-testable core of the resolution above: read the artwork at
-    /// `resourceURL` when it decodes, otherwise return the fallback itself.
+    /// `resourceURL` when it decodes, otherwise return the fallback itself,
+    /// and trim the result to its opaque bounds. A fallback may keep its
+    /// identity when it carries no opaque region to trim — a missing file
+    /// must never resolve to nothing.
     static func resolve(resourceURL: URL?, fallback: NSImage) -> NSImage {
+        let resolved = resolveArtwork(resourceURL: resourceURL, fallback: fallback)
+        return trimToOpaqueBounds(resolved)
+    }
+
+    private static func resolveArtwork(resourceURL: URL?, fallback: NSImage) -> NSImage {
         if let resourceURL, let icon = NSImage(contentsOf: resourceURL) {
             return icon
         }
         return fallback
+    }
+
+    /// The opaque bounds of `image`, in points: the bounding box of the pixels
+    /// at alpha ≥ 0.5 — above the baked shadow's ~30 % flood-opacity ceiling,
+    /// below the artwork's own edges, so the box is the shape the icon paints
+    /// and not one pixel of its shadow. Rendered and measured at 2× for a
+    /// clean edge estimate on a soft-alpha boundary.
+    private static func opaqueBounds(of image: NSImage) -> CGRect? {
+        let size = image.size
+        guard size.width > 0, size.height > 0 else { return nil }
+        let scale: CGFloat = 2
+        let pixelsWide = max(1, Int(size.width * scale))
+        let pixelsHigh = max(1, Int(size.height * scale))
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: pixelsWide, pixelsHigh: pixelsHigh,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .calibratedRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ) else { return nil }
+        bitmap.size = size
+        guard let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        image.draw(in: NSRect(origin: .zero, size: size), from: .zero, operation: .copy, fraction: 1)
+        NSGraphicsContext.restoreGraphicsState()
+
+        var minX = pixelsWide, minY = pixelsHigh, maxX = -1, maxY = -1
+        for y in 0..<pixelsHigh {
+            for x in 0..<pixelsWide {
+                if (bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 0) >= 0.5 {
+                    minX = min(minX, x); minY = min(minY, y)
+                    maxX = max(maxX, x); maxY = max(maxY, y)
+                }
+            }
+        }
+        guard maxX >= 0 else { return nil }
+        return CGRect(
+            x: CGFloat(minX) / scale,
+            y: CGFloat(minY) / scale,
+            width: CGFloat(maxX - minX + 1) / scale,
+            height: CGFloat(maxY - minY + 1) / scale
+        )
+    }
+
+    /// Crops `image` to its own opaque bounds — where the icns's baked drop
+    /// shadow dies. An image that is already tight (no padding), fully
+    /// transparent, or unrenderable comes back unchanged, so the fallback
+    /// path's identity guarantee and degenerate inputs stay safe.
+    static func trimToOpaqueBounds(_ image: NSImage) -> NSImage {
+        guard let bounds = opaqueBounds(of: image) else { return image }
+        let paddedWidth = abs(bounds.minX) < 0.5 && abs(image.size.width - bounds.maxX) < 0.5
+        let paddedHeight = abs(bounds.minY) < 0.5 && abs(image.size.height - bounds.maxY) < 0.5
+        if paddedWidth && paddedHeight { return image }
+
+        let scale: CGFloat = 2
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: max(1, Int((bounds.width * scale).rounded(.up))),
+            pixelsHigh: max(1, Int((bounds.height * scale).rounded(.up))),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .calibratedRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ) else { return image }
+        bitmap.size = bounds.size
+        guard let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return image }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        image.draw(
+            in: NSRect(origin: .zero, size: bounds.size),
+            from: bounds,
+            operation: .copy,
+            fraction: 1
+        )
+        NSGraphicsContext.restoreGraphicsState()
+        let cropped = NSImage(size: bounds.size)
+        cropped.addRepresentation(bitmap)
+        return cropped
     }
 
     private enum Cached {

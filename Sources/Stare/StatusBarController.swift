@@ -230,11 +230,14 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     /// The status item's canvas side, in points — one of the two named constants
-    /// that govern the glyph's size, with `nibInkCoverage` below. Measured
-    /// headlessly: an image of 22 pt keeps `NSStatusBar`'s button at its default
-    /// 22 pt height, so the item sits at exactly the system's own control size,
-    /// where a taller image grows the button instead (S1, batch A).
-    static let menuBarGlyphSidePoints: CGFloat = 22
+    /// that govern the glyph's size, with `nibInkCoverage` below. Sized UP to 22
+    /// for the system band (S1, batch A) and then DOWN ONE STEP to 20 on the
+    /// owner's re-read (S5, batch B: "bajale un tilin al tamanno"); the ink that
+    /// lands at 0.80 coverage is measured in `StatusBarGlyphTests` (11.0 × 16.0 pt
+    /// at 22; ~10.0 × 14.6 at 20). Probed headlessly: images of 18/20/22 pt all
+    /// keep `NSStatusBar`'s button at its default 22 pt height (a taller image
+    /// grows the button), so 20 still sits at the system's own control height.
+    static let menuBarGlyphSidePoints: CGFloat = 20
 
     /// Stare's logo: the open nib the app icon and the landing carry, drawn as a
     /// path instead of shipped as a bitmap so it stays sharp at any scale and
@@ -272,8 +275,17 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     /// fitting the rotated shape instead puts the ink at the system weight.
     private static let nibInkCoverage: CGFloat = 0.80
 
+    /// The nib's tilt, expressed in the SVG source of truth's y-down design
+    /// box (`Resources/app-icon.svg` rotates the nib 32° about its centre).
+    /// Measured for S5 in the app's own artwork pixels: the white nib mask's
+    /// principal axis inside the decoded icns leans 32.0° from vertical with
+    /// the tip toward the bottom-left. The SAME probe pins the drawn glyph to
+    /// that artwork direction (`StatusBarGlyphTests`), so the glyph's lean can
+    /// only disagree with the logo by keying a different angle here.
+    private static let nibTiltDegrees: CGFloat = 32
+
     /// The nib in the same 64-unit design box as `Resources/app-icon.svg`, whose
-    /// y axis points down like the SVG. The 32° rotation is what keeps it reading
+    /// y axis points down like the SVG. The 32° lean is what keeps it reading
     /// as a nib instead of a leaf; the rotated shape is then fitted and centred
     /// by `place`, not inset by a fixed fraction of the box.
     private static let nibOutline: CGPath = place(makeOutlineInDesignBox())
@@ -319,10 +331,20 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     /// The single placement transform, derived from the rotated outline so the
-    /// fit follows the real shape instead of a hand-tuned offset.
+    /// fit follows the real shape instead of a hand-tuned offset. The composite
+    /// runs in the SVG's own y-down design space — rotate by the artwork's lean
+    /// (measured, see below), fit and centre the rotated shape's bounds, and
+    /// flip into AppKit's y-up drawing space LAST. CG's row-vector concat order
+    /// makes the components serve left to right, so every step acts on the
+    /// design-box shape: the earlier order (flip first, rotate last) applied the
+    /// rotation in y-up space where its positive sense is mirrored, and the
+    /// glyph leaned opposite to the logo (S5; the drawn glyph measured
+    /// bottom-right while the artwork's nib measures bottom-left, tip at 32°
+    /// from vertical). One transform for outline and holes, so they cannot
+    /// drift apart.
     private static let nibPlacement: CGAffineTransform = {
         let rotate = CGAffineTransform(translationX: nibDesignSize / 2, y: nibDesignSize / 2)
-            .rotated(by: 32 * .pi / 180)
+            .rotated(by: nibTiltDegrees * .pi / 180)
             .translatedBy(x: -nibDesignSize / 2, y: -nibDesignSize / 2)
         var rotation = rotate
         let rotatedOutline = makeOutlineInDesignBox().copy(using: &rotation)
@@ -337,7 +359,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             y: nibDesignSize / 2 - fit * bounds.midY
         ).scaledBy(x: fit, y: fit)
         let flip = CGAffineTransform(translationX: 0, y: nibDesignSize).scaledBy(x: 1, y: -1)
-        return flip.concatenating(scaled.concatenating(rotate))
+        return rotate.concatenating(scaled.concatenating(flip))
     }()
 
     @objc private func draw() { onDraw() }
