@@ -30,6 +30,23 @@ app already promises. No shared architecture, so each is its own commit.
   example shows, and the field must preview what the current template will name
   the file, live, as it is typed.
 
+- **S5** (owner, after looking at the build; verbatim): "1. el icono bajale un tilin al tamanno y esta
+  inclinado en la direccion contraria al logo original". The menu bar glyph gets a touch smaller, and its
+  tilt must agree with the logo's own angle instead of mirroring it.
+
+- **S6** (verbatim): "2. esta a color pero tiene un shadow que no se de donde salio". The Settings mark shows
+  the artwork in colour now, with a drop shadow nobody asked for; it must sit flat, like the Finder's icon.
+
+- **S7** (verbatim): "3.a. el cursor del highlight esta horizontal y debe ser veritcal. la elipse, el rect y
+  arrow pasan a ser cursor cruz como la linea." and "3.b. no funciona". The highlighter's beam turns vertical;
+  ellipse, rectangle and arrow join line on the crosshair instead of keeping drawn glyphs; and the capture
+  editor still shows no tool cursor, so the fix there did not reach the real window.
+
+- **S8** (verbatim): "4. no funciona" over a Settings screenshot whose Name template field is EMPTY while the
+  preview reads `Stare-2026-11-21-at-14-05-33.png`. The shipped default only reaches a fresh install: a
+  preference stored before it keeps `""`, which routes to the prefix. The owner's install is exactly that
+  case, so the default is invisible where it matters.
+
 ## Tasks
 
 | ID | Specs | Task | Route | Commit |
@@ -38,6 +55,10 @@ app already promises. No shared architecture, so each is its own commit.
 | T2 | S2 | The Settings app mark drawn in colour | worker | c5bce43 |
 | T3 | S3 | One cursor table, one entry per tool, the four named shapes | worker | 86c3923 |
 | T4 | S4 | The default template matches its documented example; the field previews live | worker | b612a8e |
+| T5 | S5 | The menu bar glyph a touch smaller, tilted with the logo instead of against it | worker | 8160d8f |
+| T6 | S6 | The Settings mark sits flat: no shadow under the artwork | worker | 8160d8f |
+| T7 | S7 | Vertical beam, crosshair for ellipse/rectangle/arrow, and the editor's cursor that actually shows | worker | b5bbaf2 |
+| T8 | S8 | The template default reaches a preference stored before it | worker | 4a7eb60 |
 
 ## Log
 
@@ -311,3 +332,179 @@ app already promises. No shared architecture, so each is its own commit.
   `CapturePrefixAndTemplateTests|SettingsCapturePaneDisabledStateTests`
   4 tests, 0 failures (StareTests/0 StareCore). Full suite `swift test`,
   exit 0, StareTests 372 / StareCoreTests 883, 0 failures.
+- **L8** (S5, T5): the menu bar glyph a step smaller, and tilting WITH the logo. **The
+  size step**: `menuBarGlyphSidePoints` 22 → 20 (the fitted `nibInkCoverage = 0.80`
+  mechanism untouched); the painted ink went from **11.0 × 16.0 pt** (L4's
+  measurement at 22) to **9.5 × 14.5 pt** (probe replicating the exact new
+  placement, alpha > 0.5 at 2×) — one step down, still near the system weight;
+  the headless probe still shows a 20 pt image keeping `NSStatusBar`'s button at
+  its default 22 pt height. The outline, the holes, the even-odd fill, the clip
+  and `isTemplate = true` are untouched. **The tilt, measured and fixed at its
+  real cause**: the artwork's nib, measured from the app's own pixels — decode
+  `Resources/AppIcon.icns` (512 pt), render at 2×, take the pure-white nib mask
+  inside the opaque square (95,910 px; sheen and stroke excluded by threshold),
+  principal-axis + tail-end detection — leans **31.997° ≈ 32° off vertical with
+  the tip toward the BOTTOM-LEFT**, which matches the SVG source
+  (`Resources/app-icon.svg` rotates the nib `rotate(32 32 32)` in its y-down
+  design box). The old glyph measured tipping bottom-RIGHT — mirrored, exactly
+  the owner's report. The cause was NOT the angle constant: it was CG's
+  row-vector concat order — `flip.concatenating(scaled.concatenating(rotate))`
+  serves flip FIRST, so the +32° rotation was applied LAST, in AppKit's y-up
+  space where its positive sense is mirrored (settled by a transform probe:
+  a·concatenating(b) applies a first; the old composite's placed tip vertex was
+  (45.69, 7.40) = bottom-right). The fix reorders the same composite to
+  `rotate.concatenating(scaled.concatenating(flip))` — rotate and fit in the
+  SVG's y-down design box, flip LAST — keeping the artwork's own +32°
+  (`nibTiltDegrees = 32`, now named) instead of negating anything; the placed
+  tip is (15.17, 6.40) = bottom-left, box exactly centred at (32,32). **Tests**
+  (`StatusBarGlyphTests`): new `testGlyphTiltAgreesWithTheArtworkAxis` runs the
+  same axis probe over the glyph's ink mask and the artwork's own nib mask and
+  pins the same tip side and the same lean within 2.5° of the artwork's
+  measurement (artwork also pinned to 32.0° ± 2 and tip bottom-left), so the
+  glyph can only disagree with the logo by keying a different angle; the ink
+  pins moved to the band **14.0–15.0 pt tall × 9.4–10.6 pt wide** whose UPPER
+  bound is what catches a silent revert to the 22 pt canvas (16.0 pt breached
+  it from both ends at RED). RED: the new tilt pin measured the glyph
+  bottom-right vs the artwork bottom-left, and the 16.0 pt ink breached the new
+  upper band — `swift test --filter "StatusBarGlyphTests|AppIconImageTests"`
+  exit 1 (the first RED invocation also caught my own helper's argument-label
+  typo, exit 1, fixed in the test before the behavioural RED was observed).
+  GREEN: same focus, 8 tests, 0 failures, exit 0. Full suite: exit 0,
+  StareTests 374 / StareCoreTests 883, 0 failures. The exact "un tilin" feel
+  and the in-bar look remain the owner's eye.
+- **L9** (S6, T6): the Settings mark sits flat — the shadow's origin found
+  before anything changed: **the drop shadow is baked into
+  `Resources/AppIcon.icns`'s own pixels**. Evidence: (a) the artwork's SVG
+  source carries `filter id="shadow"` — `feDropShadow dx=0 dy=8 stdDeviation=10
+  flood-opacity=.3` — on the aurora rounded square, and `Scripts/icons.sh`
+  rasterises that very SVG into the icns (there is no separate PNG source
+  behind it); (b) measured on the decoded icns at 2×: a 512 pt canvas whose
+  opaque square is **412 × 412 pt** (100 px inset of 1024 per side, exactly the
+  SVG's `translate(100) scale(12.875)` 824 px square) and **295,497 soft-alpha
+  pixels** around that square, capped at the flood opacity's ~30 % — shadow
+  ink in the file; (c) no SwiftUI modifier draws one — nothing under
+  `Sources/` uses `.shadow()` at all, and both `AppMark` call sites
+  (`SettingsView.swift:222, 1948`) were clean. **The fix, at the source that
+  owns the mark's presentation**: `AppIconArtwork.resolve` (the ONE shared
+  source of L4) now trims whatever it resolves to the opaque shape's own
+  bounds (alpha ≥ 0.5 — above the shadow's 30 % ceiling, below the artwork's
+  edges, measured at 2×), so the shadow's padding never reaches `AppMark` or
+  the setup guide; both branches (icns and the `applicationIconImage`
+  fallback) are trimmed, an image that carries no opaque region or is already
+  tight comes back unchanged (the fallback-identity pins of
+  missing/undecodable still pass), and `trimToOpaqueBounds` is the single new
+  seam. The small `#lift` shadow UNDER THE NIB inside the tile stays — it is
+  part of the logo art everywhere (Finder, landing), not the canvas-perimeter
+  shadow the owner pointed at. **The cost of the crop, stated**: the mark now
+  draws the tile edge-to-edge of its `size` frame, so the visible square is
+  ~24 % larger in side than the padded canvas made it (512/412) at unchanged
+  `size` (32 and 56) and unchanged call sites; identity behaviour untouched —
+  no tint, not a template image, `accessibilityHidden(true)`, both call sites,
+  the `size` parameter. **Tests** (`AppIconImageTests`): the resolution pin now
+  asserts the resolved image's bounds equal the RAW DECODE's own measured
+  opaque bounds within ±1 pt and strictly smaller than the raw canvas; a new
+  `testTheIcnsArtworkCarriesBakedShadowPadding` proves the evidence itself —
+  the opaque square inset ≥ 8 % per side and ≥ 20,000 soft-alpha pixels
+  outside it (measured ~295 k). What remains the owner's eye: the flat, in
+  colour look at 32/56 pt — a pixel assertion of "no shadow visible" does not
+  honestly exist post-trim (the tile's own rounded corners are alpha 0 by
+  design), so the tests pin the geometry and the eye pins the rendering. RED:
+  `testResolutionPrefersTheRealIcnsArtwork` measured the resolved artwork at
+  the raw 512 pt canvas vs the 412 pt opaque bounds (three failures), with the
+  evidence pin already green against the unchanged file — focused filter exit
+  1; GREEN same focus 8 tests, 0 failures, exit 0; full suite exit 0,
+  StareTests 374 / StareCoreTests 883, 0 failures. Deliberately untouched:
+  `OnboardingView.swift` (shares the fixed source; no edit needed),
+  `SelfTest.swift`, `Scripts/icons.sh` and `Resources/` (the Finder icon
+  keeps its baked shadow by design; regenerating it would restyle every icon
+  surface the owner did not complain about).
+- **L10** (S7, T7): the highlighter's beam turns vertical, three shape tools
+  join line on the crosshair, and the capture editor's cursor finally
+  arrives in the real window. **The beam**: `drawMarkerBeam` swaps its axis
+  — now 4.4 wide × 8.4 tall on the unchanged 16-pt canvas, hotspot still
+  centred, still a FILLED block with flat edges built from the dark
+  body + light core (the fill trick can't take an outline); what it reads
+  as is the vertical swab stroke itself. **The identity changes**: the roles
+  `arrowHead/rectangleFrame/ellipseRing` are renamed to
+  `arrowCrosshair/rectangleCrosshair/ellipseCrosshair` and are served
+  `NSCursor.crosshair` BY IDENTITY in `OverlayView.cursor(for:)`, exactly
+  the way `lineCrosshair` already was — the glyphs `drawArrowHead`, the
+  rectangle frame and the oval are deleted from the drawn set (11 → 7 drawn;
+  4 crosshair roles, 3 other system identities, no sharing between tools:
+  the bijection table stays one role per tool, and
+  `ToolAndInkTests.testEveryToolHasItsOwnCursorRole` keeps meaning exactly
+  that with the renamed expected map). The three drawn shapes the owner's
+  report retires also retire the L5 collision note: the oval existed to
+  never read as the eraser's circle, and the oval is gone. **The editor
+  root cause, measured not guessed**: the canvas's `cursorUpdate` handler
+  (L5) could never be DELIVERED — AppKit routes cursor updates (and
+  entry/exit crossings) only through a tracking area, and
+  `git show HEAD:Sources/Stare/CaptureEditor.swift` contains ZERO
+  tracking-area and ZERO `resetCursorRects` references: the canvas declared
+  no cursor rects and no area, so nothing ever generated a cursor update
+  for it; the window itself was never the problem (`canBecomeKey: true`,
+  now pinned by a test), and `mouseMoved` was never delivered either (the
+  window did not opt in with `acceptsMouseMovedEvents`). Every cursor
+  surface of this app already carries the delivery half — `OverlayView`,
+  `CaptureCard`, `ToolbarPanel`, `ToolbarView` all install
+  `[.cursorUpdate, .activeAlways, .inVisibleRect]` areas, and
+  OverlayView's own comment says why (".activeAlways keeps the tool cursor
+  working even when the app is not the active one, which cursor rectangles
+  alone do not allow") — the editor's canvas was the one surface missing
+  it. The old test passed because it called `reassertCursor()` and the
+  handlers DIRECTLY — decision proof with no delivery proof, the
+  insufficient evidence the owner's "3.b. no funciona" exposed.
+  `NSEvent` has no public constructor for a synthesized cursor update (the
+  mouseEvent factory rejects the type at runtime:
+  `_NSEventMask64FromType(type) & (MouseMask|NSEventMaskMouseMoved)` fails;
+  an `otherEvent` constructor never compiles against this SDK's imported
+  Swift signatures at all), so a synthesized cursor update cannot even be
+  BUILT with public API and window-server
+  delivery cannot be exercised headlessly — the honest boundary. The fix:
+  the canvas installs the same area as its siblings in
+  `updateTrackingAreas` (`.cursorUpdate`, `.mouseEnteredAndExited`,
+  `.activeAlways`, `.inVisibleRect`), re-asserts on `cursorUpdate`,
+  `mouseEntered` and — the window now opts in with
+  `acceptsMouseMovedEvents` — `mouseMoved`, and on `mouseExited` it hands
+  the pointer back to the editor's own chrome (arrow), so the last tool
+  glyph never rides over the toolbar. The gesture vocabulary (pan, space,
+  ⌘-scroll) and the armed-crop arrow stay ahead of the tool cursor and no
+  second `NSCursor.set()` ambient path was added (the exit hand-back is
+  this surface's own exit answer). **Tests**: the beam pin is now vertical
+  (filled down the centre column, taller than wide by ≥ 2 pt); the three
+  crosshair roles answer `=== NSCursor.crosshair`; the every-role
+  contract's identity map now names six identity roles and seven drawn
+  glyphs; the tracking-area PIN sees AppKit's own pass register it in the
+  real window (a runloop spin schedules it in the test host; before the
+  fix the canvas owned ZERO areas), plus the `canBecomeKey` diagnosis pin.
+  RED: the first delivery attempt (a window-routed synthetic cursor
+  update) failed with the NSEvent construction exception, then was proven
+  impossible headlessly via the probe; the tracking-area pin's first GREEN
+  run failed 0 ≠ 1 until AppKit's scheduling pass was honoured — mechanism
+  presence before, delivery in the real window remains the owner's eye
+  (the shared pattern already proven on the overlay, bar and cards).
+  Full `swift test` exit 0, StareTests 376 / StareCoreTests 890 (the +7 in
+  StareCore are the concurrent filename-template worker's), 0 failures.
+- **L11** (S8, T8): the template default reaches the install that stored the old one. The owner's capture
+  document on disk was written before the shipped default changed, so it held `""` — and `""` routes to the
+  legacy prefix branch, so Settings showed an EMPTY Name template field while the preview row right below it
+  already promised `Stare-2026-11-21-at-14-05-33.png`. **The migration, on the toolbar's discipline**
+  (`ToolbarToolLayout.mayMigrate`, hard-won in `9efcbbd`): the capture document now carries its own `version`
+  — `CapturePreference.currentVersion = 2`, stamped first by a new custom `encode(to:)` on everything this
+  build writes (it never had one: encode was synthesized, so the unstamped generation is every blob written
+  before this change) — and `init(from:)` migrates once, on load, a document that (a) may migrate (unstamped,
+  or a readable version below 2 — a version that exists but cannot be READ counts as current and never
+  migrates) and (b) whose stored template is the old shipped default (absent, or the empty string). Nothing
+  else moves: any other template is one nobody can prove was shipped, so it stays and the lenient sanitising
+  decides what it means, which is why the refusal pins (`{bogus}` → `""`, prefix names) pass unchanged. After
+  the stamp, an explicitly cleared `""` is the user's choice and survives every save and reload.
+  **Reconciliation, on the record**: my instruction said "a missing version must NOT migrate", copied from a
+  pattern whose document always had a version. The capture document never did, so that literal rule would
+  make migration unreachable and leave the owner's field empty — the reported defect. Implemented instead:
+  unstamped migrates, unreadable never does, which is what the cited commit actually enforces.
+  Three proven decodes: the owner's byte-for-byte blob (unstamped, `""`) → `Stare-{date}-at-{time}`, still
+  rendering `Stare-2026-11-21-at-14-05-33.png`; a custom stored template kept byte for byte at every version;
+  `""` at version 2 stays `""` with the prefix naming the files. What the owner sees: the field shows the
+  template, the prefix row stands down (L7's rule follows the field), exactly a fresh install's pane.
+  Test-first: RED `CapturePreference` has no member `currentVersion`, GREEN 85/0 focused; StareCoreTests
+  890/0. Version numbering: none before, 2 after.
