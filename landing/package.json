@@ -20,6 +20,7 @@
     "@fontsource/schibsted-grotesk": "^5.3.0",
     "@resvg/resvg-js": "^2.6.2",
     "@tailwindcss/vite": "^4.3.5",
+    "@types/node": "18.19.130",
     "satori": "^0.63.2",
     "tailwindcss": "^4.3.5",
     "typescript": "^7.0.2",
