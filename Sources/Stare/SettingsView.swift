@@ -446,10 +446,22 @@ struct BarPane: View {
 
     /// How much the preview shrinks to sit inside the stage: never up, only
     /// down, so a narrow window still shows the whole bar (S2).
-    private var barPreviewScale: CGFloat {
+    /// How much the preview shrinks: it fits the stage on BOTH axes, because a
+    /// vertical column is tall — a fit that only looked at the width drew it
+    /// 700 pt high and pushed the pane apart, which is why the preview used to be
+    /// pinned to horizontal instead.
+    static func previewScale(naturalSize: CGSize, cardsWidth: CGFloat) -> CGFloat {
         let available = cardsWidth - SettingsMetrics.stageChrome
-        guard barNaturalSize.width > 0, available > 0 else { return 1 }
-        return min(1, available / barNaturalSize.width)
+        guard naturalSize.width > 0, naturalSize.height > 0, available > 0 else { return 1 }
+        return min(
+            1,
+            available / naturalSize.width,
+            SettingsMetrics.stageMaxPreviewHeight / naturalSize.height
+        )
+    }
+
+    private var barPreviewScale: CGFloat {
+        Self.previewScale(naturalSize: barNaturalSize, cardsWidth: cardsWidth)
     }
 
     /// The bar's own width and height, reported by the bar in the stage.
@@ -498,12 +510,12 @@ struct BarPane: View {
 
     private func syncToolbarPreview() {
         toolbarPreviewState.toolbarTools = model.toolbarTools
-        // The preview always renders horizontal (S1): a vertical bar inside the
-        // stage distorted the pane and hid most of the tools, so the preview
-        // answers what is on the bar and the orientation picker answers the
-        // rest. Nothing else of the real bar's state changes here.
-        toolbarPreviewState.toolbarOrientation = .horizontal
-        toolbarPreviewState.toolbarBorder = model.toolbarBorder
+        // The preview draws the bar as it will actually look: the same
+        // orientation, and the edge that orientation can really dock to (a
+        // column on a horizontal edge would anchor in the middle of the screen).
+        // The fit above is what keeps a tall column inside the stage.
+        toolbarPreviewState.toolbarOrientation = model.toolbarOrientation
+        toolbarPreviewState.toolbarBorder = model.toolbarBorder.docked(for: model.toolbarOrientation)
         toolbarPreviewState.tool = model.tool
         toolbarPreviewState.ink = model.ink
     }

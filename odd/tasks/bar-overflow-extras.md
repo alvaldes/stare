@@ -207,3 +207,13 @@ files. Delivery shape when publishing stays the owner's call, and `main` is merg
   press on any non-control area into a window drag, so a stray click on the pill can never walk the bar away.
   Pinned by a probe that presses the bar's body and asserts the frame does not move; the real drag feel stays
   the owner's check. Verified: 866 `StareCoreTests` + 295 `StareTests`, 0 failures, exit 0.
+- **L24** (S8, item 6, the real cause): the owner's "se mantiene la altura de horizontal" named it —
+  the preview was **pinned to horizontal on purpose** since v0.5 (a vertical bar distorted the pane and
+  scrolling cut the tools), so switching to vertical changed the tools' order and nothing else. The pin is
+  gone: `syncToolbarPreview` mirrors the model's orientation and the docked border, and the stage's fit now
+  looks at BOTH axes with `stageMaxPreviewHeight` (360) instead of fitting the width alone — a width-only fit
+  drew the column 742 pt high and that is what broke the pane. `previewScale` is a pure function with three
+  tests. The `--skip` suite: 866 `StareCoreTests` + 297 `StareTests`, 0 failures, exit 0.
+  **Not verified here:** how the vertical column READS at that scale (a 44×742 bar at ~0.49 is ~21 pt wide).
+  The arrangement is legible, the glyphs are small; if the owner finds it too small the honest options are a
+  taller stage or an explicit "actual size" toggle, never a scroll — that is what v0.5 rejected.

@@ -33,6 +33,10 @@ enum SettingsMetrics {
     /// The label row stands above the preview (S4), so the only horizontal
     /// chrome is the stage's padding — nothing stands to the left of the
     /// bar any more.
+    /// The tallest the previewed bar may be drawn inside the stage: a vertical
+    /// column is 700+ pt tall at full size and would push the pane apart.
+    static let stageMaxPreviewHeight: CGFloat = 360
+
     static var stageChrome: CGFloat {
         stagePadding * 2
     }
