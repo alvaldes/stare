@@ -33,11 +33,15 @@ Bring `main` in as it advances (`git merge main`) so the merge at the end stays 
 
 | ID | Specs | Task | Route | Commit |
 | --- | --- | --- | --- | --- |
-| T1 | S1-S3 | Model: one ordered strip with a divider index, the pool derived from it, legacy decode, defaults | pending | |
-| T2 | S1, S6 | The `⁞` button on the real bar and the hidden palette it opens | pending | |
-| T3 | S4 | The Settings pool as the hidden section: always listed, ordered, draggable both ways | pending | |
-| T4 | S5 | The Settings preview shows the `⁞`, the divider, and the hidden palette | pending | |
-| T5 | S1-S6 | Docs: README, CHANGELOG, and the ODD log for this batch | pending | |
+| T1 | S1-S3 | Model: the shipped bar keeps the drawing tools, the pool holds the extras, an uncustomised saved bar upgrades | inline (parent) | 2d5138d |
+| T2 | S1, S6 | The `⁞` on the real bar: the control, the extras column/row, the collapse, the active-tool symbol | inline (parent) | 2d5138d |
+| T3 | S4 | The Settings pool as the bar's hidden section: titled, ordered, never inert | worker | |
+| T4 | S5 | The Settings preview shows the `⁞` and the draft's hidden tools | worker | |
+| T5 | S1-S6 | Docs: README, CHANGELOG, and this log | pending | |
+
+**Slice note.** The `20570 authored changed lines in 96 commits since origin/main` the commit hook reports is the
+unpublished `main` history this branch sits on, not this batch: T1+T2 are ~250 authored lines across six
+files. Delivery shape when publishing stays the owner's call, and `main` is merged in whenever it moves.
 
 ## Log
 
@@ -59,3 +63,24 @@ Bring `main` in as it advances (`git merge main`) so the merge at the end stays 
   mentions the pool only as the organiser's off-bar bucket (`v0.5.md` S5/L7, `bar-pane-organiser.md`), and
   that same round recorded the symptom this batch fixes: on a fresh install every tool sits on the bar, so
   the pool shows only the Separator chip and looks inert (`bar-preview-and-cursors.md` L-note).
+- **L6** (design, T1/T2): the model stays two runs — `items` on the bar, `pool` behind the `⁞` — instead of
+  collapsing into one list plus a divider index. The pool already normalises, orders and round-trips, and
+  every organiser rule and its fuzz test survive untouched; only the shipped default and the meaning of
+  the second run change. The `⁞` closes the tool run; the extras open as a second column of the same pill
+  (a second row when the bar lies flat), never as a popover — `ToolbarPanel.canBecomeKey` is false, so a
+  popover over the bar cannot work, and a second window would need its own placement model.
+- **L7** (evidence, T1/T2): 848 `StareCoreTests` + 285 `StareTests`, 0 failures, exit 0 — run as
+  `swift test --skip CardCursorRoutingTests` because that class segfaults (see L8). Rendered the real bar to
+  `/tmp` at both orientations and read the PNGs: vertical closed 44×742, vertical holding every tool 44×810,
+  vertical open 100×742, horizontal closed 748×42, horizontal open 748×96. The open state was rendered by
+  temporarily flipping the `@State` default and reverted before the commit; the scratch test was deleted.
+- **L8** (defect found, not mine): `StareTests.CardCursorRoutingTests` dies with signal 11 in the app test
+  bundle, and it does so on `60189f6` too — verified in a throwaway detached worktree of the baseline, so
+  the crash predates this branch. It is the reason a plain `swift test` exits 1 here; the suite is verified
+  with that class skipped. Out of scope for this batch: it belongs to the cursor batch that landed on
+  `main`, and it must be fixed before anything can claim a clean full suite.
+- **L9** (honest numbers, S1): the shorter default only buys 68 pt in the vertical bar (742 against 810),
+  because five tools leave the column but four separators and the `⁞` join it. The two structures that
+  dominate the vertical bar now are the eight inks (224 pt) and the five-item tail (150 pt). Folding the
+  inks into a two-column grid in the vertical bar is the next real cut; it is a visible change nobody asked
+  for, so it is the owner's call and not part of this batch.
