@@ -43,6 +43,12 @@ Bring `main` in as it advances (`git merge main`) so the merge at the end stays 
   vertical y se rompio la bar (nota: debe tomar la pos por defecto cuando se cambia de una config de
   placement)".
 
+- **S9** (owner, reported after the batch closed; verbatim): "el bar esta vertical left pero lo muevo a la
+  derecha completamente y presiono '...' y se abre a la derecha de la bar cuando en realidad deberia abrirse a
+  la izquierda porque a la derecha no hay espacio." The extras panel chooses its side from where the bar IS,
+  not from the edge it is docked to: the side with room for the panel wins, both-sides-fit faces the middle
+  of the screen, and the dock setting only breaks the tie on the screen's centre line.
+
 ## Tasks
 
 | ID | Specs | Task | Route | Commit |
@@ -53,7 +59,8 @@ Bring `main` in as it advances (`git merge main`) so the merge at the end stays 
 | T4 | S5 | The Settings preview shows the `⁞` and the draft's hidden tools | worker | ed576a5 |
 | T5 | S1-S6 | Docs: README, CHANGELOG, and this log | inline (parent) | d7b31f6 |
 | T6 | S7 | Owner feedback round 1: the extras get their own minimal panel, toward the screen; the card reads "More tools"; a roomy drop zone | inline (parent) | dca12b2 |
-| T7 | S8 | Owner feedback round 2: fix the inverted top/bottom dock, centre the panel on the button, make the preview button inert, let separators be removed | inline (parent) | pending |
+| T7 | S8 | Owner feedback round 2: fix the inverted top/bottom dock, centre the panel on the button, make the preview button inert, let separators be removed | inline (parent) | 4f56c46, 4f1152e, 9ac827c, 4790c7b |
+| T8 | S9 | The extras panel's side comes from the room the bar leaves, not from the dock setting | inline (parent) | 66401aa |
 
 **Slice note.** The `20570 authored changed lines in 96 commits since origin/main` the commit hook reports is the
 unpublished `main` history this branch sits on, not this batch: T1+T2 are ~250 authored lines across six
@@ -236,3 +243,14 @@ files. Delivery shape when publishing stays the owner's call, and `main` is merg
   **clean, no conflicts**. With it, `Tests/StareTests/CardCursorRoutingTests` no longer segfaults: the full
   `swift test` (no `--skip`) is **873 `StareCoreTests` + 342 `StareTests`, exit 0**, so L8's workaround is
   retired and every number in this log from L8 onwards can be re-read as "the suite minus one crashing class".
+- **L28** (S9, the backlog entry the batch closed with): the extras panel ignored where the bar actually
+  was. `panelFrame` picked the side from the `ToolbarBorder` it was told, but the gripper moves the window
+  without moving its border, so a bar docked `left` and parked against the right edge opened its panel to
+  the right — off screen — and the clamp slid it back, which reads as "se abre del lado contrario". The side
+  is now read from the geometry (`opensOnIncreasingSide`): the side with room for the panel wins, and when
+  both sides have room the panel faces the middle of the screen, with the dock setting deciding only on the
+  exact centre line. `border` keeps its real job — which way the bar runs, a column or a row. Red first: the
+  docked-left/parked-right and docked-right/parked-left cases plus the horizontal "no room below" case failed
+  against the old code (panel computed at 1440/0 and clamped in), then all seven `ToolbarOverflowPlacementTests`
+  passed. The five pre-existing placement tests were left untouched and still pass, so the dock-matching
+  behaviour that was already correct is pinned as it was.
