@@ -7,9 +7,13 @@ import StareCore
 /// Spec S3 of batch A: the capture editor answers with the active tool's own
 /// cursor instead of a blanket arrow ("los cursores cambian" — they used to
 /// change between the overlay and the editor, because the editor was
-/// arrow-only). The editor's gesture cursors (space pan, pan drag, ⌘ + scroll)
-/// keep winning over the tool's, and every cursor still goes through the
-/// canvas's own `reassertCursor()` — the only place the editor sets a cursor.
+/// arrow-only). S7/3b adds the delivery half: the canvas owns the same
+/// `.cursorUpdate` tracking area every other cursor surface uses, because an
+/// untracked view is never handed cursor updates and the owner saw nothing
+/// in the real window. The editor's gesture cursors (space pan, pan drag,
+/// ⌘ + scroll) keep winning over the tool's, and every cursor still goes
+/// through the canvas's own `reassertCursor()` — the only place the editor
+/// sets a cursor in anger.
 @MainActor
 final class CaptureEditorCursorTests: XCTestCase {
     private func solid(_ width: Int, _ height: Int) -> CGImage {
@@ -86,6 +90,52 @@ final class CaptureEditorCursorTests: XCTestCase {
             XCTAssertEqual(NSCursor.current, NSCursor.arrow, "\(tool) has no cursor in the capture editor")
         }
         NSCursor.arrow.set()
+    }
+
+    /// The delivery mechanism, pinned where it was missing (S7/3b): AppKit
+    /// only delivers `cursorUpdate` and entry/exit crossings through a
+    /// tracking area, and the canvas used to declare NONE — which is why its
+    /// cursorUpdate handler never ran in the real window while the direct-call
+    /// test kept passing. Once the canvas lives in a real editor window it
+    /// must own exactly the area every other cursor surface of this app
+    /// installs (`.cursorUpdate` + `.activeAlways`, the overlay canvas's own
+    /// template). Whether the window server then delivers through it cannot
+    /// be exercised headlessly — `NSEvent` has no public constructor for a
+    /// synthesized cursor update — so the owner's eye on the built app closes
+    /// that last loop; what this pin guarantees is that the delivery half now
+    /// exists for the machinery to serve.
+    func testTheEditorCanvasOwnsTheCursorDeliveryTrackingArea() throws {
+        let window = CaptureEditorWindow(image: solid(300, 200), capture: CapturePreference(), onClose: { _ in })
+        window.makeKeyAndOrderFront(nil)
+        window.layoutIfNeeded()
+        defer { window.orderOut(nil) }
+        let contentView = try XCTUnwrap(window.contentView)
+        var stack = [contentView]
+        var canvas: CaptureEditorCanvas?
+        while let view = stack.popLast(), canvas == nil {
+            if let found = view as? CaptureEditorCanvas { canvas = found }
+            stack.append(contentsOf: view.subviews)
+        }
+        let found = try XCTUnwrap(canvas, "the editor window must host the canvas")
+        // The real window runs AppKit's tracking-area pass when the canvas
+        // joins it; the test host schedules it on the next runloop tick.
+        RunLoop.main.run(until: Date().addingTimeInterval(0.15))
+        let areas = found.trackingAreas.filter { $0.owner === found }
+        XCTAssertEqual(areas.count, 1, "the canvas owns exactly one tracking area")
+        let options = try XCTUnwrap(areas.first).options
+        XCTAssertTrue(options.contains(.cursorUpdate), "the area must carry the cursor updates")
+        XCTAssertTrue(options.contains(.mouseEnteredAndExited), "the area must carry the crossings")
+        XCTAssertTrue(options.contains(.activeAlways), "the area must answer while the app is inactive or the window is not key")
+        XCTAssertTrue(options.contains(.inVisibleRect), "the area must follow the visible canvas")
+    }
+
+    /// The diagnosis, pinned: the editor's window CAN become key, so the
+    /// cursor-rect route was never structurally closed to it — the failure
+    /// was the missing delivery mechanism (no tracking area, no rects), not
+    /// an ineligible window.
+    func testTheEditorWindowCanBecomeKey() throws {
+        let window = CaptureEditorWindow(image: solid(300, 200), capture: CapturePreference(), onClose: { _ in })
+        XCTAssertTrue(window.canBecomeKey, "the editor window is a titled key-capable window")
     }
 
     /// The editor's own gesture cursors keep winning over the tool's: the

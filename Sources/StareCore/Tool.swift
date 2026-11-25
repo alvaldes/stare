@@ -65,10 +65,10 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
         case .select: .editArrow
         case .pen: .penDot
         case .highlighter: .markerBeam
-        case .arrow: .arrowHead
+        case .arrow: .arrowCrosshair
         case .line: .lineCrosshair
-        case .rectangle: .rectangleFrame
-        case .ellipse: .ellipseRing
+        case .rectangle: .rectangleCrosshair
+        case .ellipse: .ellipseCrosshair
         case .text: .textIBeam
         case .number: .numberRings
         case .laser: .laserSpark
@@ -180,22 +180,21 @@ public enum ToolCursor: Equatable, CaseIterable, Sendable {
     /// A circle inside a circle — two thin concentric rings — for the
     /// numbered badge (the owner's count shape).
     case numberRings
-    /// The system crosshair, the drafting cursor, kept for the straight line
-    /// alone (it used to be the shared default of every tool).
+    /// The system crosshair, the drafting cursor. Line owns it by itself;
+    /// arrow, rectangle and ellipse each own their own role — the table stays
+    /// one role per tool — but all four are served the same system cursor BY
+    /// IDENTITY instead of a drawn glyph (S7: "la elipse, el rect y arrow
+    /// pasan a ser cursor cruz como la linea").
     case lineCrosshair
+    case arrowCrosshair
+    case rectangleCrosshair
+    case ellipseCrosshair
     /// A drawn filled dot at the hotspot, for freehand ink (the owner's pen
     /// shape).
     case penDot
-    /// A drawn filled beam — a wide block with flat edges — for the flat
-    /// highlighter swab (the owner's highlighter shape).
+    /// A drawn filled beam — a tall block with flat edges — for the flat
+    /// highlighter swab (the owner's highlighter shape; S7 turns it vertical).
     case markerBeam
-    /// A drawn shaft-and-head arrow, for the straight arrow mark.
-    case arrowHead
-    /// A drawn rectangle frame.
-    case rectangleFrame
-    /// A drawn ellipse ring — a true oval, so it never reads as the eraser's
-    /// circle.
-    case ellipseRing
     /// A drawn dot with rays, for the fading laser trail.
     case laserSpark
     /// A drawn empty circle, border only, no fill, for the eraser (the

@@ -478,23 +478,20 @@ class OverlayView: NSView {
     /// The role → `NSCursor` mapping, `internal` so the self test exercises
     /// the real path the canvas shows. System cursors where one genuinely
     /// does the tool's job: the arrow for the edit cursor, the I-beam for
-    /// text, and the crosshair — the drafting cursor — for the straight line
-    /// alone. Every other role is a small glyph drawn here, centred on the
-    /// hotspot: a white core over a dark outline reads on light and on dark
-    /// canvases, and no new asset files exist. The glyph for each role is
-    /// schematic — it says the tool's shape, not the toolbar's exact SF Symbol
-    /// — which is the documented "dentro de lo posible" trade (see
-    /// `ToolCursor`).
+    /// text, and the crosshair — the drafting cursor — for the drafting
+    /// tools (line, and since S7 arrow, rectangle and ellipse). Every other
+    /// role is a small glyph drawn here, centred on the hotspot: a white core
+    /// over a dark outline reads on light and on dark canvases, and no new
+    /// asset files exist. The glyph for each role is schematic — it says the
+    /// tool's shape, not the toolbar's exact SF Symbol — which is the
+    /// documented "dentro de lo posible" trade (see `ToolCursor`).
     static func cursor(for role: ToolCursor) -> NSCursor {
         switch role {
         case .editArrow: .arrow
         case .textIBeam: .iBeam
-        case .lineCrosshair: .crosshair
+        case .lineCrosshair, .arrowCrosshair, .rectangleCrosshair, .ellipseCrosshair: .crosshair
         case .penDot: glyphCursors[role] ?? .crosshair
         case .markerBeam: glyphCursors[role] ?? .crosshair
-        case .arrowHead: glyphCursors[role] ?? .crosshair
-        case .rectangleFrame: glyphCursors[role] ?? .crosshair
-        case .ellipseRing: glyphCursors[role] ?? .crosshair
         case .numberRings: glyphCursors[role] ?? .crosshair
         case .laserSpark: glyphCursors[role] ?? .crosshair
         case .eraserRing: glyphCursors[role] ?? .crosshair
@@ -2255,15 +2252,13 @@ private enum ToolGlyphCursor {
         switch role {
         case .penDot: drawPenDot()
         case .markerBeam: drawMarkerBeam()
-        case .arrowHead: drawArrowHead()
-        case .rectangleFrame: outline(NSBezierPath(rect: NSRect(x: 4.2, y: 4.2, width: 7.6, height: 7.6)))
-        case .ellipseRing: outline(NSBezierPath(ovalIn: NSRect(x: 3.8, y: 4.9, width: 8.4, height: 6.2)))
         case .numberRings: drawNumberRings()
         case .laserSpark: drawSpark()
         case .eraserRing: drawEraserRing()
         case .blurDots: drawDotGrid()
         case .spotlightBeam: drawSpotlightBeam()
-        case .editArrow, .textIBeam, .lineCrosshair:
+        case .editArrow, .textIBeam, .lineCrosshair,
+            .arrowCrosshair, .rectangleCrosshair, .ellipseCrosshair:
             break // system roles: AppKit answers, nothing to draw
         }
     }
@@ -2315,27 +2310,17 @@ private enum ToolGlyphCursor {
         dot(centre: NSPoint(x: 8, y: 8), radius: 2.0)
     }
 
-    /// The highlighter's flat swab: a filled horizontal beam with flat edges,
-    /// wider than tall so it never reads as the rectangle's square frame (the
-    /// owner's highlighter shape). A fill cannot use the thick-outline trick,
-    /// so the block is built the way the dot is: a dark body with a light core.
+    /// The highlighter's flat swab: a filled vertical beam with flat edges
+    /// (S7: "el cursor del highlight esta horizontal y debe ser vertitcal") —
+    /// taller than wide, the perpendicular stroke the swab lays down. A fill
+    /// cannot use the thick-outline trick, so the block is built the way the
+    /// dot is: a dark body with a light core.
     private static func drawMarkerBeam() {
-        let beam = NSRect(x: 3.8, y: 5.8, width: 8.4, height: 4.4)
+        let beam = NSRect(x: 5.8, y: 3.8, width: 4.4, height: 8.4)
         NSColor.black.setFill()
         NSBezierPath(rect: beam).fill()
         NSColor.white.setFill()
         NSBezierPath(rect: beam.insetBy(dx: 1.1, dy: 1.1)).fill()
-    }
-
-    /// The straight arrow mark: a diagonal shaft with an open head, the same
-    /// up-right silhouette the mark itself draws.
-    private static func drawArrowHead() {
-        line(NSPoint(x: 4.6, y: 11.4), NSPoint(x: 11.4, y: 4.6)) // shaft
-        let head = NSBezierPath()
-        head.move(to: NSPoint(x: 6.6, y: 4.6))
-        head.line(to: NSPoint(x: 11.4, y: 4.6))
-        head.line(to: NSPoint(x: 11.4, y: 9.4))
-        outline(head)
     }
 
     /// The laser: one bright dot with rays, the transient trail's spark.

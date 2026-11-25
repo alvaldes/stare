@@ -8,7 +8,10 @@ import StareCore
 /// de los tools .. y no todos son diferentes"). The four shapes the owner
 /// named are pinned where a test can see them: the cursors are rendered into
 /// a bitmap and the alpha channel is scanned, so "filled", "empty" and
-/// "two rings" are measured pixel facts, not intentions.
+/// "two rings" are measured pixel facts, not intentions. S7 sharpens the
+/// table: the highlighter's beam turns vertical, and the drafting tools
+/// (arrow, rectangle, ellipse) join line on the system crosshair, answered
+/// by identity instead of drawn art.
 ///
 /// Every glyph is drawn on the same 16-pt canvas with the hotspot at the
 /// exact centre, so distances below are measured from the hotspot.
@@ -44,22 +47,22 @@ final class ToolCursorGlyphTests: XCTestCase {
         XCTAssertLessThanOrEqual(abs(box.width - box.height), 1.5, "the pen's dot is round, not a bar: \(box)")
     }
 
-    /// "el cursor de highligh debe ser el cursor bloque fill" — a FILLED
-    /// block with flat edges: the interior paints continuously across the
-    /// centre row, and the block is wider than tall (a beam, not the
-    /// rectangle's square frame).
-    func testHighlighterShowsAFilledBeam() throws {
+    /// "el cursor de highligh debe ser el cursor bloque fill", turned
+    /// vertical by S7 — a FILLED block with flat edges: the interior paints
+    /// continuously down the centre column, and the block is taller than
+    /// wide.
+    func testHighlighterShowsAFilledVerticalBeam() throws {
         let cursor = OverlayView.cursor(for: .markerBeam)
-        for point in [NSPoint(x: 8, y: 8), NSPoint(x: 6.5, y: 8), NSPoint(x: 9.5, y: 8),
-            NSPoint(x: 8, y: 7), NSPoint(x: 8, y: 9)] {
+        for point in [NSPoint(x: 8, y: 8), NSPoint(x: 8, y: 6.5), NSPoint(x: 8, y: 9.5),
+            NSPoint(x: 7, y: 8), NSPoint(x: 9, y: 8)] {
             try XCTAssertGreaterThan(
                 alpha(of: cursor, at: point), 0.5,
                 "the highlighter's beam must be filled at \(point) — an outline-only chisel fails")
         }
         let box = try paintedBounds(of: cursor)
         XCTAssertGreaterThanOrEqual(
-            box.width - box.height, 2.0,
-            "the highlighter's beam reads wide (a swab), not square (the rectangle's frame): \(box)")
+            box.height - box.width, 2.0,
+            "the highlighter's beam reads vertical, not horizontal and not square: \(box)")
     }
 
     /// "el erase un circulo sin relleno solo borde" — an EMPTY circle: the
@@ -102,30 +105,23 @@ final class ToolCursorGlyphTests: XCTestCase {
             "the OUTER circle's ring must paint")
     }
 
-    /// The audit's one real collision, fixed: the owner's eraser circle would
-    /// have read exactly like the ellipse's cursor, which used to be drawn as
-    /// a circle too. The ellipse keeps its role but is drawn as a TRUE OVAL
-    /// (wider than tall) so the two rings never merge into one read.
-    func testEllipseStaysAnOvalSoItNeverReadsAsTheEraserSCircle() throws {
-        let cursor = OverlayView.cursor(for: .ellipseRing)
-        try XCTAssertLessThanOrEqual(alpha(of: cursor, at: NSPoint(x: 8, y: 8)), 0.01, "the oval stays empty")
-        let box = try paintedBounds(of: cursor)
-        XCTAssertGreaterThanOrEqual(
-            box.width - box.height, 2.0,
-            "the ellipse's cursor must be an oval, not the eraser's circle: \(box)")
+    /// S7: "la elipse, el rect y arrow pasan a ser cursor cruz como la
+    /// linea" — the three shape tools answer the system crosshair BY
+    /// IDENTITY, the way line already does, and no drawn glyph is built for
+    /// them any more (the drawn set drops from eleven to seven).
+    func testTheShapeToolsAnswerTheCrosshairByIdentity() throws {
+        for role in [ToolCursor.lineCrosshair, .arrowCrosshair, .rectangleCrosshair, .ellipseCrosshair] {
+            let cursor = OverlayView.cursor(for: role)
+            XCTAssertTrue(cursor === NSCursor.crosshair, "\(role) must be the system crosshair")
+        }
     }
 
     // MARK: the neighbour roles keep the reads they already had
 
-    /// PRESERVE: the rectangle's frame stays an empty square outline and the
-    /// spotlight keeps its ring around a FILLED dot — neither may drift into
-    /// the eraser's empty circle or the number's rings.
-    func testSpotlightAndRectangleKeepTheirEstablishedReads() throws {
-        let frame = OverlayView.cursor(for: .rectangleFrame)
-        try XCTAssertLessThanOrEqual(alpha(of: frame, at: NSPoint(x: 8, y: 8)), 0.01, "the frame stays empty")
-        let frameBox = try paintedBounds(of: frame)
-        XCTAssertLessThanOrEqual(abs(frameBox.width - frameBox.height), 1.5, "the frame stays square: \(frameBox)")
-
+    /// PRESERVE: the spotlight keeps its ring around a FILLED dot — it may
+    /// not drift into the eraser's empty circle or the number's rings. (The
+    /// rectangle joined the crosshair in S7, so its frame glyph is gone.)
+    func testSpotlightKeepsItsEstablishedRead() throws {
         let beam = OverlayView.cursor(for: .spotlightBeam)
         try XCTAssertGreaterThan(alpha(of: beam, at: NSPoint(x: 8, y: 8)), 0.5, "the spotlight keeps its filled source dot")
         try XCTAssertGreaterThan(alpha(of: beam, at: NSPoint(x: 8 + 4.6, y: 8)), 0.5, "the spotlight keeps its ring")
@@ -139,7 +135,9 @@ final class ToolCursorGlyphTests: XCTestCase {
     /// system cursor.
     func testEveryDrawnRoleBuildsAFullSizeCentredGlyph() throws {
         let system: [ToolCursor: NSCursor] = [
-            .editArrow: .arrow, .textIBeam: .iBeam, .lineCrosshair: .crosshair,
+            .editArrow: .arrow, .textIBeam: .iBeam,
+            .lineCrosshair: .crosshair, .arrowCrosshair: .crosshair,
+            .rectangleCrosshair: .crosshair, .ellipseCrosshair: .crosshair,
         ]
         for role in ToolCursor.allCases {
             let cursor = OverlayView.cursor(for: role)

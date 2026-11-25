@@ -531,14 +531,18 @@ enum SelfTest {
         let distinct = Set(roles).count == Tool.allCases.count
         let coversVocabulary = Set(roles) == Set(ToolCursor.allCases)
 
-        // The three roles AppKit answers by identity; every other role — the
-        // number's rings included, since the count tool joined the drawn set
-        // (S3, batch A) — must be one of the drawn 16-pt glyphs with the
-        // hotspot at the centre.
+        // The roles AppKit answers by identity: arrow, I-beam, and the
+        // crosshair now served to four drafting tools (line, and since S7
+        // arrow, rectangle and ellipse) — every other role — the number's
+        // rings included, since the count tool joined the drawn set — must be
+        // one of the drawn 16-pt glyphs with the hotspot at the centre.
         let systemIdentities: [ToolCursor: NSCursor] = [
             .editArrow: .arrow,
             .textIBeam: .iBeam,
             .lineCrosshair: .crosshair,
+            .arrowCrosshair: .crosshair,
+            .rectangleCrosshair: .crosshair,
+            .ellipseCrosshair: .crosshair,
         ]
         var systemOK = true
         var glyphsOK = true

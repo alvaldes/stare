@@ -67,6 +67,10 @@ final class CaptureEditorWindow: NSWindow {
 
         title = "Edit Capture"
         isReleasedWhenClosed = false
+        // Windows do not accept mouse-moved events by default; the canvas's
+        // per-move cursor re-assertion (S7) needs them, the same opt-in the
+        // toolbar monitor relies on for its moves.
+        acceptsMouseMovedEvents = true
         self.onClose = { onClose($0) }
         contentView = content
         setContentSize(content.preferredSize)
@@ -1614,6 +1618,50 @@ final class CaptureEditorCanvas: NSView {
 
     override func cursorUpdate(with event: NSEvent) {
         reassertCursor()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas where area.owner === self { removeTrackingArea(area) }
+        // The delivery half of the editor's cursor (S7/3b): AppKit only
+        // delivers `cursorUpdate` (and the entry/exit crossings) through a
+        // tracking area — cursor rectangles alone cannot answer them, and
+        // this canvas declared none, so the cursorUpdate above never ran in
+        // the real window no matter what the direct-call test saw. This is
+        // the one mechanism every other cursor surface of the app already
+        // uses: the overlay canvas, the toolbar bar and panel, and the cards
+        // all install exactly this area, and `.activeAlways` is what keeps
+        // the cursor honest for a surface that does not depend on the app
+        // being active or the window being key.
+        addTrackingArea(
+            NSTrackingArea(
+                rect: bounds,
+                options: [.cursorUpdate, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                owner: self,
+                userInfo: nil
+            )
+        )
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        reassertCursor()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        // Re-assert on every move, the way the overlay canvas does: the
+        // window opts in to moves (below), and re-answering on the move —
+        // not only on rect crossings — is what kept a stale cursor from
+        // coming back there.
+        reassertCursor()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        // The pointer leaving the canvas hands the cursor back to the
+        // editor's own chrome — toolbar, fields — so the last tool glyph
+        // never follows the pointer over the bar. It is this surface's own
+        // exit answer, not a second ambient path: over the chrome the
+        // canvas shows the one cursor the chrome serves, the arrow.
+        NSCursor.arrow.set()
     }
 
     /// The view going away ends any gesture, so nothing stale survives the
