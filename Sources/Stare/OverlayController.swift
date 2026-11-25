@@ -29,6 +29,17 @@ private enum HistoryEntry {
         displayID: CGDirectDisplayID, page: Int?, before: BoardImage?, after: BoardImage?
     )
 
+    /// The entry's kind, for the diagnostics: which step was skipped and why the
+    /// undo loop could not apply it.
+    var debugKind: String {
+        switch self {
+        case .mark: return "mark"
+        case .clear: return "clear"
+        case .batchMove: return "batchMove"
+        case .boardImage: return "boardImage"
+        }
+    }
+
     /// The display the entry routes to.
     var owningDisplayID: CGDirectDisplayID {
         switch self {
@@ -810,6 +821,15 @@ final class OverlayController {
             let restored = DrawingSession.restored(strokes: stored.compactMap(Stroke.init(persisted:)))
             guard !restored.isEmpty else { continue }
             canvas.view.session = restored
+            // The marks came back; their undo steps come back with them, so ⌘Z
+            // after a mode cycle removes what the user is looking at instead of
+            // finding an empty history (the log showed `entries=2 / undo empty`:
+            // the steps that existed named work the restored session no longer
+            // held).
+            for stroke in restored.strokes {
+                historyOrder.append(.mark(displayID: canvas.displayID, strokeID: stroke.id))
+            }
+            Diag.log("sessions restored display=\(canvas.displayID) strokes=\(restored.strokes.count)")
         }
     }
 
@@ -1232,14 +1252,23 @@ final class OverlayController {
             "undo called active=\(NSApp.isActive) key=\(NSApp.keyWindow != nil) entries=\(historyOrder.count) canvases=\(canvases.count) board=\(isBoardActive) overlay=\(isActive)"
         )
         if let canvas = activeCanvasUnderPointer(), canvas.discardActiveMark() { return }
+        // An entry that cannot be applied is KEPT, not discarded: a stale step
+        // sitting on top used to take the whole history down with it, which is
+        // exactly how ⌘Z went silent after a mode cycle. Walk past what cannot
+        // apply, undo the newest that can, and put the skipped ones back on top.
+        var skipped: [HistoryEntry] = []
         while let last = historyOrder.popLast() {
             if let canvas = canvases[last.owningDisplayID], canvas.undo(entry: last) {
+                historyOrder.append(contentsOf: skipped.reversed())
                 redoOrder.append(last)
-                Diag.log("undo display=\(last.owningDisplayID) remaining=\(historyOrder.count)")
+                Diag.log("undo display=\(last.owningDisplayID) remaining=\(historyOrder.count) skipped=\(skipped.count)")
                 return
             }
+            Diag.log("undo skipped kind=\(last.debugKind) display=\(last.owningDisplayID)")
+            skipped.append(last)
         }
-        Diag.log("undo empty")
+        historyOrder.append(contentsOf: skipped.reversed())
+        Diag.log("undo empty entries=\(historyOrder.count)")
     }
 
     /// Shift-Command-Z: puts back the newest undone change, on the display it
@@ -1247,14 +1276,18 @@ final class OverlayController {
     func redo() {
         let canvases = activeCanvases
         Diag.log("redo called active=\(NSApp.isActive) entries=\(redoOrder.count) board=\(isBoardActive) overlay=\(isActive)")
+        var skipped: [HistoryEntry] = []
         while let last = redoOrder.popLast() {
             if let canvas = canvases[last.owningDisplayID], canvas.redo(entry: last) {
+                redoOrder.append(contentsOf: skipped.reversed())
                 historyOrder.append(last)
-                Diag.log("redo display=\(last.owningDisplayID) remaining=\(redoOrder.count)")
+                Diag.log("redo display=\(last.owningDisplayID) remaining=\(redoOrder.count) skipped=\(skipped.count)")
                 return
             }
+            skipped.append(last)
         }
-        Diag.log("redo empty")
+        redoOrder.append(contentsOf: skipped.reversed())
+        Diag.log("redo empty entries=\(redoOrder.count)")
     }
 
     // MARK: - Canvases

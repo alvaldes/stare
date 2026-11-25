@@ -208,11 +208,17 @@ final class CaptureHistoryPanel: NSPanel {
         case 53: // Esc
             hide()
             return true
-        case 123, 126: // ←, ↑: previous — one entry newer
+        case 123: // ←: one entry newer
             model.moveSelection(-1)
             return true
-        case 124, 125: // →, ↓: next — one entry older
+        case 124: // →: one entry older
             model.moveSelection(1)
+            return true
+        case 126: // ↑: one ROW newer — the cell directly above
+            model.moveSelection(-model.columnCount)
+            return true
+        case 125: // ↓: one ROW older — the cell directly below, in a grid of N columns that is N entries along
+            model.moveSelection(model.columnCount)
             return true
         case 36, 76: // Return, keypad Enter
             model.pickSelected()
@@ -353,6 +359,24 @@ final class CaptureHistoryPanelModel: ObservableObject {
 
     /// Arrow navigation: moves the selection by `delta`, clamped so it never
     /// leaves the entries.
+    /// How many cells the grid shows per row, reported by the view. The vertical
+    /// arrows move by a row — in a three-column grid the second element under the
+    /// first is the FOURTH, not the second — so the model has to know the width
+    /// the grid actually got.
+    private(set) var columnCount = 1
+
+    /// Recomputes the row width from the grid's measured width and the same
+    /// adaptive minimum the `GridItem` uses.
+    func updateColumnCount(forGridWidth width: CGFloat) {
+        let minimum = CGFloat(thumbnailSize)
+        let spacing: CGFloat = 10
+        guard width > 0 else { return }
+        let columns = max(1, Int((width + spacing) / (minimum + spacing)))
+        guard columns != columnCount else { return }
+        columnCount = columns
+        Diag.log("history grid columns=\(columns) width=\(Int(width))")
+    }
+
     /// "3 / 12" — the selection's place in the history, or nil when nothing is
     /// selected. The header shows it so the focus is legible, not only outlined.
     var selectionPosition: String? {
@@ -464,6 +488,17 @@ struct CaptureHistoryPanelContent: View {
                         }
                         .padding(.horizontal, 14)
                         .padding(.bottom, 14)
+                        // The grid tells the model how wide it is, so the
+                        // vertical arrows can move by a row (see columnCount).
+                        .background(
+                            GeometryReader { proxy in
+                                Color.clear
+                                    .onAppear { model.updateColumnCount(forGridWidth: proxy.size.width) }
+                                    .onChange(of: proxy.size.width) { _, width in
+                                        model.updateColumnCount(forGridWidth: width)
+                                    }
+                            }
+                        )
                     }
                     // Minimal scroll, not `anchor: .center`: centring on every
                     // move pins the selected cell to the middle of the panel, so

@@ -520,3 +520,22 @@ part of this work.
   **Evidence**: whole suite exit 0, no signal line, bundle passed, **1167 started / 1167 passed / 0
   failed**. A static render cannot catch the second bug (it renders a state, not an update), which is why
   the log and the owner's eye were the instruments, not the selftest PNGs.
+
+- **L36** (three findings from the second instrumented run; two fixed, one was a new requirement).
+  **Drawing-mode undo after a cycle, for real this time.** The log said `undo called ... entries=2` and then
+  `undo empty`: the steps existed and EVERY one was refused, because the loop DISCARDED what it could not
+  apply — a stale step on top took the whole history with it. And the stroke the owner drew before leaving
+  had no step of its own at all: a fresh stroke is undone by the session's journal, and that journal does
+  not survive the cycle while the stroke does. Two changes: `undo`/`redo` now walk past steps they cannot
+  apply and put them back (logging each skipped kind), and a restored session's marks get their own
+  `.mark` steps back, so ⌘Z after a cycle removes what is on screen.
+  **The vertical arrows were a requirement, not a bug**: ↓ moved one cell, so in a three-column grid it
+  walked sideways. The view now reports the grid's measured width to the model, which derives the row
+  width from the same adaptive minimum the `GridItem` uses, and ↑/↓ move by a row while ←/→ move one cell.
+  `CaptureHistoryGridNavigationTests` pins the case the owner named: three columns, four entries, ↓ from
+  the first lands on the fourth.
+  **Also from his pass**: the focus outline finally moves (`CaptureHistoryCell` taking the selection by
+  value, L35), so the history half of B10 is closed; the board's undo across a cycle already worked.
+  **Evidence**: whole suite exit 0, no signal line, bundle passed, **1170 started / 1170 passed / 0
+  failed**; installed 01:5x and relaunched with `STARE_DIAG=1` so the next pass has evidence instead of
+  guesses.

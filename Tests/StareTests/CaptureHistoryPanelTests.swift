@@ -290,6 +290,61 @@ final class CaptureHistoryThumbnailSizeTests: XCTestCase {
     }
 }
 
+/// The grid's row arithmetic: in a three-column grid the cell under the first
+/// is the FOURTH, so the vertical arrows move by a row, never by one.
+@MainActor
+final class CaptureHistoryGridNavigationTests: XCTestCase {
+    private func model(entries: Int, columns: Int) -> CaptureHistoryPanelModel {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let store = CaptureHistoryStore(directory: directory)
+        for index in 0..<entries {
+            let context = CGContext(
+                data: nil, width: 10, height: 10, bitsPerComponent: 8,
+                bytesPerRow: 40, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+            context?.setFillColor(CGColor(gray: 0.5, alpha: 1))
+            context?.fill(CGRect(x: 0, y: 0, width: 10, height: 10))
+            if let image = context?.makeImage() {
+                _ = store.add(image, date: Date().addingTimeInterval(TimeInterval(-index)))
+            }
+        }
+        let model = CaptureHistoryPanelModel(store: store, onPick: { _ in }, onClose: {})
+        model.refresh()
+        // The same arithmetic the view reports: width = columns * minimum + gaps.
+        let spacing: CGFloat = 10
+        let minimum = CGFloat(model.thumbnailSize)
+        model.updateColumnCount(forGridWidth: CGFloat(columns) * minimum + CGFloat(columns - 1) * spacing)
+        return model
+    }
+
+    func testDownMovesOneRowNotOneCell() {
+        let model = model(entries: 4, columns: 3)
+        XCTAssertEqual(model.columnCount, 3)
+        model.select(at: 0)
+        model.moveSelection(model.columnCount)
+        XCTAssertEqual(model.selectedIndex, 3, "in a three-column grid the cell below the first is the fourth")
+    }
+
+    func testUpMovesOneRowBackAndClampsAtTheTop() {
+        let model = model(entries: 4, columns: 3)
+        model.select(at: 3)
+        model.moveSelection(-model.columnCount)
+        XCTAssertEqual(model.selectedIndex, 0)
+        model.moveSelection(-model.columnCount)
+        XCTAssertEqual(model.selectedIndex, 0, "there is no row above the first")
+    }
+
+    func testSingleColumnGridMovesOneCellPerRow() {
+        let model = model(entries: 3, columns: 1)
+        XCTAssertEqual(model.columnCount, 1)
+        model.select(at: 0)
+        model.moveSelection(model.columnCount)
+        XCTAssertEqual(model.selectedIndex, 1)
+    }
+}
+
 /// B2: the history closes on the first click anywhere else, the way a
 /// paste-style palette does. The decision is a value rule — the monitors only
 /// feed it — so it is pinned without windows, screens or event taps.
