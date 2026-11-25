@@ -220,11 +220,22 @@ public struct ToolbarToolLayout: Codable, Equatable, Sendable {
     public static let standardItems: [ToolbarLayoutItem] =
         ToolbarToolLayout.itemsWithFamilySeparators(ToolbarToolLayout.standardVisibleTools)
 
-    /// The bar v0.5 shipped: every tool on it, nothing behind the `⁞`. Kept
-    /// because a saved layout that still equals it is a bar nobody rearranged,
-    /// and that is the one saved bar `upgradingUncustomised` may move on.
+    /// The bar v0.5 shipped: every tool on it, nothing behind the `⁞`. Pinned
+    /// as identifiers instead of derived from the live `Tool.toolbarGroups`, so
+    /// the migration keeps answering for the bar that existed then even if a
+    /// later build adds or regroups a tool. A saved layout that still equals it
+    /// is a bar nobody rearranged, and that is the one saved bar
+    /// `upgradingUncustomised` may move.
+    static let legacyStandardIdentifiers: [String] = [
+        "tool:select", "separator",
+        "tool:pen", "tool:highlighter", "separator",
+        "tool:line", "tool:arrow", "tool:rectangle", "tool:ellipse", "separator",
+        "tool:text", "tool:number", "separator",
+        "tool:blur", "tool:spotlight", "tool:laser", "separator",
+        "tool:eraser",
+    ]
     static let legacyStandardItems: [ToolbarLayoutItem] =
-        ToolbarToolLayout.itemsWithFamilySeparators(ToolbarToolLayout.defaultOrder)
+        legacyStandardIdentifiers.compactMap(ToolbarLayoutItem.init(identifier:))
 
     /// The layout a fresh install gets: the drawing tools on the bar with the
     /// family dividers, and every other tool behind the `⁞` in the documented
@@ -276,11 +287,22 @@ public struct ToolbarToolLayout: Codable, Equatable, Sendable {
     /// the bar does not draw. Empty means the bar shows no `⁞` at all.
     public var hiddenTools: [Tool] { pool }
 
-    /// S3: a saved layout that is still exactly the bar v0.5 shipped — every
-    /// tool on it, nothing behind the `⁞` — becomes this build's shipped bar,
-    /// so an install nobody rearranged gets the shorter bar instead of keeping
-    /// the long one for ever. A layout anyone touched comes back untouched:
-    /// the upgrade never rearranges a choice.
+    /// S3: a saved layout written before this batch that is still exactly the
+    /// bar v0.5 shipped — every tool on it, nothing behind the `⁞` — becomes
+    /// this build's shipped bar, so an install nobody rearranged gets the short
+    /// one. A layout anyone touched comes back untouched: the upgrade never
+    /// rearranges a choice.
+    ///
+    /// This runs **once per document**, and `currentVersion` is what makes that
+    /// true: a bar the user rebuilt to hold every tool again is the same
+    /// arrangement as the old shipped one, so deciding on identity alone would
+    /// undo their work on every launch. A document this build wrote carries the
+    /// version and is never looked at again.
+    ///
+    /// The comparison is on the normalised layout, not the bytes: a hand-edited
+    /// blob that differs only by an unknown identifier or a doubled separator
+    /// upgrades too. No organiser path can produce one, and the result is the
+    /// shipped bar either way.
     static func upgradingUncustomised(_ layout: ToolbarToolLayout) -> ToolbarToolLayout {
         guard layout.pool.isEmpty, layout.items == legacyStandardItems else { return layout }
         return .standard
@@ -456,8 +478,15 @@ public struct ToolbarToolLayout: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case items, pool, tools, hidden
+        case items, pool, tools, hidden, version
     }
+
+    /// The stored document's shape version (S3). A document that carries it was
+    /// written by a build that already shipped the overflow control, so it is
+    /// never migrated again — a bar the user rebuilt to hold every tool stays
+    /// exactly as they left it. A document without it predates the batch, and
+    /// that is the only kind `upgradingUncustomised` may move.
+    public static let currentVersion = 2
 
     /// Lenient decoding. The v0.5 shape holds `items` (identifier strings:
     /// `tool:` plus a tool raw value, or the `separator` token) and `pool`
@@ -469,13 +498,18 @@ public struct ToolbarToolLayout: Codable, Equatable, Sendable {
     /// build's shipped bar (S3); every other saved layout is kept as saved.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        // 0 for every document written before this batch, in either shape.
+        let version = (try? container.decode(Int.self, forKey: .version)) ?? 0
         if container.contains(.items) {
             let rawItems = (try? container.decode([String].self, forKey: .items)) ?? []
             let rawPool = (try? container.decode([String].self, forKey: .pool)) ?? []
-            self = ToolbarToolLayout.upgradingUncustomised(ToolbarToolLayout(
+            let decoded = ToolbarToolLayout(
                 items: rawItems.compactMap(ToolbarLayoutItem.init(identifier:)),
                 pool: rawPool.compactMap(Tool.init(rawValue:))
-            ))
+            )
+            self = version >= ToolbarToolLayout.currentVersion
+                ? decoded
+                : ToolbarToolLayout.upgradingUncustomised(decoded)
             return
         }
         let rawTools = (try? container.decode([String].self, forKey: .tools)) ?? []
@@ -499,6 +533,7 @@ public struct ToolbarToolLayout: Codable, Equatable, Sendable {
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(Self.currentVersion, forKey: .version)
         try container.encode(items.map(\.identifier), forKey: .items)
         // The pool's order is part of the layout, so it encodes in order,
         // never sorted.
