@@ -33,6 +33,22 @@ final class ToolbarPlacementChangeTests: XCTestCase {
         for _ in 0..<turns { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
     }
 
+    /// The screen the bar actually landed on, asked by its CENTRE — the lesson
+    /// `ToolbarPanelLiveResizeTests` already records. `NSScreen.screens.first` is
+    /// the primary display, and the bar opens where the POINTER is, which is the
+    /// human's and not the probe's; on a two-display Mac these two probes were
+    /// therefore asserting that a bar placed on the second display sits inside
+    /// the first one's frame. The frames were always right, the expectation named
+    /// the wrong screen, and the failure only appeared when the pointer happened
+    /// to be away from the primary display.
+    private func visibleFrame(containing frame: CGRect) throws -> CGRect {
+        let centre = CGPoint(x: frame.midX, y: frame.midY)
+        if let landed = NSScreen.screens.first(where: { $0.visibleFrame.contains(centre) }) {
+            return landed.visibleFrame
+        }
+        return try XCTUnwrap(NSScreen.screens.first?.visibleFrame)
+    }
+
     private func makeOnScreenPanel(_ state: EditorState) throws -> ToolbarPanel {
         let panel = ToolbarPanel(state: state, onUndo: {}, onRedo: {}, onClear: {}, onDone: {})
         let home = try XCTUnwrap(PrimaryScreenTestWindow.frame(for: panel.frame.size))
@@ -60,8 +76,8 @@ final class ToolbarPlacementChangeTests: XCTestCase {
         state.toolbarOrientation = .vertical
         runLoopTurns()
 
-        let visible = try XCTUnwrap(NSScreen.screens.first?.visibleFrame)
         let frame = panel.frame
+        let visible = try visibleFrame(containing: frame)
         XCTAssertGreaterThan(frame.height, frame.width, "a vertical bar is a column")
         XCTAssertTrue(visible.contains(frame), "\(frame) must stay inside \(visible)")
         // Against a side, not in the middle: either edge is fine, the centre is
@@ -107,7 +123,7 @@ final class ToolbarPlacementChangeTests: XCTestCase {
             panel.frame.height, panel.frame.width,
             "the bar came back as \(panel.frame.size) after switching to vertical; it must be a column")
         XCTAssertNotEqual(panel.frame.size, horizontalSize)
-        let visible = try XCTUnwrap(NSScreen.screens.first?.visibleFrame)
+        let visible = try visibleFrame(containing: panel.frame)
         XCTAssertTrue(visible.contains(panel.frame), "\(panel.frame) must stay inside \(visible)")
     }
 
