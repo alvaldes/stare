@@ -514,7 +514,7 @@ struct BarPane: View {
     /// a graveyard — the tools the bar keeps behind its `⁞`. Constants, not
     /// literals in the body, so a test pins the exact reading instead of
     /// inspecting SwiftUI internals.
-    static let poolCardTitle = "Behind the ⁞"
+    static let poolCardTitle = "More tools"
     /// The card's symbol is the bar's own overflow glyph, so the card and
     /// the control it names are one mark.
     static let poolCardSymbol = ToolbarOverflowSpec.glyph
@@ -526,11 +526,11 @@ struct BarPane: View {
     /// comes back through any spot here, and the bar's first tool cannot
     /// leave.
     static let poolCardHelp = """
-    These tools sit behind the bar's ⁞ — one click away while drawing, and \
-    they keep their shortcuts. Drag one onto the bar to bring it back, and \
-    drag a bar tool onto a spot here to hide it again. A tool is never \
-    nowhere. A placed separator comes back off the bar through any spot \
-    here, and the bar's first tool cannot leave — the preview dims it.
+    These tools are hidden: the bar keeps them, one click away while drawing, \
+    and they keep their shortcuts. Drag one onto the bar to bring it back, and \
+    drag a bar tool onto a spot here to hide it. A tool is never nowhere. A \
+    placed separator comes back off the bar through any spot here, and the \
+    bar's first tool cannot leave — the preview dims it.
     """
 
     /// The real bar the stage renders (T4/S5): the draft's item list AND the
@@ -556,7 +556,8 @@ struct BarPane: View {
                     handleBarDrop(target: target, edge: edge, payload: .addSeparator)
                 },
                 fixed: { item in !model.toolbarTools.canLeave(item) }
-            )
+            ),
+            overflowPresentation: .inline
         )
     }
 
@@ -645,12 +646,12 @@ struct BarPane: View {
     private var toolbarPoolEndZone: some View {
         HStack(spacing: 4) {
             Image(systemName: "plus")
-                .font(.system(size: 9, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
             Text("Hide it here")
-                .font(.system(size: 10))
+                .font(.system(size: 11))
         }
         .foregroundStyle(.tertiary)
-        .frame(minWidth: 72, minHeight: 26)
+        .frame(minWidth: 170, minHeight: 36)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4]))
@@ -783,7 +784,7 @@ struct BarPane: View {
     private var toolbarStage: some View {
         SettingsStage(
             label: "On the bar",
-            note: "Drag an item off the bar to hide it behind the ⁞."
+            note: "Drag an item off the bar to hide it with the more tools."
         ) {
             previewToolbar
                 .fixedSize()

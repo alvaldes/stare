@@ -158,6 +158,8 @@ final class OverlayController {
         redoOrder.removeAll { self.namesMark($0, ofDisplay: displayID, in: retired) }
     }
     private var toolbar: ToolbarPanel?
+    /// The hidden tools' own window (T6), alive only while the bar asks for it.
+    private var overflowPanel: ToolbarOverflowPanel?
     /// The event monitor that gives the bar its cursor over its whole area
     /// (T6/S6). The bar's own per-view cursor paths cannot do it: the panel
     /// can never become key, so its cursor rectangles are never honoured, and
@@ -1604,14 +1606,16 @@ final class OverlayController {
                 // drawing bar is built without it (nil hides the button).
                 onDeletePage: { [weak self] in
                     self?.boardCanvasUnderPointer()?.boardView?.deleteCurrentPage()
-                }
+                },
+                onOverflowToggle: { [weak self] in self?.toggleOverflowPanel() }
             )
             : ToolbarPanel(
                 state: state,
                 onUndo: { [weak self] in self?.undo() },
                 onRedo: { [weak self] in self?.redo() },
                 onClear: { [weak self] in self?.clearAll() },
-                onDone: { [weak self] in self?.deactivate() }
+                onDone: { [weak self] in self?.deactivate() },
+                onOverflowToggle: { [weak self] in self?.toggleOverflowPanel() }
             ))
         self.toolbar = toolbar
         toolbar.positionNearPointerDisplay(placement: state.palettePlacementValue)
@@ -1728,7 +1732,38 @@ final class OverlayController {
 
     private func hideToolbar() {
         removeToolbarCursorMonitor()
+        hideOverflowPanel()
         toolbar?.orderOut(nil)
+    }
+
+    /// Opens the hidden tools beside the bar, or closes them if they are already
+    /// there (T6). The panel is rebuilt each time it opens, so it always shows
+    /// the layout as it is now and lands where the bar currently sits; it never
+    /// outlives the bar or the mode.
+    private func toggleOverflowPanel() {
+        if overflowPanel?.isVisible == true {
+            hideOverflowPanel()
+            return
+        }
+        guard let toolbar, let screen = toolbar.screen ?? NSScreen.main else { return }
+        hideOverflowPanel()
+        let panel = ToolbarOverflowPanel(
+            state: state,
+            hidden: state.toolbarTools.hiddenTools,
+            vertical: state.toolbarOrientation == .vertical,
+            onPick: { [weak self] tool in
+                self?.state.select(tool)
+                self?.hideOverflowPanel()
+            }
+        )
+        panel.place(beside: toolbar.frame, border: state.toolbarBorder, screen: screen)
+        overflowPanel = panel
+        panel.orderFrontRegardless()
+    }
+
+    private func hideOverflowPanel() {
+        overflowPanel?.orderOut(nil)
+        overflowPanel = nil
     }
 }
 

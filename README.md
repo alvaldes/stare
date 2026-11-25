@@ -99,14 +99,14 @@ reopen it any time from the menu bar with **Setup Guide…**.
 | `⌘Z` · `⇧⌘Z` | Undo · redo |
 | `Esc` | Clear and leave |
 
-The bar's `⁞` holds the tools that are not the main ones: line, numbered step, blur,
-spotlight and laser ship behind it, so the bar stays short — most of all when it
-stands vertical — and every one of them is still one click away and keeps its own
-key wherever it lives. Click `⁞` and the extras open beside the bar, in a second
-column when it stands vertical instead of making it longer; picking one closes it
-again, and the control then shows that tool's icon, so the bar always says which
-tool is armed. Settings → Bar decides what sits on the bar and what waits behind
-the `⁞`.
+The bar's **more button** — three dots — holds the tools that are not the main
+ones: line, numbered step, blur, spotlight and laser ship behind it, so the bar
+stays short, most of all when it stands vertical, and every one of them is still
+one click away and keeps its own key wherever it lives. Click it and a small
+panel opens beside the bar, toward the middle of the screen rather than off the
+edge it is docked to; picking a tool closes it again, and the button then shows
+that tool's icon, so the bar always says which tool is armed. Settings → Bar
+decides what sits on the bar and what hides behind the button.
 
 <details>
 <summary>More shortcuts</summary>
@@ -144,7 +144,7 @@ Every preference Stare has lives in its Settings window (**Settings…** in the
 menu bar): a resizable window with a sidebar of sections, where every change
 applies immediately. The sections:
 
-- **General** — the drawing frame, which displays to draw on, where the palette opens, the toolbar's orientation and which screen edge it docks to, which tools it shows (on the bar or behind its `⁞`) and in which order, how long the laser lasts, whether marks and board pages survive quitting Stare (until the machine restarts, on by default), launch at login, and update checks.
+- **General** — the drawing frame, which displays to draw on, where the palette opens, the toolbar's orientation and which screen edge it docks to, which tools it shows (on the bar or hidden behind its more button) and in which order, how long the laser lasts, whether marks and board pages survive quitting Stare (until the machine restarts, on by default), launch at login, and update checks.
 - **Tools** — the ink drawing starts with, a shortcut for each tool, what a blur mark paints over what it covers (the audited gaussian blur or a randomized pixelate), and the palette's position reset.
 - **Shortcuts** — the five global shortcuts (`⌥⇧A`, `⌥⇧M`, `⌥⇧P`, `⌥⇧W`, `⌥⇧I`) with a key recorder and conflict checks.
 - **Pointer Highlight** — the style of the `⌥⇧M` highlight: five shapes (Ring, Squircle, Rhombus, Dot, Spotlight), size up to 240 pt, band width, border style (Solid or Dashed), opacity, glow, the click animation (Scale or Rotate), colour and idle fade, with a live preview drawn by the same renderer the overlay uses.

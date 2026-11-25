@@ -414,6 +414,21 @@ struct ToolbarView: View {
     /// The Settings organiser hooks (T6/S5): nil keeps the bar inert, exactly
     /// as every surface outside the organiser needs.
     var organiser: ToolbarOrganiserHooks? = nil
+
+    /// How the `⁞` shows what it hides (T6): the real bar asks the controller
+    /// for the extras panel, which opens beside the bar; the Settings preview
+    /// expands inside the pill instead, because a preview has no second window
+    /// to open and the expansion is how it shows what is behind the button.
+    enum OverflowPresentation: Equatable {
+        case panel
+        case inline
+    }
+
+    var overflowPresentation: OverflowPresentation = .panel
+
+    /// Asked to open or close the extras panel (T6). Nil keeps the inline
+    /// behaviour, which is what every surface other than the real bar wants.
+    var onOverflowToggle: (() -> Void)? = nil
     /// The organiser's measured item sizes, for the drop targets' midpoints.
     @State private var itemSizes: [ToolbarLayoutItem: CGSize] = [:]
 
@@ -473,14 +488,14 @@ struct ToolbarView: View {
                 // below it, so opening it never makes the bar taller again.
                 HStack(alignment: .top, spacing: 4) {
                     VStack(alignment: .center, spacing: 4) { barItems }
-                    if isOverflowOpen, showsOverflow { overflowColumn }
+                    if isOverflowOpen, showsOverflow, overflowPresentation == .inline { overflowColumn }
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 12)
             } else {
                 VStack(alignment: .center, spacing: 4) {
                     HStack(spacing: 4) { barItems }
-                    if isOverflowOpen, showsOverflow { overflowRow }
+                    if isOverflowOpen, showsOverflow, overflowPresentation == .inline { overflowRow }
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -733,9 +748,16 @@ struct ToolbarView: View {
         let hidden = hiddenTools
         let symbol = ToolbarOverflowSpec.symbolName(selected: state.tool, hidden: hidden)
         let activeHidden = hidden.contains(state.tool) ? state.tool : nil
-        let marked = activeHidden.map { state.isToolMarked($0) } ?? isOverflowOpen
+        let marked = activeHidden.map { state.isToolMarked($0) }
+            ?? (overflowPresentation == .inline ? isOverflowOpen : false)
         let help = ToolbarOverflowSpec.help(selected: state.tool, hidden: hidden)
-        return Button { isOverflowOpen.toggle() } label: {
+        return Button {
+            if overflowPresentation == .panel, let onOverflowToggle {
+                onOverflowToggle()
+            } else {
+                isOverflowOpen.toggle()
+            }
+        } label: {
             Image(systemName: symbol)
                 .font(.system(size: 12, weight: .semibold))
                 .rotationEffect(.degrees(

@@ -29,14 +29,14 @@ final class SettingsHiddenSectionTests: XCTestCase {
     /// a tool between the sections. Pinned as the exact constants `poolCard`
     /// renders.
     func testThePoolCardReadsAsTheBarsHiddenSection() {
-        XCTAssertEqual(BarPane.poolCardTitle, "Behind the ⁞")
+        XCTAssertEqual(BarPane.poolCardTitle, "More tools")
         XCTAssertEqual(BarPane.poolCardSymbol, ToolbarOverflowSpec.glyph)
         XCTAssertEqual(BarPane.poolCardHelp, """
-        These tools sit behind the bar's ⁞ — one click away while drawing, and \
-        they keep their shortcuts. Drag one onto the bar to bring it back, and \
-        drag a bar tool onto a spot here to hide it again. A tool is never \
-        nowhere. A placed separator comes back off the bar through any spot \
-        here, and the bar's first tool cannot leave — the preview dims it.
+        These tools are hidden: the bar keeps them, one click away while drawing, \
+        and they keep their shortcuts. Drag one onto the bar to bring it back, and \
+        drag a bar tool onto a spot here to hide it. A tool is never nowhere. A \
+        placed separator comes back off the bar through any spot here, and the \
+        bar's first tool cannot leave — the preview dims it.
         """)
     }
 

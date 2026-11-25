@@ -8,6 +8,14 @@ Bring `main` in as it advances (`git merge main`) so the merge at the end stays 
 
 ## Specs
 
+- **S7** (owner feedback round 1, verbatim): "'behinde ...' hay que cambiarlo porque no se entiende y no se
+  ven claros los '...'"; "hay que ampliar el area de 'hide it here'"; "esta invertido el top y bottom del
+  horizontal"; "al hacer click en los '...' de la barra en vez de abrir otra barra en paralelo hay que mostrar
+  una ventana minimalista con los tools ocultos pro no por detras (de la bar al borde) sino por delante (de la
+  barra al centro de la pantalla)". Read together: the extras stop being a second column of the bar and become
+  their own small window, always opening toward the middle of the screen; the Settings card is named in words
+  rather than in the glyph, because three dots are a mark and not a word; the drop target is a real target.
+
 - **S1** The bar gets a `⁞` for the tools that are not the main ones, so it stops growing:
   "En el bar ya hay muchas cosas y esto hace que sea demasiado grande sobre todo para vertical y para eso
   entre las cosas que podemos hacer es poner unos '⁞' para tools extras como el spotlight y algun otro que
@@ -38,6 +46,7 @@ Bring `main` in as it advances (`git merge main`) so the merge at the end stays 
 | T3 | S4 | The Settings pool as the bar's hidden section: titled, worded, never inert | worker | ed576a5 |
 | T4 | S5 | The Settings preview shows the `⁞` and the draft's hidden tools | worker | ed576a5 |
 | T5 | S1-S6 | Docs: README, CHANGELOG, and this log | inline (parent) | d7b31f6 |
+| T6 | S7 | Owner feedback round 1: the extras get their own minimal panel, toward the screen; the card reads "More tools"; a roomy drop zone | inline (parent) | pending |
 
 **Slice note.** The `20570 authored changed lines in 96 commits since origin/main` the commit hook reports is the
 unpublished `main` history this branch sits on, not this batch: T1+T2 are ~250 authored lines across six
@@ -146,3 +155,19 @@ files. Delivery shape when publishing stays the owner's call, and `main` is merg
   state (or a pixel-aimed synthetic click on the real bar); the layout is cosmetic and reversible, three
   reviewers named it non-blocking, and the honest line is to leave it recorded rather than grow the view for
   the test.
+- **L18** (S7, round 1 of owner feedback): four fixes. (a) The card is **More tools** and every sentence that
+  used the glyph now says "the more button"; the control's tooltip is `More tools: Line, Numbered step, …`,
+  and when the armed tool hides there it says `Spotlight is active and hidden · More tools: …`. (b) The
+  "Hide it here" zone went 72×26 → **170×36**. (c) The direction bug and (d) the panel are one change:
+  `ToolbarOverflowPlacement` (StareCore, 4 tests) puts the panel beside the bar on the side facing the middle
+  of the screen for every docked edge, clamped into the visible frame, and `ToolbarOverflowPanel` is a
+  minimal non-activating borderless window at the bar's own level holding only the hidden tools — a column
+  beside a vertical bar, a row beside a horizontal one, 44×162 and 172×42 rendered. The bar asks the
+  controller for it (`onOverflowToggle`); the Settings preview keeps the inline expansion because a preview
+  has no second window to open. Picking a tool selects it and closes the panel; the panel is closed with the
+  bar and rebuilt on every open, so it never outlives what it belongs to. Verified: 860 `StareCoreTests` +
+  293 `StareTests`, 0 failures, exit 0 (`--skip CardCursorRoutingTests`, L8).
+- **L19** (incident): the first worker given S7 timed out and left the tree untouched — no file created, no
+  edit beyond the parent's own. The work was redone inline. `main` was checked before editing: it had not
+  moved (the `812620c` commit belongs to the sibling session's own branch, not to `main`), so there was
+  nothing to merge.

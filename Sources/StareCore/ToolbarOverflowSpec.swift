@@ -24,13 +24,14 @@ public enum ToolbarOverflowSpec {
     }
 
     /// What the control's tooltip says: the tool that is active and hiding
-    /// here, and every tool waiting behind it.
+    /// here, and every tool waiting behind it. Spelled out in words — the
+    /// three dots are a mark on the bar, not something to read in a sentence.
     public static func help(selected: Tool?, hidden: [Tool]) -> String {
-        guard !hidden.isEmpty else { return "No tools behind the ⁞" }
+        guard !hidden.isEmpty else { return "No hidden tools" }
         let names = hidden.map(\.displayName).joined(separator: ", ")
         guard let selected, hidden.contains(selected) else {
-            return "Tools behind the ⁞: \(names)"
+            return "More tools: \(names)"
         }
-        return "\(selected.displayName) is active and lives behind the ⁞ · \(names)"
+        return "\(selected.displayName) is active and hidden · More tools: \(names)"
     }
 }

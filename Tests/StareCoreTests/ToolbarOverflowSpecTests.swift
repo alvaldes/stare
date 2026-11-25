@@ -30,12 +30,12 @@ final class ToolbarOverflowSpecTests: XCTestCase {
         let hidden: [Tool] = [.line, .number, .blur, .spotlight, .laser]
         XCTAssertEqual(
             ToolbarOverflowSpec.help(selected: .pen, hidden: hidden),
-            "Tools behind the ⁞: Line, Numbered step, Blur, Spotlight, Laser pointer"
+            "More tools: Line, Numbered step, Blur, Spotlight, Laser pointer"
         )
         XCTAssertEqual(
             ToolbarOverflowSpec.help(selected: .spotlight, hidden: hidden),
-            "Spotlight is active and lives behind the ⁞ · Line, Numbered step, Blur, Spotlight, Laser pointer"
+            "Spotlight is active and hidden · More tools: Line, Numbered step, Blur, Spotlight, Laser pointer"
         )
-        XCTAssertEqual(ToolbarOverflowSpec.help(selected: nil, hidden: []), "No tools behind the ⁞")
+        XCTAssertEqual(ToolbarOverflowSpec.help(selected: nil, hidden: []), "No hidden tools")
     }
 }
