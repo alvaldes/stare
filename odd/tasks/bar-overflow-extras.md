@@ -194,3 +194,16 @@ files. Delivery shape when publishing stays the owner's call, and `main` is merg
   the dock landed on the wrong edge, which also fed the panel's side. The reset-on-placement-change path
   (`ToolbarPanel` observing `$toolbarOrientation`/`$toolbarBorder` and clearing the saved anchor) is unchanged
   and still the mechanism; the owner re-tests it after the fix before anything else is added there.
+- **L22** (S8, item 6 explained): the flip had two causes, both reproduced in
+  `ToolbarPlacementChangeTests`. (a) A vertical bar whose border was still a horizontal edge anchored at
+  x = 0.5 — a column in the MIDDLE of the screen; `ToolbarBorder.docked(for:)` now coerces a mismatched pair to
+  that orientation's `fallbackEdge`, and the panel uses it everywhere it docks (fresh placement, refit, the
+  extras panel's side). (b) The reset consulted `savedAnchor()` again, and every programmatic move
+  re-persists an anchor on `didMove`, so the reset that runs after the resize re-anchored on the intermediate
+  position it had just made; `handlePositionReset` now places at the default anchor for the current dock and
+  clears the stored one afterwards. The probe asserts the column ends within 10 % of a side edge (a centre dock
+  is ~940 pt from both) instead of a magic number.
+- **L23** (S8, owner's new rule): the bar moves by its gripper alone — `ToolbarHostingView` no longer turns a
+  press on any non-control area into a window drag, so a stray click on the pill can never walk the bar away.
+  Pinned by a probe that presses the bar's body and asserts the frame does not move; the real drag feel stays
+  the owner's check. Verified: 866 `StareCoreTests` + 295 `StareTests`, 0 failures, exit 0.

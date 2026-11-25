@@ -3,12 +3,10 @@ import Combine
 import StareCore
 import SwiftUI
 
-/// Palette content view that turns a drag on any non-control area into a window
-/// drag, which is what makes a borderless panel movable.
+/// Palette content view. It no longer turns a drag on any non-control area into
+/// a window drag: the bar moves by its `⠇⠇` gripper alone, so a stray press on
+/// the pill can never walk the bar away from where the user put it.
 final class ToolbarHostingView: NSHostingView<ToolbarView> {
-    override func mouseDown(with event: NSEvent) {
-        window?.performDrag(with: event)
-    }
 
     /// Set by `ToolbarPanel`. Called whenever the hosted SwiftUI content has
     /// reached a fitting size the window is not showing yet, while attached
@@ -287,8 +285,9 @@ final class ToolbarPanel: NSPanel {
         let newSize = hosting.fittingSize
         guard newSize != frame.size else { return }
         guard let screen = screen ?? NSScreen.main ?? NSScreen.screens.first else { return }
+        let border = state.toolbarBorder.docked(for: state.toolbarOrientation)
         let anchor = savedAnchor()
-            ?? ToolbarGripperSpec.defaultAnchor(border: state.toolbarBorder, screenFrame: screen.frame)
+            ?? ToolbarGripperSpec.defaultAnchor(border: border, screenFrame: screen.frame)
         let rect = ToolbarGripperSpec.barRect(
             barSize: newSize,
             anchor: anchor,
@@ -298,11 +297,28 @@ final class ToolbarPanel: NSPanel {
         setFrame(rect, display: true)
     }
 
-    /// Re-anchors a visible palette at the fresh-install spot immediately, so
-    /// the Settings action is seen and not just stored for next time.
+    /// Re-anchors a visible palette at the fresh-install spot immediately, so the
+    /// Settings action is seen and not just stored for next time.
+    ///
+    /// It places at the DEFAULT anchor for the current dock rather than asking
+    /// `savedAnchor()` again: every programmatic move re-persists an anchor on
+    /// `didMove`, so the reset that runs after a resize would otherwise re-anchor
+    /// on the intermediate position it just made — which is how a column ended up
+    /// parked in the middle of the screen after a placement change. The border is
+    /// coerced to one the orientation can actually sit on for the same reason.
     @objc private func handlePositionReset() {
         guard isVisible else { return }
-        positionNearPointerDisplay(placement: state.palettePlacementValue)
+        let border = state.toolbarBorder.docked(for: state.toolbarOrientation)
+        guard let target = targetScreen(for: state.palettePlacementValue) else { return }
+        let anchor = ToolbarGripperSpec.defaultAnchor(border: border, screenFrame: target.frame)
+        let rect = ToolbarGripperSpec.barRect(
+            barSize: frame.size,
+            anchor: anchor,
+            screenFrame: target.frame,
+            visibleFrame: target.visibleFrame
+        )
+        setFrame(rect, display: true)
+        UserDefaults.standard.removeObject(forKey: Self.anchorKey)
     }
 
     deinit {
@@ -318,8 +334,9 @@ final class ToolbarPanel: NSPanel {
     func positionNearPointerDisplay(placement: PalettePlacement) {
         guard let target = targetScreen(for: placement) else { return }
 
+        let border = state.toolbarBorder.docked(for: state.toolbarOrientation)
         let anchor = savedAnchor()
-            ?? ToolbarGripperSpec.defaultAnchor(border: state.toolbarBorder, screenFrame: target.frame)
+            ?? ToolbarGripperSpec.defaultAnchor(border: border, screenFrame: target.frame)
         let rect = ToolbarGripperSpec.barRect(
             barSize: frame.size,
             anchor: anchor,

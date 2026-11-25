@@ -99,6 +99,18 @@ public enum ToolbarBorder: String, Codable, CaseIterable, Sendable {
     /// Along the right edge.
     case right
 
+    /// The edge this border means for a bar laid out in `orientation`: a
+    /// horizontal bar only docks top or bottom and a vertical one only left or
+    /// right, so a mismatched pair is coerced to that orientation's default edge
+    /// (top, right). Without this a column asked to dock on a horizontal edge
+    /// anchors in the middle of the screen, which is exactly the "broken bar" a
+    /// placement change used to leave behind.
+    public func docked(for orientation: ToolbarOrientation) -> ToolbarBorder {
+        ToolbarBorder.validEdges(for: orientation).contains(self)
+            ? self
+            : ToolbarBorder.fallbackEdge(for: orientation)
+    }
+
     /// English label shown in Settings.
     public var title: String {
         switch self {

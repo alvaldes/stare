@@ -1758,7 +1758,7 @@ final class OverlayController {
         )
         panel.place(
             beside: toolbar.frame,
-            border: state.toolbarBorder,
+            border: state.toolbarBorder.docked(for: state.toolbarOrientation),
             screen: screen,
             anchor: toolbar.overflowButtonScreenCentre()
         )

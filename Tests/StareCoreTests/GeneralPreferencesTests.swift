@@ -758,6 +758,23 @@ final class GeneralPreferencesTests: XCTestCase {
         }
     }
 
+    /// A bar can only dock on an edge its orientation sits on: a mismatched pair
+    /// (a column asked to dock on the top edge, a row on the left) is coerced to
+    /// that orientation's fallback edge instead of anchoring the bar in the
+    /// middle of the screen.
+    func testAMismatchedOrientationAndBorderIsCoercedToAValidEdge() {
+        for border in ToolbarBorder.validEdges(for: .horizontal) {
+            XCTAssertEqual(border.docked(for: .horizontal), border)
+        }
+        for border in ToolbarBorder.validEdges(for: .vertical) {
+            XCTAssertEqual(border.docked(for: .vertical), border)
+        }
+        XCTAssertEqual(ToolbarBorder.top.docked(for: .vertical), .left)
+        XCTAssertEqual(ToolbarBorder.bottom.docked(for: .vertical), .left)
+        XCTAssertEqual(ToolbarBorder.left.docked(for: .horizontal), .top)
+        XCTAssertEqual(ToolbarBorder.right.docked(for: .horizontal), .top)
+    }
+
     // MARK: Toolbar docking geometry (T9/S12)
 
     /// A 14" MacBook-like screen: 1512×982 frame with a 38-pt menu bar at the
