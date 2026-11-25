@@ -17,6 +17,14 @@ import XCTest
 /// lives outside that square. The raw decode is what the pins below measure,
 /// reached by the repository path (`Resources/AppIcon.icns`) because the test
 /// target ships no bundle resources.
+///
+/// Spec S9 adds the shape duty: an opaque BOUNDING BOX is exactly where a
+/// rounded square hides what sits behind it — the baked shadow survives in
+/// the four corners as soft grey. The resolution must therefore measure the
+/// card's corner radius from the alpha map itself (the offsets of the opaque
+/// span on the box's edge rows and columns) and clip the artwork to that
+/// rounded rectangle: a pixel outside the shape is fully transparent, the
+/// shape's straight edges stay opaque, and the bounds stay the shape's.
 final class AppIconImageTests: XCTestCase {
     /// `Resources/` in the repository, walked from the test file's location:
     /// `Tests/StareTests/<this file>`.
@@ -71,6 +79,37 @@ final class AppIconImageTests: XCTestCase {
         )
     }
 
+    /// The measured radius, pinned so a re-raster of the icns cannot
+    /// silently change the shape the mark is cut to. The artwork's source
+    /// SVG (Resources/app-icon.svg) draws the card with rx 14.37 in its 64
+    /// design box, scaled ×12.875 into the 1024 canvas — 185.0 px there,
+    /// 92.5 pt in the decoded image's own point space.
+    func testTheMeasuredCornerRadiusIsPinned() throws {
+        let file = try XCTUnwrap(NSImage(contentsOf: Self.icnsURL), "the repo's AppIcon.icns must decode")
+        let shape = try XCTUnwrap(AppIconArtwork.measureOpaqueShape(of: file))
+        XCTAssertEqual(shape.cornerRadius, 92.5, accuracy: 3.0,
+            "the measured corner radius must stay the artwork's own rounded-card radius; measured \(shape.cornerRadius) pt")
+        XCTAssertEqual(shape.bounds.width, 412.0, accuracy: 1.0,
+            "the measured bounds the cut works from must stay the card's own; measured \(shape.bounds.width) pt wide")
+        XCTAssertEqual(shape.bounds.height, 412.0, accuracy: 1.0,
+            "the measured bounds the cut works from must stay the card's own; measured \(shape.bounds.height) pt tall")
+    }
+
+    /// Degenerate input: an image whose alpha is fully opaque has sharp
+    /// corners exactly as heavy as its edges, so there is nothing to cut —
+    /// the fallback keeps its identity, as the missing/undecodable pins
+    /// already promise for their own cases.
+    func testFullyOpaqueFallbackKeepsItsIdentity() {
+        let fallback = NSImage(size: NSSize(width: 7, height: 11))
+        fallback.lockFocus()
+        NSColor.red.setFill()
+        NSRect(origin: .zero, size: fallback.size).fill()
+        fallback.unlockFocus()
+        let image = AppIconArtwork.resolve(resourceURL: nil, fallback: fallback)
+        XCTAssertTrue(image === fallback, "a fully opaque image offers no measurable corner to cut; it must return unchanged")
+        XCTAssertEqual(image.size, NSSize(width: 7, height: 11))
+    }
+
     /// A missing file falls back instead of returning nothing: the given
     /// fallback image comes back, unchanged.
     func testMissingResourceFallsBackInsteadOfReturningNothing() {
@@ -106,7 +145,90 @@ final class AppIconImageTests: XCTestCase {
         )
     }
 
+    /// Spec S9: after resolution the four CORNER pixels must be light-free —
+    /// the named threshold is 0.05, so no soft shadow alpha (which lives
+    /// exactly between the card's arc and its bounding box) survives at the
+    /// box's four corners.
+    private static let cornerTransparencyThreshold: CGFloat = 0.05
+
+    func testResolvedArtworkCornersAreCutToTheShapeNotItsBox() throws {
+        let image = AppIconArtwork.resolve(
+            resourceURL: Self.icnsURL,
+            fallback: NSImage(size: NSSize(width: 1, height: 1))
+        )
+        let scan = try Self.scanPixels(of: image)
+        let corners: [(name: String, x: Int, y: Int)] = [
+            ("top-left", 0, 0),
+            ("top-right", scan.pixelWidth - 1, 0),
+            ("bottom-left", 0, scan.pixelHeight - 1),
+            ("bottom-right", scan.pixelWidth - 1, scan.pixelHeight - 1),
+        ]
+        for corner in corners {
+            XCTAssertLessThanOrEqual(
+                scan.alpha(x: corner.x, y: corner.y), Self.cornerTransparencyThreshold,
+                "the \(corner.name) corner pixel must be transparent now the mark is cut to its rounded shape; " +
+                "measured alpha \(scan.alpha(x: corner.x, y: corner.y)) — soft shadow ink survives where the box's corner is lighter than the card"
+            )
+        }
+    }
+
+    /// Spec S9: the cut removes only the corners' overhang — the shape's own
+    /// edge midpoints must stay as opaque as the card drew them.
+    func testResolvedArtworkEdgeMidpointsStayOpaque() throws {
+        let image = AppIconArtwork.resolve(
+            resourceURL: Self.icnsURL,
+            fallback: NSImage(size: NSSize(width: 1, height: 1))
+        )
+        let scan = try Self.scanPixels(of: image)
+        let midX = scan.pixelWidth / 2
+        let midY = scan.pixelHeight / 2
+        let midpoints: [(name: String, x: Int, y: Int)] = [
+            ("top", midX, 0),
+            ("bottom", midX, scan.pixelHeight - 1),
+            ("left", 0, midY),
+            ("right", scan.pixelWidth - 1, midY),
+        ]
+        for midpoint in midpoints {
+            XCTAssertGreaterThanOrEqual(
+                scan.alpha(x: midpoint.x, y: midpoint.y), 0.5,
+                "the \(midpoint.name) edge midpoint must remain opaque — the cut may only remove what is outside the shape; " +
+                "measured alpha \(scan.alpha(x: midpoint.x, y: midpoint.y))"
+            )
+        }
+    }
+
     // MARK: - Measurement
+
+    private struct PixelScan {
+        let rep: NSBitmapImageRep
+        let pixelWidth: Int
+        let pixelHeight: Int
+
+        func alpha(x: Int, y: Int) -> CGFloat {
+            rep.colorAt(x: x, y: y)?.alphaComponent ?? 0
+        }
+    }
+
+    /// Renders an image into a bitmap at 2× and returns it, so a test can
+    /// name individual pixels (S9's corner and edge-midpoint pins).
+    private static func scanPixels(of image: NSImage) throws -> PixelScan {
+        let size = image.size
+        let scale: CGFloat = 2
+        let width = max(1, Int(size.width * scale))
+        let height = max(1, Int(size.height * scale))
+        let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .calibratedRGB, bytesPerRow: 0, bitsPerPixel: 0
+        )
+        let bitmap = try XCTUnwrap(rep)
+        bitmap.size = size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        image.draw(in: NSRect(origin: .zero, size: size), from: .zero, operation: .copy, fraction: 1)
+        NSGraphicsContext.restoreGraphicsState()
+        return PixelScan(rep: bitmap, pixelWidth: width, pixelHeight: height)
+    }
 
     private struct AlphaScan {
         let pixelWidth: Int

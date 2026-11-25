@@ -379,11 +379,21 @@ struct AppMark: View {
 /// square is soft-alpha shadow ink (hundreds of thousands of pixels at the
 /// 2× probe render, capped at the flood opacity's 30 %). So the resolved
 /// image is cropped to the opaque shape's own bounds by alpha: every shadow
-/// pixel lives outside that square. The cost of the crop, stated: the mark
-/// now draws the tile edge to edge of its `size` frame, so the visible square
-/// is ~24 % larger in side than the padding-padded canvas made it (512/412)
-/// — the identity behaviour (colour, no tint, not a template,
-/// `accessibilityHidden`, both call sites, the `size` parameter) is untouched.
+/// pixel lives outside that square. And because an opaque BOUNDING BOX is
+/// exactly where a rounded square hides what sits behind it (T9/S9), the box
+/// is then cut to the shape: the card's corner radius is measured from the
+/// alpha map itself — the offset of the opaque span on the box's edge rows
+/// and columns, in the resolved image's own pixel space — and the artwork is
+/// clipped to that rounded rectangle, so the soft pixels between the arc and
+/// the box are fully transparent. A shape that cannot be measured (offsets
+/// that disagree, sharp corners) keeps the plain box trim; an image that is
+/// already tight or fully opaque comes back unchanged, so the fallback
+/// path's identity and degenerate inputs stay safe. The cost of the crop,
+/// stated: the mark now draws the tile edge to edge of its `size` frame, so
+/// the visible square is ~24 % larger in side than the padding-padded canvas
+/// made it (512/412) — the identity behaviour (colour, no tint, not a
+/// template, `accessibilityHidden`, both call sites, the `size` parameter)
+/// is untouched.
 enum AppIconArtwork {
     /// The cached result for the real bundle, so neither caller re-decodes
     /// the 612 KB icon file on every render tick.
@@ -402,12 +412,13 @@ enum AppIconArtwork {
 
     /// The head-testable core of the resolution above: read the artwork at
     /// `resourceURL` when it decodes, otherwise return the fallback itself,
-    /// and trim the result to its opaque bounds. A fallback may keep its
-    /// identity when it carries no opaque region to trim — a missing file
-    /// must never resolve to nothing.
+    /// then cut the result to its opaque shape (bounds from alpha ≥ 0.5,
+    /// then the measured rounded shape). A fallback may keep its identity
+    /// when it carries no opaque region or no measurable shape — a missing
+    /// file must never resolve to nothing.
     static func resolve(resourceURL: URL?, fallback: NSImage) -> NSImage {
         let resolved = resolveArtwork(resourceURL: resourceURL, fallback: fallback)
-        return trimToOpaqueBounds(resolved)
+        return clipToOpaqueShape(resolved)
     }
 
     private static func resolveArtwork(resourceURL: URL?, fallback: NSImage) -> NSImage {
@@ -417,67 +428,212 @@ enum AppIconArtwork {
         return fallback
     }
 
-    /// The opaque bounds of `image`, in points: the bounding box of the pixels
-    /// at alpha ≥ 0.5 — above the baked shadow's ~30 % flood-opacity ceiling,
-    /// below the artwork's own edges, so the box is the shape the icon paints
-    /// and not one pixel of its shadow. Rendered and measured at 2× for a
-    /// clean edge estimate on a soft-alpha boundary.
-    private static func opaqueBounds(of image: NSImage) -> CGRect? {
+    /// The shape the resolution cuts to, measured, not assumed (T9/S9).
+    struct MeasuredShape {
+        /// The bounding box of the opaque card, in points.
+        let bounds: CGRect
+        /// The card's corner radius, in points, measured from the alpha map
+        /// in the resolved image's own pixel space. Zero when the shape's
+        /// corners are sharp or its offsets disagree — either way there is
+        /// no measured round corner to cut to.
+        let cornerRadius: CGFloat
+    }
+
+    /// The alpha above which a pixel counts as the artwork's own card and not
+    /// its baked shadow: above the shadow's ~30 % flood-opacity ceiling,
+    /// below the card's edges.
+    private static let cardAlphaThreshold: CGFloat = 0.5
+
+    /// The render scale every measurement and cut below works at, for a clean
+    /// edge estimate on a soft-alpha boundary.
+    private static let measureScale: CGFloat = 2
+
+    /// THE measured shape of `image`: its opaque bounds (the bbox of the
+    /// pixels at alpha ≥ 0.5) and its corner radius, both in points. The
+    /// radius is read from the alpha map, not assumed: on an EDGE ROW of the
+    /// card the opaque span starts exactly `radius` pixels in from the box —
+    /// likewise on an edge column — so the eight offsets (each edge row and
+    /// edge column, scanned from each of its two ends) must agree before an
+    /// arc radius is solved at all (see `arcRadiusPixels`: the tangent edge
+    /// reads a few percent inside the true arc, so the solved radius comes
+    /// from contour probes deeper in the arc). An image that cannot be
+    /// measured (no opaque pixels, a render failure) answers nil; a shape
+    /// whose corners are sharp, or whose offsets disagree, answers radius
+    /// zero — the caller keeps the plain box trim it already had (T9's "do
+    /// not start clipping images you cannot measure"). Rendered and measured
+    /// at 2×.
+    static func measureOpaqueShape(of image: NSImage) -> MeasuredShape? {
         let size = image.size
         guard size.width > 0, size.height > 0 else { return nil }
-        let scale: CGFloat = 2
+        let scale = measureScale
         let pixelsWide = max(1, Int(size.width * scale))
         let pixelsHigh = max(1, Int(size.height * scale))
-        guard let bitmap = NSBitmapImageRep(
-            bitmapDataPlanes: nil, pixelsWide: pixelsWide, pixelsHigh: pixelsHigh,
-            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-            colorSpaceName: .calibratedRGB, bytesPerRow: 0, bitsPerPixel: 0
-        ) else { return nil }
-        bitmap.size = size
-        guard let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
+        guard let bitmap = makeBitmap(pixelsWide: pixelsWide, pixelsHigh: pixelsHigh, size: size),
+            let context = NSGraphicsContext(bitmapImageRep: bitmap)
+        else { return nil }
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = context
         image.draw(in: NSRect(origin: .zero, size: size), from: .zero, operation: .copy, fraction: 1)
         NSGraphicsContext.restoreGraphicsState()
 
+        func alpha(_ x: Int, _ y: Int) -> CGFloat {
+            bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 0
+        }
+
         var minX = pixelsWide, minY = pixelsHigh, maxX = -1, maxY = -1
         for y in 0..<pixelsHigh {
             for x in 0..<pixelsWide {
-                if (bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 0) >= 0.5 {
+                if alpha(x, y) >= cardAlphaThreshold {
                     minX = min(minX, x); minY = min(minY, y)
                     maxX = max(maxX, x); maxY = max(maxY, y)
                 }
             }
         }
         guard maxX >= 0 else { return nil }
-        return CGRect(
+        let bounds = CGRect(
             x: CGFloat(minX) / scale,
             y: CGFloat(minY) / scale,
             width: CGFloat(maxX - minX + 1) / scale,
             height: CGFloat(maxY - minY + 1) / scale
         )
+
+        // The corner-radius measurement, from the alpha map itself. Every
+        // offset below is the distance from a box edge to the first opaque
+        // pixel along that edge — the arc's run-out — so for a rounded square
+        // all eight measure the same radius.
+        var offsets: [Int] = []
+        for y in [minY, maxY] {
+            if let x = (minX...maxX).first(where: { pixel in alpha(pixel, y) >= cardAlphaThreshold }) { offsets.append(x - minX) }
+            if let x = (minX...maxX).reversed().first(where: { pixel in alpha(pixel, y) >= cardAlphaThreshold }) { offsets.append(maxX - x) }
+        }
+        for x in [minX, maxX] {
+            if let edge = (minY...maxY).first(where: { pixel in alpha(x, pixel) >= cardAlphaThreshold }) { offsets.append(edge - minY) }
+            if let edge = (minY...maxY).reversed().first(where: { pixel in alpha(x, pixel) >= cardAlphaThreshold }) { offsets.append(maxY - edge) }
+        }
+        var cornerRadius: CGFloat = 0
+        if let least = offsets.min(), let most = offsets.max(), least > 0,
+            most - least <= max(6, (maxX - minX) / 100)
+        {
+            // The edge offsets are a consistent first guess, but the extreme
+            // edge row is TANGENT to the arc and its shallow coverage ramp
+            // reads a radius a few percent inside the card's true one
+            // (measured 169 px here against the design's 185 px). The radius
+            // the cut wants comes from the same alpha map deeper in the arc,
+            // where the boundary is steep enough for its ≥ 0.5 contour to
+            // track it: see `arcRadiusPixels`.
+            if let radiusPixels = arcRadiusPixels(
+                initialPixels: CGFloat(least + most) / 2,
+                alpha: alpha, minX: minX, minY: minY, maxX: maxX, maxY: maxY
+            ) {
+                cornerRadius = min(radiusPixels / scale, min(bounds.width, bounds.height) / 2)
+            }
+        }
+        return MeasuredShape(bounds: bounds, cornerRadius: cornerRadius)
     }
 
-    /// Crops `image` to its own opaque bounds — where the icns's baked drop
-    /// shadow dies. An image that is already tight (no padding), fully
-    /// transparent, or unrenderable comes back unchanged, so the fallback
-    /// path's identity guarantee and degenerate inputs stay safe.
-    static func trimToOpaqueBounds(_ image: NSImage) -> NSImage {
-        guard let bounds = opaqueBounds(of: image) else { return image }
+    /// The card's true arc radius, in pixels, from contour points deeper in
+    /// the arc than the tangent edge rows: at depth `k` pixels inside an edge
+    /// the ≥ 0.5 contour sits `d` pixels in from the box, and the arc's
+    /// own equation `d = r − sqrt(r² − (r−k)²)` has exactly one usable root in
+    /// that range: `r = d + k + sqrt(2·d·k)`. All eight depth probes (each
+    /// edge row and edge column, both of whose corners) must agree; a shape
+    /// the probes could not read consistently answers nil, which the caller
+    /// treats as no measurable corner to cut.
+    private static func arcRadiusPixels(
+        initialPixels: CGFloat,
+        alpha: (Int, Int) -> CGFloat,
+        minX: Int, minY: Int, maxX: Int, maxY: Int
+    ) -> CGFloat? {
+        let depth = max(4, Int(initialPixels / 2))
+        guard depth < min(maxX - minX, maxY - minY) / 2 else { return nil }
+        let consensus = max(6, (maxX - minX) / 100)
+        var estimates: [Int] = []
+        func solve(_ offset: Int?) {
+            guard let offset, offset > 0 else { return }
+            estimates.append(
+                Int(((CGFloat(offset + depth)) + (2 * CGFloat(offset) * CGFloat(depth)).squareRoot()).rounded())
+            )
+        }
+        for row in [minY + depth, maxY - depth] {
+            if let x = (minX...maxX).first(where: { pixel in alpha(pixel, row) >= cardAlphaThreshold }) { solve(x - minX) }
+            if let x = (minX...maxX).reversed().first(where: { pixel in alpha(pixel, row) >= cardAlphaThreshold }) { solve(maxX - x) }
+        }
+        for column in [minX + depth, maxX - depth] {
+            if let y = (minY...maxY).first(where: { pixel in alpha(column, pixel) >= cardAlphaThreshold }) { solve(y - minY) }
+            if let y = (minY...maxY).reversed().first(where: { pixel in alpha(column, pixel) >= cardAlphaThreshold }) { solve(maxY - y) }
+        }
+        guard let least = estimates.min(), let most = estimates.max(), most - least <= consensus else { return nil }
+        return CGFloat(least + most) / 2
+    }
+
+    /// A bitmap the measurements and cuts render into: `pixelsWide` ×
+    /// `pixelsHigh` pixels that present as `size` points.
+    private static func makeBitmap(pixelsWide: Int, pixelsHigh: Int, size: NSSize) -> NSBitmapImageRep? {
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: pixelsWide, pixelsHigh: pixelsHigh,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .calibratedRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ) else { return nil }
+        bitmap.size = size
+        return bitmap
+    }
+
+    /// Cuts `image` to its own opaque shape (T9/S9): first the bounds crop
+    /// the baked shadow's padding dies in, then the artwork is clipped to
+    /// the MEASURED rounded card, so the soft pixels between the arc and the
+    /// box-boundary corners are fully transparent. An image with no
+    /// measurable shape, one that is already tight (no padding), fully
+    /// transparent, or unrenderable comes back unchanged; a measured but
+    /// sharp-cornered shape (radius zero) keeps the plain box trim — the
+    /// fallback identity and degenerate inputs stay safe.
+    static func clipToOpaqueShape(_ image: NSImage) -> NSImage {
+        guard let shape = measureOpaqueShape(of: image) else { return image }
+        let bounds = shape.bounds
         let paddedWidth = abs(bounds.minX) < 0.5 && abs(image.size.width - bounds.maxX) < 0.5
         let paddedHeight = abs(bounds.minY) < 0.5 && abs(image.size.height - bounds.maxY) < 0.5
         if paddedWidth && paddedHeight { return image }
+        guard shape.cornerRadius > 0.5 else { return boxTrimmed(image, to: bounds) }
 
-        let scale: CGFloat = 2
-        guard let bitmap = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: max(1, Int((bounds.width * scale).rounded(.up))),
-            pixelsHigh: max(1, Int((bounds.height * scale).rounded(.up))),
-            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-            colorSpaceName: .calibratedRGB, bytesPerRow: 0, bitsPerPixel: 0
-        ) else { return image }
-        bitmap.size = bounds.size
-        guard let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return image }
+        let scale = measureScale
+        guard
+            let bitmap = makeBitmap(
+                pixelsWide: max(1, Int((bounds.width * scale).rounded(.up))),
+                pixelsHigh: max(1, Int((bounds.height * scale).rounded(.up))),
+                size: bounds.size
+            ),
+            let context = NSGraphicsContext(bitmapImageRep: bitmap)
+        else { return image }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        NSBezierPath(
+            roundedRect: NSRect(origin: .zero, size: bounds.size),
+            xRadius: shape.cornerRadius, yRadius: shape.cornerRadius
+        ).addClip()
+        image.draw(
+            in: NSRect(origin: .zero, size: bounds.size),
+            from: bounds,
+            operation: .copy,
+            fraction: 1
+        )
+        NSGraphicsContext.restoreGraphicsState()
+        let cropped = NSImage(size: bounds.size)
+        cropped.addRepresentation(bitmap)
+        return cropped
+    }
+
+    /// The L9 box trim exactly as it was: crops `image` to `bounds`, the
+    /// opaque bounding box, keeping everything inside it — the identity the
+    /// rounded cut falls back to for sharp or unmeasurable shapes.
+    private static func boxTrimmed(_ image: NSImage, to bounds: CGRect) -> NSImage {
+        let scale = measureScale
+        guard
+            let bitmap = makeBitmap(
+                pixelsWide: max(1, Int((bounds.width * scale).rounded(.up))),
+                pixelsHigh: max(1, Int((bounds.height * scale).rounded(.up))),
+                size: bounds.size
+            ),
+            let context = NSGraphicsContext(bitmapImageRep: bitmap)
+        else { return image }
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = context
         image.draw(
