@@ -97,3 +97,25 @@ files. Delivery shape when publishing stays the owner's call, and `main` is merg
   "Drop to pool" on the end zone and the stage's "Drag a tool out of the pool onto the bar". They read
   "Hide it here" and "Drag an item off the bar to hide it behind the ⁞" so the pane speaks one vocabulary;
   no test pinned either string.
+- **L12** (review): native review `review-fb9d873ce481f600` approved and burned for `60189f6..def1993`,
+  three lenses (risk, readability, reliability), five non-blocking findings: the data WARNING that mirrors the
+  assess escalation (a rebuilt full bar is indistinguishable from an untouched one), the vertical open-overflow
+  column having no executed assertion, the `⁞` accent conflating "extras open" with "hidden tool armed", and
+  two naming ones (`ToolbarToolLayout.hiddenTools` against `ToolbarView.hiddenTools`; `overflowButton` deriving
+  `marked` from a second copy of the predicate `ToolbarOverflowSpec.symbolName` already answers).
+- **L13** (blocker found by the independent verifier, fixed): the upgrade decided on layout identity at EVERY
+  decode, so the bar a user rebuilds by dragging the five extras back — byte-identical to the v0.5 shipped bar
+  — was rewritten to the shipped default on the next launch. That contradicted S3's "every tool stays movable
+  between the two sections", the README's "Settings decides what sits on the bar" and the round-trip invariant,
+  and the layout fuzz never visited that one layout. RED observed first
+  (`ToolbarOverflowMigrationTests.testAFullBarTheUserRebuiltSurvivesASave`), then fixed with a stored
+  `version` — `ToolbarToolLayout.currentVersion = 2`, so a document this build wrote is never migrated again
+  and only a version-less blob (the v0.5 and v0.4 shapes) goes through the upgrade — plus
+  `legacyStandardIdentifiers` pinned as a literal so adding or regrouping a tool later cannot silently stop
+  the migration. Six new tests, including "the upgrade moves the bar and nothing else in the stored blob" and
+  "a rearranged full bar is left exactly as saved". Verified after the fix: 854 `StareCoreTests` + 288
+  `StareTests`, 0 failures, exit 0 (`--skip CardCursorRoutingTests`, L8).
+- **L14** (follow-ups this batch does not take): R3-002 — the open overflow's vertical column has render
+  evidence (L7) and the horizontal case has an executed pixel test, but no assertion pins the vertical one;
+  a measurement test would need a seam that only exists for tests, so it stays a recorded gap. R3-003 and the
+  two readability findings are cosmetic. `SelfTest` was not run by the verifier (it needs a live session).
