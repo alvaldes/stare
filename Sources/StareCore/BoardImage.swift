@@ -58,6 +58,18 @@ public struct BoardImage: Equatable, Sendable {
             let atOrigin = CGRect(origin: .zero, size: own)
             return BoardImage(image: image, rect: transform.rect(toPage: atOrigin))
         }
+        // The fit and the clamp both happen in PAGE space, which is where every
+        // later clamp of this layer runs (a move and a resize drag). Doing them
+        // in view space left the paste admitting a placement the first drag then
+        // pushed: the grab minimum is 16 POINTS, so at zoom 2 the paste allowed
+        // 8 page points from the edge and the drag demanded 16.
+        // The FIT is measured in view points — the image lands at its own pixel
+        // size on screen, whatever the page's zoom — and the RESULT is clamped in
+        // page space, which is where every later clamp of this layer runs (a move
+        // and a resize drag). Clamping the view rect instead left the paste
+        // accepting a placement the first drag then pushed: the grab minimum is
+        // 16 POINTS, so at zoom 2 the paste allowed 8 page points from the edge
+        // and the drag demanded 16.
         let size = fittedSize(
             own,
             in: CGSize(
@@ -71,8 +83,9 @@ public struct BoardImage: Equatable, Sendable {
             width: size.width,
             height: size.height
         )
-        let clamped = CanvasComposition.clampedPlacement(centred, in: area)
-        return BoardImage(image: image, rect: transform.rect(toPage: clamped))
+        let pageArea = transform.rect(toPage: area)
+        let centredPage = transform.rect(toPage: centred)
+        return BoardImage(image: image, rect: CanvasComposition.clampedPlacement(centredPage, in: pageArea))
     }
 
     /// The most of the visible area a fresh paste may take. A capture bigger

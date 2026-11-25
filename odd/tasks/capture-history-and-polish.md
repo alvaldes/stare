@@ -439,3 +439,15 @@ part of this work.
   model restores it, a page that no longer exists reports nothing, and the whole path through the
   controller: `undo()` takes the paste off the page and `redo()` puts that same layer back. Whole suite
   **exit 0, no signal line, `StareTests.xctest` passed, 1161 started / 1161 passed / 0 failed**.
+
+- **L31** (the last item from outside the B list: the paste's clamp units). The paste clamped its
+  placement in VIEW points while every later clamp of the same layer — a move, a resize — runs in PAGE
+  points. Both use the same 16-point grab minimum, so at zoom 2 the paste accepted a placement 8 page
+  points from the edge and the first drag immediately pushed it to 16: the layer jumped the moment the
+  user touched it. The fit is still measured in view points (the image must land at its own pixel size on
+  screen whatever the zoom) and only the RESULT is clamped in page space now, so a fresh paste is already
+  where the drag would put it. First attempt got this wrong by fitting in page units too, which halved
+  every pasted image's on-screen size at zoom 2 — the existing zoom test caught it before the commit.
+  **Evidence**: `testAPastedLayerIsAlreadyInsideTheClampADragApplies` (the drag's own clamp leaves a fresh
+  paste exactly where it is, at zoom 2), whole suite exit 0 / no signal line / bundle passed, **1162
+  started / 1162 passed / 0 failed**.

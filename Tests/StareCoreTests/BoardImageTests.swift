@@ -73,6 +73,24 @@ final class BoardImageTests: XCTestCase {
         XCTAssertEqual(big.rect.midY, area.midY, accuracy: 0.001, "centred down")
     }
 
+    /// The bug this pins: the paste clamped in VIEW points while every later
+    /// clamp of the layer runs in PAGE points, so at zoom 2 the paste accepted a
+    /// placement 8 page points from the edge and the first drag pushed it to 16
+    /// — the layer jumped the moment the user touched it. Paste and drag now
+    /// agree, so a freshly pasted layer is already where the drag would put it.
+    func testAPastedLayerIsAlreadyInsideTheClampADragApplies() {
+        let view = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let zoomed = BoardTransform(offset: CGSize(width: 40, height: 25), zoom: 2)
+
+        let layer = BoardImage.pasted(solid(900, 700, 0, 1, 0), inView: view, transform: zoomed)
+
+        let pageArea = zoomed.rect(toPage: view)
+        XCTAssertEqual(
+            CanvasComposition.clampedPlacement(layer.rect, in: pageArea), layer.rect,
+            "the drag's own clamp must leave a fresh paste exactly where it is"
+        )
+    }
+
     func testAPasteIntoAnEmptyVisibleAreaLandsAtThePageOriginAtItsOwnSize() {
         // A paste while the board has no laid-out canvas cannot centre on
         // nothing: centring on a zero rect put the layer at a negative
