@@ -12,10 +12,26 @@ import UniformTypeIdentifiers
 final class CaptureEditorController {
     private var windows: [CaptureEditorWindow] = []
 
+    /// Fires with the composed image every time the user takes one out of the
+    /// editor — a copy or a completed save (L7). The overlay wires it to the
+    /// same recording its own captures go through, so an edited variant lands
+    /// in the history like any other capture instead of vanishing with the
+    /// window.
+    var onDeliver: ((CGImage) -> Void)?
+
+    /// The windows this controller opened, open or closed on screen — the seam
+    /// a test needs to reach the content it built.
+    var windowsForTesting: [CaptureEditorWindow] { windows }
+
     func open(
         image: CGImage, capture: CapturePreference = .standard, redactionStyle: RedactionStyle = .blur
     ) {
-        let window = CaptureEditorWindow(image: image, capture: capture, redactionStyle: redactionStyle) { [weak self] closing in
+        let window = CaptureEditorWindow(
+            image: image,
+            capture: capture,
+            redactionStyle: redactionStyle,
+            onDeliver: onDeliver
+        ) { [weak self] closing in
             self?.windows.removeAll { $0 === closing }
         }
         windows.append(window)
@@ -33,8 +49,15 @@ final class CaptureEditorController {
 final class CaptureEditorWindow: NSWindow {
     override var canBecomeKey: Bool { true }
 
-    init(image: CGImage, capture: CapturePreference, redactionStyle: RedactionStyle = .blur, onClose: @escaping (CaptureEditorWindow) -> Void) {
+    init(
+        image: CGImage,
+        capture: CapturePreference,
+        redactionStyle: RedactionStyle = .blur,
+        onDeliver: ((CGImage) -> Void)? = nil,
+        onClose: @escaping (CaptureEditorWindow) -> Void
+    ) {
         let content = CaptureEditorContent(image: image, capture: capture, redactionStyle: redactionStyle)
+        content.onDeliver = onDeliver
         super.init(
             contentRect: CGRect(origin: .zero, size: content.preferredSize),
             styleMask: [.titled, .closable, .resizable],
@@ -65,6 +88,8 @@ final class CaptureEditorContent: NSView {
     private let state = EditorState()
     /// The preference the save panel defaults from (T11/S6).
     private let capture: CapturePreference
+    /// Where a composed variant goes once the user copies or saves it (L7).
+    var onDeliver: ((CGImage) -> Void)?
     var preferredSize: CGSize {
         let image = canvas.image
         let width = min(max(CGFloat(image.width) / 2, 480), 1100)
@@ -113,13 +138,30 @@ final class CaptureEditorContent: NSView {
             onRedo: { [weak self] in self?.canvas.redo() },
             onClear: { [weak self] in self?.canvas.clearMarks() },
             onCrop: { [weak self] in self?.canvas.beginCrop() },
-            onCopy: { [weak self] in self?.canvas.copyToPasteboard() },
+            onCopy: { [weak self] in
+                guard let self else { return }
+                self.canvas.copyToPasteboard()
+                self.deliverComposed()
+            },
             onSave: { [weak self] in
                 guard let self else { return }
-                self.canvas.savePanel(preference: self.capture)
+                let preference = self.capture
+                // Delivery waits for the write: a cancelled save panel produced
+                // nothing, so it records nothing.
+                self.canvas.savePanel(preference: preference) { [weak self] in
+                    self?.deliverComposed()
+                }
             },
             onClose: { [weak self] in self?.window?.close() }
         )
+    }
+
+    /// Hands the composed image to `onDeliver`, if any: one call site for both
+    /// paths (copy, saved) so the edited variant reaches the history the same
+    /// way whichever one produced it.
+    func deliverComposed() {
+        guard let composed = canvas.composedImage() else { return }
+        onDeliver?(composed)
     }
 
     override func layout() {
@@ -1837,7 +1879,7 @@ final class CaptureEditorCanvas: NSView {
     /// name is `CapturePreference.fileName(at:)` — prefix plus timestamp —
     /// and the chosen format sets the panel's type and extension, instead of
     /// the hardcoded "Stare.png" (T11/S6).
-    func savePanel(preference: CapturePreference) {
+    func savePanel(preference: CapturePreference, onSaved: (() -> Void)? = nil) {
         guard let composed = composedImage() else { return }
         let panel = NSSavePanel()
         let isPNG = preference.format == .png
@@ -1850,6 +1892,7 @@ final class CaptureEditorCanvas: NSView {
             }
             try? data.write(to: url)
             Diag.log("editor saved \(url.lastPathComponent)")
+            onSaved?()
         }
     }
 }

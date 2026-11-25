@@ -62,7 +62,7 @@ B3, B5 and B6 are defects in what T2b just shipped, not new wishes; B1, B2, B4, 
 - **L4** (evidence, T3): the anchors were 8% of the screen's WIDTH for the side borders and 8% of its HEIGHT for the top/bottom ones, so on a 1512×982 screen the column sat 100 pt in while the row sat 58 pt in. `ToolbarGripperSpec.defaultAnchor(border:screenFrame:)` now reads the cross-edge inset off the height for every border; the pinned top-border rect (456, 58, 600, 42) is unchanged, so nothing that already worked moved. `GeneralPreferencesTests` 67/67.
 - **L5** (evidence, T4/T5): the Placement card was the Bar pane's only capped card — the pool card above it already spanned the pane — so the cap came off. The pointer tile went from 168 pt (exactly the default highlight's 161 pt extent, i.e. "real size") to 120 pt; the default now draws at 75 % and the caption says so, which is the trade the owner asked for. `PointerPreviewSizeTests` 3/3, `PointerHighlightRendererTests` 20/20.
 - **L6** (evidence, T1): the card had no controls and a 260×170 thumbnail cap. It now carries a pin and a close on the plate, is 190×126 with a 6 pt backdrop, keeps its level above the palettes and the overlay, and a pinned card leaves the stack: it is never evicted by the cap and never pushed by a later capture. Undo/persistence of the pin is session-scoped on purpose. `CaptureCardTests` 7/7.
-- **L7** (known gap, needs the owner's word): the capture editor's own save/copy path never leaves `CaptureEditor.swift`, so an edited variant saved from the editor does not reach the history; the capture the editor received does, because `deliver` recorded it first. Closing it needs a seam in `CaptureEditor.swift`.
+- **L7 (CLOSED, see L28)** (known gap, needs the owner's word): the capture editor's own save/copy path never leaves `CaptureEditor.swift`, so an edited variant saved from the editor does not reach the history; the capture the editor received does, because `deliver` recorded it first. Closing it needs a seam in `CaptureEditor.swift`.
 - **L8** (known gap, reported by the worker): the board's image layer is not undoable — the board's journal is stroke-typed and an image op would mean touching `DrawingSession.swift`, which was outside that unit's surfaces.
 - **L9** (evidence, verification and the fixes it forced): an independent verifier reproduced eight findings against the first cut, six of them real and fixed before the commits — the panel's keyboard never reached the hosting view (`NSHostingView` declines first responder, so Esc, the arrows and ↵ were dead through the real event path), the store trusted `fileName` from the index and would read and delete outside its own folder on a hand-edited index, ↓/↑ walked the grid backwards, a board image hanging off the base was squeezed into the intersection instead of clipped, the cap was not enforced at load, and a zero-width screen docked the column dead centre. Each fix landed after a RED that reproduced the probe. New classes: `CaptureHistoryPanelKeyboardTests`, `CaptureHistoryIndexPathTests`, `BoardImageClipTests`, `ToolbarAnchorRegressionTests`.
 - **L10** (evidence, commits): `c594f15` (T3), `17db96d` (T5), `e6fcdec` (T1), `797d9cd` (T2a + T2b + T4 + docs). Full suite 619 tests, 0 failures, except `RedactionDispatchTests.testEveryPixelateBlockIsConstantInsideThePatch`, which fails in roughly one run in three on a tree this diff never touches (it passes 3/3 standalone and the class was green inside an earlier full run): a load-dependent pre-existing flake, reported as such rather than worked around.
@@ -378,3 +378,18 @@ part of this work.
   runs ever ran, including every Settings suite. `docs/DEVELOPMENT.md` now says how to read a run (the
   three checks: exit code, the signal line, and the bundle's own `passed` line), because the previous
   green-looking tails were the reason this went unnoticed for several sessions.
+
+- **L28** (L7 closed, the first item from outside the B list): an edited variant now reaches the history.
+  The editor's copy and save were dead ends: `copyToPasteboard` and `savePanel` produced a composed image
+  and told nobody, so a variant the user saved from the editor never appeared anywhere. The seam is
+  `CaptureEditorContent.onDeliver`, fired from ONE place (`deliverComposed()`) on both paths, and carried
+  by `CaptureEditorController` to every window it opens; the overlay sets it in `wireEditor()` and routes
+  it to `deliverEdited`, which records into the on-disk store and the session list exactly the way
+  `deliver` does — without a canvas, a display or the destination preference, because the editor's own
+  save panel already wrote the file the user chose. A cancelled save panel delivers nothing (the hook
+  runs after the write), and a detached editor with no hook is inert instead of fatal. No card is shown
+  for an edited variant, on purpose: the editor is in front and its own copy would cover it.
+  **Evidence**: `CaptureEditorDeliveryTests` 3/3 (delivered image, unwired editor inert, the controller
+  carries the hook to the window), whole suite **exit 0, no signal line, `StareTests.xctest` passed,
+  1153 started / 1153 passed / 0 failed** — the first run of this branch where every test in both bundles
+  actually executed.

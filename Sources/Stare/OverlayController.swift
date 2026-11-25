@@ -424,6 +424,9 @@ final class OverlayController {
     }
 
     private func wireEditor() {
+        // The editor's own captures come back through the same recording an
+        // overlay capture goes through (L7).
+        editor.onDeliver = { [weak self] composed in self?.deliverEdited(composed) }
         // The editor is a normal window: opening it while a layer is still
         // armed would leave it above, eating every click. The card's click and
         // the History pane's reopen share the handoff above.
@@ -521,6 +524,19 @@ final class OverlayController {
         case .clipboard:
             copy(image, to: NSPasteboard.general)
         }
+    }
+
+    /// The editor's capture tail (L7): a composed variant the user copies or
+    /// saves is a new capture like any other, so it lands in both histories the
+    /// way `deliver` puts one there — the on-disk store and the session list.
+    /// No canvas, no display and no destination preference are involved: the
+    /// editor's own save panel already wrote the file the user chose, and the
+    /// card stays away so the editor in front is not covered by its own copy.
+    func deliverEdited(_ composed: CGImage) {
+        let date = Date()
+        captureHistoryStore.add(composed, date: date)
+        history.record(composed, at: date)
+        Diag.log("editor delivered \(composed.width)x\(composed.height)")
     }
 
     /// The capture history panel hid (pick, Esc, the toggle-off): return key
