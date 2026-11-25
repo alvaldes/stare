@@ -19,6 +19,15 @@ private enum HistoryEntry {
     /// same batch routing the clear entry keeps. `page` works exactly like
     /// the clear entry's: the page the move happened on, nil on the overlay.
     case batchMove(displayID: CGDirectDisplayID, page: Int?)
+    /// A board image-layer edit (L8): a paste, a move, a resize, a delete or an
+    /// Escape cleared the page's image. Carries the placement BEFORE and AFTER,
+    /// so undo puts back what was there (nil when the page carried nothing) and
+    /// redo re-applies the edit. `page` works exactly like the other
+    /// page-carrying entries. The layers share their `CGImage`: an entry holds
+    /// two references, never two copies of the picture.
+    case boardImage(
+        displayID: CGDirectDisplayID, page: Int?, before: BoardImage?, after: BoardImage?
+    )
 
     /// The display the entry routes to.
     var owningDisplayID: CGDirectDisplayID {
@@ -26,6 +35,7 @@ private enum HistoryEntry {
         case let .mark(displayID, _): return displayID
         case let .clear(displayID, _): return displayID
         case let .batchMove(displayID, _): return displayID
+        case let .boardImage(displayID, _, _, _): return displayID
         }
     }
 
@@ -54,6 +64,11 @@ private enum HistoryEntry {
             // deleted, the entry leaves.
             guard let moved = mapping(page) else { return nil }
             return .batchMove(displayID: id, page: moved)
+        case let .boardImage(id, page, before, after):
+            guard id == displayID else { return self }
+            guard let page else { return self }
+            guard let moved = mapping(page) else { return nil }
+            return .boardImage(displayID: id, page: moved, before: before, after: after)
         }
     }
 
@@ -71,6 +86,10 @@ private enum HistoryEntry {
         case let .mark(id, strokeID): return id == displayID && clearedIDs.contains(strokeID)
         case let .clear(id, entryPage): return id == displayID && entryPage == page
         case let .batchMove(id, entryPage): return id == displayID && entryPage == page
+        // The image layer is session state like the pages themselves, so the
+        // board's boot archive never held it and a hard clear cannot have wiped
+        // it: the entry survives with its placement intact.
+        case .boardImage: return false
         }
     }
 
@@ -475,6 +494,7 @@ final class OverlayController {
             case .mark: return nil
             case .clear(_, let page): return page
             case .batchMove(_, let page): return page
+            case .boardImage(_, let page, _, _): return page
             }
         }
     }
@@ -1339,6 +1359,18 @@ final class OverlayController {
             // entry besides is a re-add the redo journal answers by id).
             self.pageOfMark.removeValue(forKey: MarkLocation(displayID: displayID, strokeID: id))
         }
+        // Board only: the image layer exists on a whiteboard page. One step per
+        // edit, on the same stream the marks use, carrying the page it happened
+        // on (L8) — and an edit that changed nothing is no step.
+        if let boardView = view as? WhiteboardView {
+            boardView.onBoardImageEdited = { [weak self] before, after, page in
+                guard let self, before != after else { return }
+                historyOrder.append(
+                    .boardImage(displayID: displayID, page: page, before: before, after: after)
+                )
+                redoOrder.removeAll()
+            }
+        }
         view.onClearMarks = { [weak self, weak view] in
             guard let self, let view else { return }
             // Escape with nothing selected (T4/S5): this display's marks (the
@@ -1811,6 +1843,9 @@ final class DisplayCanvas {
         case let .batchMove(_, page):
             guard let page, let boardView = whiteboardView(forPage: page) else { return view.undoBatchMove() }
             return boardView.undoBatchMove(onPage: page)
+        case let .boardImage(_, page, before, _):
+            guard let page, let boardView = whiteboardView(forPage: page) else { return false }
+            return boardView.restorePageImage(before, onPage: page)
         }
     }
 
@@ -1823,6 +1858,9 @@ final class DisplayCanvas {
         case let .batchMove(_, page):
             guard let page, let boardView = whiteboardView(forPage: page) else { return view.redoBatchMove() }
             return boardView.redoBatchMove(onPage: page)
+        case let .boardImage(_, page, _, after):
+            guard let page, let boardView = whiteboardView(forPage: page) else { return false }
+            return boardView.restorePageImage(after, onPage: page)
         }
     }
 

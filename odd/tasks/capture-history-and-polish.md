@@ -63,7 +63,7 @@ B3, B5 and B6 are defects in what T2b just shipped, not new wishes; B1, B2, B4, 
 - **L5** (evidence, T4/T5): the Placement card was the Bar pane's only capped card — the pool card above it already spanned the pane — so the cap came off. The pointer tile went from 168 pt (exactly the default highlight's 161 pt extent, i.e. "real size") to 120 pt; the default now draws at 75 % and the caption says so, which is the trade the owner asked for. `PointerPreviewSizeTests` 3/3, `PointerHighlightRendererTests` 20/20.
 - **L6** (evidence, T1): the card had no controls and a 260×170 thumbnail cap. It now carries a pin and a close on the plate, is 190×126 with a 6 pt backdrop, keeps its level above the palettes and the overlay, and a pinned card leaves the stack: it is never evicted by the cap and never pushed by a later capture. Undo/persistence of the pin is session-scoped on purpose. `CaptureCardTests` 7/7.
 - **L7 (CLOSED, see L28)** (known gap, needs the owner's word): the capture editor's own save/copy path never leaves `CaptureEditor.swift`, so an edited variant saved from the editor does not reach the history; the capture the editor received does, because `deliver` recorded it first. Closing it needs a seam in `CaptureEditor.swift`.
-- **L8** (known gap, reported by the worker): the board's image layer is not undoable — the board's journal is stroke-typed and an image op would mean touching `DrawingSession.swift`, which was outside that unit's surfaces.
+- **L8 (CLOSED, see L30)** (known gap, reported by the worker): the board's image layer is not undoable — the board's journal is stroke-typed and an image op would mean touching `DrawingSession.swift`, which was outside that unit's surfaces.
 - **L9** (evidence, verification and the fixes it forced): an independent verifier reproduced eight findings against the first cut, six of them real and fixed before the commits — the panel's keyboard never reached the hosting view (`NSHostingView` declines first responder, so Esc, the arrows and ↵ were dead through the real event path), the store trusted `fileName` from the index and would read and delete outside its own folder on a hand-edited index, ↓/↑ walked the grid backwards, a board image hanging off the base was squeezed into the intersection instead of clipped, the cap was not enforced at load, and a zero-width screen docked the column dead centre. Each fix landed after a RED that reproduced the probe. New classes: `CaptureHistoryPanelKeyboardTests`, `CaptureHistoryIndexPathTests`, `BoardImageClipTests`, `ToolbarAnchorRegressionTests`.
 - **L10** (evidence, commits): `c594f15` (T3), `17db96d` (T5), `e6fcdec` (T1), `797d9cd` (T2a + T2b + T4 + docs). Full suite 619 tests, 0 failures, except `RedactionDispatchTests.testEveryPixelateBlockIsConstantInsideThePatch`, which fails in roughly one run in three on a tree this diff never touches (it passes 3/3 standalone and the class was green inside an earlier full run): a load-dependent pre-existing flake, reported as such rather than worked around.
 - **L11** (slice note):`797d9cd` carries T2a and T2b together (about 1,300 authored lines) because the pick route, the board's image layer and the controller that owns both share `OverlayController.swift`; splitting them would have left a commit that could not build. Delivery shape when publishing: T3, T5 and T1 are three small PRs of their own, and T2 is one PR of two review passes — the history (store, panel, hotkey) and the board's image layer.
@@ -417,3 +417,25 @@ part of this work.
   it, leaving it on screen for every later test that resolves "the window under the pointer". It closes
   its windows now, and the suite is **exit 0, no signal line, `StareTests.xctest` passed,
   1156 started / 1156 passed / 0 failed**.
+
+- **L30** (L8 closed, second item from outside the B list): the board's image layer is on the undo stream.
+  The gap was that the journal is stroke-typed, so an image edit had nowhere to go. It did not need the
+  stroke journal: the controller already keeps ONE history stream of page-carrying entries that route to
+  a canvas by display, and the image layer is page state like the marks a clear removes. So the stream
+  gained `HistoryEntry.boardImage(displayID:page:before:after:)`, carrying the placement before and after
+  — `nil` on either side is "the page carried nothing", which is a paste (`nil`→layer) or a delete /
+  Escape (layer→`nil`). Undo applies `before`, redo applies `after`, through
+  `WhiteboardPages.restorePageImage(_:at:)`, and the page follows the same remap the other page-carrying
+  entries keep, so a deleted page retires its image steps with it.
+  **One step per edit, not per event**: the view reports through `onBoardImageEdited` once per gesture —
+  a drag remembers the layer it started from and emits on `mouseUp`, so three dragged events are one
+  undo step, and an edit that changed nothing appends nothing.
+  **Known shape worth noting**: an Escape that clears marks AND the image produces two steps (the
+  marks' clear entry and the image's), so the first ⌘Z brings the picture back and the second the
+  marks. Folding them into one step would mean giving the clear entry an image payload; the stream
+  stays one-entry-per-edit instead.
+  **Evidence**: `BoardImageUndoTests` 5/5 — a paste reports the empty page it replaced, a multi-event
+  drag reports ONE edit from where the layer started, Escape reports the layer it took away and the
+  model restores it, a page that no longer exists reports nothing, and the whole path through the
+  controller: `undo()` takes the paste off the page and `redo()` puts that same layer back. Whole suite
+  **exit 0, no signal line, `StareTests.xctest` passed, 1161 started / 1161 passed / 0 failed**.

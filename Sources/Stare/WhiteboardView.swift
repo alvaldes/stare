@@ -401,6 +401,7 @@ class WhiteboardView: OverlayView {
     /// the model (`WhiteboardPages.paste`). The new layer takes the selection
     /// so ⌫ can act on it right away — the editor's paste convention.
     func pasteImage(_ image: CGImage) {
+        let before = board.currentPage.image
         guard let layer = board.paste(image, inView: bounds) else {
             Diag.log("board image paste refused \(image.width)x\(image.height)")
             return
@@ -409,10 +410,38 @@ class WhiteboardView: OverlayView {
         imageGesture = nil
         needsDisplay = true
         Diag.log("board image pasted \(image.width)x\(image.height) rect=\(layer.rect) page=\(board.currentIndex + 1)")
+        noteBoardImageEdit(before: before)
     }
 
     /// Whether the current page's image layer takes the keys and gestures.
     private var isBoardImageSelected = false
+
+    /// Told after the current page's image layer changed (L8), with the
+    /// placement before and after: nil→layer is a paste, layer→layer a move or
+    /// a resize, layer→nil a delete or an Escape. The controller turns that
+    /// into one step on the same undo stream the marks use.
+    var onBoardImageEdited: ((BoardImage?, BoardImage?, Int) -> Void)?
+
+    /// The layer as it was when the running gesture began, so a drag reports one
+    /// edit (its start) instead of one per event.
+    private var imageGestureStartLayer: BoardImage?
+
+    /// Emits one image edit to the listener. Called at the END of an edit — a
+    /// paste, a finished drag, a delete — never per mouse event.
+    private func noteBoardImageEdit(before: BoardImage?) {
+        onBoardImageEdited?(before, board.currentPage.image, board.currentIndex)
+    }
+
+    /// Puts a page's image layer back for the undo stream (L8), refreshing the
+    /// paint and the selection it may no longer own.
+    @discardableResult
+    func restorePageImage(_ image: BoardImage?, onPage page: Int) -> Bool {
+        guard board.restorePageImage(image, at: page) else { return false }
+        isBoardImageSelected = false
+        needsDisplay = true
+        Diag.log("board image restored page=\(page + 1) present=\(image != nil)")
+        return true
+    }
 
     /// The running image gesture: the interior move-s, a corner grip resize-s
     /// — the capture editor's own ⌥ conventions, driven by the same grip and
@@ -442,6 +471,7 @@ class WhiteboardView: OverlayView {
         let reach = EditorCropRule.defaultHandleReach
         guard viewRect.insetBy(dx: -reach, dy: -reach).contains(viewPoint) else { return false }
         isBoardImageSelected = true
+        imageGestureStartLayer = layer
         imageGestureCanvas = viewTransform.rect(toPage: bounds)
         if let handle = EditorCropRule.handle(at: viewPoint, on: viewRect) {
             imageGesture = .resize(handle: handle, startViewRect: viewRect)
@@ -460,10 +490,12 @@ class WhiteboardView: OverlayView {
     /// documented ⌫ behaviour whenever it exists.
     private func deleteBoardImageIfSelected() -> Bool {
         guard isBoardImageSelected, selectedMarkIDs.isEmpty else { return false }
+        let before = board.currentPage.image
         guard board.removePageImage() else { return false }
         isBoardImageSelected = false
         needsDisplay = true
         Diag.log("board image deleted page=\(board.currentIndex + 1)")
+        noteBoardImageEdit(before: before)
         return true
     }
 
@@ -473,10 +505,12 @@ class WhiteboardView: OverlayView {
     /// are session values, not steps of the stroke journal.
     private func removePageImageOnEscape() {
         guard board.currentPage.image != nil else { return }
+        let before = board.currentPage.image
         guard board.removePageImage() else { return }
         isBoardImageSelected = false
         needsDisplay = true
         Diag.log("board image cleared by esc page=\(board.currentIndex + 1)")
+        noteBoardImageEdit(before: before)
     }
 
     // MARK: - Zooming (T5/S5)
@@ -919,11 +953,16 @@ class WhiteboardView: OverlayView {
 
     override func mouseUp(with event: NSEvent) {
         if imageGesture != nil {
+            // One edit per drag, reported with the placement it started from:
+            // a move and a resize are single steps on the undo stream.
+            let before = imageGestureStartLayer
+            imageGestureStartLayer = nil
             // The gesture is over: the value change already sits on the layer
             // (applied live and clamped by the model). No journal step here —
             // see the undo note on `deleteBoardImageIfSelected`.
             imageGesture = nil
             needsDisplay = true
+            noteBoardImageEdit(before: before)
             return
         }
         let wasPanning = isPanning
