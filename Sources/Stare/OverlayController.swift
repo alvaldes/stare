@@ -1300,7 +1300,14 @@ final class OverlayController {
 
     // MARK: - Canvases
 
-    @objc private func screenParametersChanged() {
+    /// Internal so the tests can drive the real observers: the capture
+    /// history sheet's re-place (B3) rides on both.
+    @objc func screenParametersChanged() {
+        // The bottom sheet (B3/S1): a screen-configuration change re-derives
+        // the sheet's anchored frame on the screen under the pointer while it
+        // is visible. The early return below guards only the overlay/board
+        // work; the sheet is re-placed first, whatever else is active.
+        captureHistoryPanel.repositionIfVisible()
         guard isActive || isBoardActive else { return }
         if isBoardActive {
             rebuildBoardCanvases()
@@ -1318,7 +1325,13 @@ final class OverlayController {
 
     /// Windows no longer join every Space, so a Space switch is what brings the
     /// drawing layer back over the new Space.
-    @objc private func activeSpaceChanged() {
+    /// Internal so the tests can drive the real observers: the capture
+    /// history sheet's re-place (B3) rides on both.
+    @objc func activeSpaceChanged() {
+        // The bottom sheet (B3/S1): the sheet follows to the screen under the
+        // pointer when the visible Space changes, the same observers the
+        // drawing layers ride on.
+        captureHistoryPanel.repositionIfVisible()
         guard isActive || isBoardActive else { return }
         for canvas in (isBoardActive ? boardCanvases : canvases).values {
             canvas.panel.orderFrontRegardless()

@@ -3500,7 +3500,11 @@ enum SelfTest {
         var written: [String] = []
         for selection in [0, 1] {
             model.select(at: selection)
-            let size = CaptureHistoryPanel.contentSize
+            // The sheet's own geometry (B3): the rule applied to the
+            // reference 1440-tall display's visible frame (menu bar 24),
+            // rounded to the integral size a bitmap wants.
+            let sheet = CaptureHistoryPanel.sheetFrame(inVisibleFrame: CGRect(x: 0, y: 0, width: 1440, height: 1416))
+            let size = CGSize(width: sheet.width.rounded(), height: sheet.height.rounded())
             let hosting = NSHostingView(rootView: CaptureHistoryPanelContent(model: model)
                 .frame(width: size.width, height: size.height, alignment: .topLeading))
             hosting.sizingOptions = []

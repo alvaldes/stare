@@ -154,9 +154,13 @@ final class CaptureHistoryPanelTests: XCTestCase {
         XCTAssertGreaterThan(CaptureHistoryPanel.panelLevel.rawValue, cardLevel.rawValue)
     }
 
-    // MARK: Placement
+    // MARK: Placement (B3): the bottom sheet
 
-    func testThePanelCentersOnTheScreenUnderThePointer() throws {
+    /// Re-derived (B3): the panel no longer CENTRES on the pointer's screen —
+    /// it SPANS that screen's visible frame, flush to its bottom, at the fixed
+    /// 0.42 height. The screen-selection rule survives (screen under the
+    /// pointer); what changed is where on it the sheet sits and how wide.
+    func testTheOpenSheetSpansTheVisibleFrameOfTheScreenUnderThePointerFlushToItsBottom() throws {
         try XCTSkipIf(NSScreen.main == nil, "no primary screen in this environment")
         let store = makeStore(entries: 1)
         let panel = CaptureHistoryPanel(store: store)
@@ -165,14 +169,87 @@ final class CaptureHistoryPanelTests: XCTestCase {
 
         defer { panel.hide() }
         let pointer = NSEvent.mouseLocation
-        // The panel centres on the screen under the pointer, so that is the one
+        // The sheet opens on the screen under the pointer, so that is the one
         // to measure against — on a multi-display desk it is often not the
-        // primary, and asserting the primary made this test fail there.
+        // primary, and asserting the primary made this test fail there (the
+        // screen choice is the one part of the old test that never changed).
         let target = NSScreen.screens.first { $0.frame.contains(pointer) }
             ?? NSScreen.main
             ?? NSScreen.screens.first
         let screen = try XCTUnwrap(target)
-        XCTAssertTrue(screen.frame.contains(panel.frame), "the panel opens inside the screen under the pointer")
+        let visible = screen.visibleFrame
+        let frame = panel.frame
+        XCTAssertEqual(frame.minX, visible.minX, accuracy: 0.5, "the sheet spans the visible frame's full width")
+        XCTAssertEqual(frame.width, visible.width, accuracy: 0.5, "full visible width, on any display")
+        XCTAssertEqual(frame.minY, visible.minY, accuracy: 0.5, "flush to the visible frame's BOTTOM edge (macOS y is up)")
+        XCTAssertEqual(
+            frame.height,
+            max(visible.height * CaptureHistoryPanel.sheetHeightFraction,
+                CaptureHistoryPanel.defaultMinimumShelfHeight),
+            accuracy: 0.5,
+            "the fixed height rule: 0.42 of the visible height, never below the shelf floor"
+        )
+        XCTAssertTrue(visible.contains(
+            CGRect(origin: frame.origin, size: CGSize(width: frame.width - 1, height: frame.height - 1))
+        ), "the sheet sits inside the visible frame: the Dock stays clear")
+    }
+
+    /// The value side of the same rule, on the reference 1440-tall display:
+    /// a screen whose full frame is 1440 tall leaves a 1416-tall visible
+    /// frame under the 24-pt menu bar. Pinned here so the rule is readable
+    /// in numbers, not only through a real NSScreen.
+    func testTheSheetFrameRuleOnAReference1440TallDisplay() {
+        let visible = CGRect(x: 0, y: 0, width: 1440, height: 1416)
+        let frame = CaptureHistoryPanel.sheetFrame(inVisibleFrame: visible)
+        XCTAssertEqual(frame.width, 1440, "full visible width")
+        XCTAssertEqual(frame.minY, 0, "flush to the bottom edge — the visible frame's own minY")
+        XCTAssertEqual(frame.maxY, 1416 * CaptureHistoryPanel.sheetHeightFraction, accuracy: 0.01, "one 0.42-sheet above the bottom edge, wallpaper still visible above")
+        // Reported for the ledger (T1 evidence): the measured frame on the
+        // reference 1440-tall display.
+        print("[b3-geometry] 1440-tall display sheet frame: \(frame)")
+    }
+
+    /// The height rule's floor: on a very short visible frame (an attached TV
+    /// in mirror mode, a Split cut) the 0.42 fraction must never crush a card
+    /// row plus the header out of the shelf.
+    func testAShortVisibleFrameNeverCrushesOneCardRowPlusTheHeader() {
+        let visible = CGRect(x: 0, y: 0, width: 1200, height: 600)
+        let floor = CaptureHistoryPanel.minimumShelfHeight(thumbnailSize: 170)
+        XCTAssertTrue(floor > 170, "one card row (the thumbnail) plus the header chrome, not just the thumbnail")
+        let frame = CaptureHistoryPanel.sheetFrame(inVisibleFrame: visible, minimumHeight: floor)
+        XCTAssertEqual(frame.height, floor, "the floor wins when 0.42×height drops below it")
+        XCTAssertLessThanOrEqual(frame.height, visible.height, "the floor never overflows the screen")
+    }
+
+    /// A screen-configuration or Space change while the sheet is visible
+    /// re-derives the anchored frame (B3/S3). Driven through the real
+    /// controller observers, which is what owns the re-place wiring.
+    func testAScreenOrSpaceChangeRePlacesTheVisibleSheetAnchoredToTheBottom() throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "no screens: the re-place needs one")
+        _ = NSApplication.shared
+        let controller = OverlayController(captureService: CaptureService())
+        let panel = controller.captureHistoryPanel
+        panel.showPanel()
+
+        // Pretend the sheet was dragged or its screen replaced: re-place re-derives.
+        panel.setFrame(CGRect(x: 200, y: 400, width: 500, height: 300), display: false)
+        controller.screenParametersChanged()
+
+        let visible = (NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) }
+            ?? NSScreen.main ?? NSScreen.screens.first)?.visibleFrame ?? .zero
+        XCTAssertEqual(panel.frame.width, visible.width, accuracy: 0.5, "re-anchored: full visible width")
+        XCTAssertEqual(panel.frame.minY, visible.minY, accuracy: 0.5, "re-anchored: flush to the bottom edge")
+
+        controller.activeSpaceChanged()
+        XCTAssertEqual(panel.frame.width, visible.width, accuracy: 0.5, "a Space change re-places too")
+        XCTAssertEqual(panel.frame.minY, visible.minY, accuracy: 0.5)
+
+        panel.hide()
+        controller.screenParametersChanged()
+        XCTAssertFalse(panel.isVisible, "the re-place never SHOWS a hidden sheet")
+        XCTAssertTrue(visible.contains(
+            CGRect(origin: panel.frame.origin, size: CGSize(width: panel.frame.width - 1, height: panel.frame.height - 1))
+        ))
     }
 
     // MARK: Pick route through the overlay (board open without a board view)
@@ -343,11 +420,29 @@ final class CaptureHistoryGridNavigationTests: XCTestCase {
         model.moveSelection(model.columnCount)
         XCTAssertEqual(model.selectedIndex, 1)
     }
+
+    /// B3: the sheet is full width, so the grid simply gets more columns —
+    /// at the reference 1440-wide sheet with the default 170-pt cell it is
+    /// SEVEN — and the vertical arrows must still move a row at that count.
+    func testUpAndDownStillMoveARowAcrossTheFullWidthSheet() {
+        // The measured width a 1440-wide sheet hands the model: the sheet
+        // spans the visible frame minus the sheet's 16-pt side padding, and
+        // (1408 + 10) / (170 + 10) ⌊ 7.87 ⌋ = 7 columns.
+        let model = model(entries: 9, columns: 7)
+        XCTAssertEqual(model.columnCount, 7)
+        model.select(at: 0)
+        model.moveSelection(model.columnCount)
+        XCTAssertEqual(model.selectedIndex, 7, "↓ moves a full row in the seven-column shelf")
+        model.moveSelection(-model.columnCount)
+        XCTAssertEqual(model.selectedIndex, 0, "↑ moves a full row back and clamps at the newest")
+    }
 }
 
-/// B2: the history closes on the first click anywhere else, the way a
-/// paste-style palette does. The decision is a value rule — the monitors only
-/// feed it — so it is pinned without windows, screens or event taps.
+/// B2 re-derived (B3): the outside-click rule stays a value rule — the
+/// monitors only feed it — so it is pinned without windows, screens or event
+/// taps. The second clause's MEANING moved with the shape: the frame it
+/// protects is now the full-width bottom strip, so a click anywhere in that
+/// strip (the sheet's chrome, its blind margins) keeps the sheet open.
 @MainActor
 final class CaptureHistoryOutsideClickTests: XCTestCase {
     func testAClickOutsideClosesThePanel() {
@@ -366,6 +461,27 @@ final class CaptureHistoryOutsideClickTests: XCTestCase {
             CaptureHistoryPanel.hides(forClickOnPanelWindow: false, insidePanelFrame: true),
             "a click inside the panel's frame is still the panel's, even if the window beneath took it"
         )
+    }
+
+    /// Re-derived pin (B3): with the sheet spanning the bottom strip, a click
+    /// anywhere inside the anchored frame keeps the sheet open. Tested through
+    /// real strip points, not an abstract bool.
+    func testAClickAnywhereInTheBottomStripKeepsTheSheetOpen() {
+        let visible = CGRect(x: 0, y: 0, width: 1440, height: 1416)
+        let strip = CaptureHistoryPanel.sheetFrame(inVisibleFrame: visible)
+        XCTAssertTrue(strip.height < visible.height, "it is the bottom strip, not a full-screen plate")
+        for point in [
+            CGPoint(x: strip.midX, y: strip.minY + 1), // the very edge above the Dock
+            CGPoint(x: strip.minX + 1, y: strip.midY), // the left margin
+            CGPoint(x: strip.maxX - 1, y: strip.midY), // the right margin
+            CGPoint(x: strip.midX, y: strip.midY), // the chrome between the cards
+        ] {
+            XCTAssertTrue(strip.contains(point), "\(point) lands in the strip")
+            XCTAssertFalse(
+                CaptureHistoryPanel.hides(forClickOnPanelWindow: false, insidePanelFrame: strip.contains(point)),
+                "a click in the bottom strip keeps the sheet open"
+            )
+        }
     }
 
     func testOpeningAndClosingThePanelLeavesNoMonitorsBehind() throws {

@@ -7,7 +7,10 @@ import XCTest
 /// makes the panel key with the hosting view as first responder, so Esc, the
 /// arrows and Return work through `panel.sendEvent` — not only when a test
 /// calls the model directly. Arrow mapping: ↓/→ walk toward the older
-/// entries (next), ↑/← toward the newer ones (previous).
+/// entries (next), ↑/← toward the newer ones (previous). B3 note: the slide
+/// animation is app-only (`NSApp.isRunning`); in a `swift test` run the open
+/// lands its final anchored frame synchronously, so every assertion here
+/// sees the same panel state the shipped keyboard map produced before it.
 @MainActor
 final class CaptureHistoryPanelKeyboardTests: XCTestCase {
     private var temporaryDirectories: [URL] = []
@@ -101,12 +104,26 @@ final class CaptureHistoryPanelKeyboardTests: XCTestCase {
 
     // MARK: Arrows and Return through the real event path
 
+    /// The walk tests' unit: the arrow map's ↓/↑ move a ROW of
+    /// `model.columnCount`, which on a full-width sheet is the measured width
+    /// of the machine's screen (ten columns on a 1920-wide display — see the
+    /// sheet's row-move test in CaptureHistoryPanelTests). What these walks
+    /// mean is “one ENTRY per → and a pick per ⏎”, so each pins its grid to
+    /// ONE column explicitly instead of leaning on the narrow 640-panel the
+    /// pre-B3 sheet happened to press accidentally (its grid never measured
+    /// before the first assert).
+    private func pinOneColumnGrid(_ panel: CaptureHistoryPanel) {
+        panel.model.updateColumnCount(forGridWidth: CGFloat(panel.model.thumbnailSize))
+        XCTAssertEqual(panel.model.columnCount, 1, "the walk's row unit is one entry here")
+    }
+
     func testDownAndRightArrowsWalkToOlderAndReturnPicksThroughTheRealEventPath() throws {
         try XCTSkipIf(NSScreen.main == nil, "no primary screen in this environment")
         var pickedWidths: [Int] = []
         let panel = CaptureHistoryPanel(store: makeStore(entries: 3), onPick: { pickedWidths.append($0.width) })
 
         panel.showPanel()
+        pinOneColumnGrid(panel)
         panel.sendEvent(keyEvent(125, for: panel)) // ↓: next, older
         XCTAssertEqual(panel.model.selectedIndex, 1, "↓ moves to the next (older) entry")
         panel.sendEvent(keyEvent(124, for: panel)) // →: next, older
@@ -122,6 +139,7 @@ final class CaptureHistoryPanelKeyboardTests: XCTestCase {
         let panel = CaptureHistoryPanel(store: makeStore(entries: 3), onPick: { _ in })
 
         panel.showPanel()
+        pinOneColumnGrid(panel)
         panel.sendEvent(keyEvent(125, for: panel)) // ↓ to the second (older)
         XCTAssertEqual(panel.model.selectedIndex, 1, "↓ moved: the walk back below is real")
         panel.sendEvent(keyEvent(123, for: panel)) // ←: previous, newer

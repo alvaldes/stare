@@ -2,19 +2,41 @@ import AppKit
 import StareCore
 import SwiftUI
 
-/// The paste-style capture history panel (T2a/S2): a non-activating borderless
-/// panel above every other Stare surface — the board, the toolbar and the
-/// capture cards included — showing the newest captures first in a grid, one
-/// metadata line per capture, keyboard navigation (arrows move, Return picks,
-/// Esc closes), click to pick, and a Clear button that empties the store and
-/// deletes the stored captures.
+/// The paste-style capture history panel (T2a/S2), re-shaped as the full-width
+/// bottom sheet (B3/S1): a non-activating borderless panel above every other
+/// Stare surface — the board, the toolbar and the capture cards included —
+/// spanning the screen's visible frame width, anchored flush to its bottom
+/// edge, at a fixed 0.42 height, showing the newest captures first in a grid,
+/// one metadata line per capture, keyboard navigation (arrows move, Return
+/// picks, Esc closes), click to pick, and a Clear button that empties the
+/// store and deletes the stored captures.
 final class CaptureHistoryPanel: NSPanel {
     /// Above the whiteboard (`.screenSaver`) and the capture cards
     /// (`.screenSaver + 2`): every Stare surface sits behind the history.
     static let panelLevel = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 3)
 
-    /// The panel's content size: three columns of thumbnails plus the header.
-    static let contentSize = CGSize(width: 640, height: 420)
+    /// The sheet's fixed height rule (B3/S1): 0.42 of the screen's VISIBLE
+    /// height — inside `visibleFrame`, so the Dock and the notch stay clear.
+    static let sheetHeightFraction: CGFloat = 0.42
+
+    /// The shelf's floor (S1: "never less than one card row plus the header").
+    /// One row is the thumbnail (aspect-fit inside its width, capped at 4:3's
+    /// height for the reference row) + the caption line, the gap and the
+    /// cell's own padding (t + 4 + 12 + 12 = t + 28); above it the header row
+    /// and its top padding (22 + 16); under it the sheet's bottom padding
+    /// (16). `t + 92`, where t is the thumbnail preference's width.
+    static func minimumShelfHeight(thumbnailSize: Double) -> CGFloat {
+        CGFloat(thumbnailSize) + 92
+    }
+
+    /// The floor at the shipped default preference (170 pt) — what a test or
+    /// call without a preference pins against.
+    static let defaultMinimumShelfHeight = minimumShelfHeight(thumbnailSize: HistoryPreference.defaultThumbnailSize)
+
+    /// Degenerate pre-show size, replaced by `showPanel`'s anchored frame on
+    /// every open. Kept for the no-screen fallback nothing else in AppKit can
+    /// avoid (a borderless window needs SOME frame at init).
+    static let fallbackContentSize = CGSize(width: 1200, height: 420)
 
     let model: CaptureHistoryPanelModel
 
@@ -42,7 +64,7 @@ final class CaptureHistoryPanel: NSPanel {
             onClose: {}
         )
         super.init(
-            contentRect: CGRect(origin: .zero, size: Self.contentSize),
+            contentRect: CGRect(origin: .zero, size: Self.fallbackContentSize),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -59,9 +81,13 @@ final class CaptureHistoryPanel: NSPanel {
 
         let hosting = CaptureHistoryPanelHostingView(rootView: CaptureHistoryPanelContent(model: model))
         hosting.sizingOptions = []
+        // The sheet's content tracks the window's frame, so the slide never
+        // lays content out at a stale size (B3: sizingOptions stay [], too —
+        // SwiftUI must never resize the window mid-animation).
+        hosting.autoresizingMask = [.width, .height]
         contentView = hosting
         self.hostingView = hosting
-        setContentSize(Self.contentSize)
+        setContentSize(Self.fallbackContentSize)
 
         // The model outlives nothing: closing routes back to the panel, so
         // picking (or Esc) hides the window it came from.
@@ -74,29 +100,131 @@ final class CaptureHistoryPanel: NSPanel {
     private var hostingView: CaptureHistoryPanelHostingView?
 
     /// Opens (or refreshes) the panel: newest first, selected on the newest,
-    /// centred on the screen under the pointer, and key so the keyboard
-    /// works. The hosting view takes first responder, or every key event in
-    /// the window's real dispatch path dies: `NSHostingView` declines first
-    /// responder by default, and with nobody responder the arrows, Return
-    /// and Esc reach nothing.
+    /// spanning the screen under the pointer's visible frame flush to its
+    /// bottom (B3), and key so the keyboard works. The hosting view takes
+    /// first responder, or every key event in the window's real dispatch path
+    /// dies: `NSHostingView` declines first responder by default, and with
+    /// nobody responder the arrows, Return and Esc reach nothing.
+    ///
+    /// The slide (B3, net-new): the sheet rises from just below the bottom
+    /// edge with a short ease-out, and only at the END of the open does it
+    /// become key and take first responder — a window that went key mid-slide
+    /// would eat keys while its frame was still moving. The sheet re-derives
+    /// its target from `screenUnderPointer()` on EVERY open, so a display
+    /// added or a setting changed since the last open is honoured.
     func showPanel() {
         model.refresh()
-        setFrame(Self.frame(on: screenUnderPointer()), display: true)
-        orderFrontRegardless()
-        makeKey()
-        if let hostingView {
-            makeFirstResponder(hostingView)
+        let target = Self.frame(on: screenUnderPointer())
+        setContentSize(target.size)
+        guard Self.animates else {
+            // The synchronous path — the plain order the tests drive: place,
+            // front, key, first responder, monitors. Same as the pre-B3 open
+            // apart from the anchored frame.
+            setFrame(target, display: true)
+            orderFrontRegardless()
+            makeKey()
+            if let hostingView {
+                makeFirstResponder(hostingView)
+            }
+            installKeyMonitor()
+            installOutsideClickMonitors()
+            Diag.log(
+                "history shown entries=\(model.entries.count) selected=\(model.selectedIndex.map(String.init) ?? "nil") key=\(isKeyWindow)" +
+                    " frame=\(target)"
+            )
+            return
         }
-        installKeyMonitor()
-        installOutsideClickMonitors()
-        Diag.log(
-            "history shown entries=\(model.entries.count) selected=\(model.selectedIndex.map(String.init) ?? "nil") key=\(isKeyWindow)"
-        )
+        isSlideOpening = true
+        setFrame(Self.offscreenFrame(from: target), display: false)
+        orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = Self.openDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            context.allowsImplicitAnimation = true
+            self.setFrame(target, display: true)
+        }, completionHandler: { [weak self] in
+            guard let self, self.isSlideOpening else { return }
+            isSlideOpening = false
+            guard isVisible else { return } // closed mid-slide: hide() owns the close
+            setFrame(target, display: false)
+            makeKey()
+            if let hostingView {
+                makeFirstResponder(hostingView)
+            }
+            installKeyMonitor()
+            installOutsideClickMonitors()
+            Diag.log(
+                "history shown entries=\(model.entries.count) selected=\(model.selectedIndex.map(String.init) ?? "nil") key=\(isKeyWindow)" +
+                    " frame=\(target)"
+            )
+        })
+    }
+
+    // MARK: The slide (B3)
+
+    /// Slide only in the real app: `NSAnimationContext`'s completion runs on
+    /// the main run loop, which the test harness (`swift test`, `--selftest`)
+    /// never spins — an un-spun loop would leave the open not-yet-key and the
+    /// close not-yet-hidden at assertion time. `isRunning` is true only under
+    /// `app.run()` (main.swift), so headless runs take the synchronous path
+    /// above and every pinned behaviour is frame- and hook-exact as before.
+    static var animates: Bool { NSApp?.isRunning ?? false }
+
+    /// The slide's entrance: a short ease-out rise off the bottom edge.
+    static var openDuration: TimeInterval { 0.22 }
+
+    /// The slide's exit: a short ease-in sink, matched half-feel shorter, a
+    /// faster get-out-of-the-way than the entrance.
+    static var closeDuration: TimeInterval { 0.18 }
+
+    /// The frame a slide starts from (or exits through): the anchored frame's
+    /// size, just below its bottom edge. Below the screen's visible bottom —
+    /// that is the point: the shelf appears to rise off the screen itself.
+    private static func offscreenFrame(from anchored: CGRect) -> CGRect {
+        CGRect(origin: CGPoint(x: anchored.minX, y: anchored.minY - anchored.height), size: anchored.size)
+    }
+
+    /// True while the entrance slide is in flight: `hide()` called then takes
+    /// the synchronous path (monitors off, order out, hook once) instead of
+    /// fighting the open's frames.
+    private var isSlideOpening = false
+
+    /// True while the exit slide is in flight: a second `hide()` is a no-op,
+    /// so `onHidden` still fires exactly once per close.
+    private var isSlideClosing = false
+
+    /// A screen-configuration or Space change while the sheet is visible
+    /// re-derives the anchored frame on the screen under the pointer (the
+    /// controller's `screenParametersChanged`/`activeSpaceChanged` observers
+    /// call this; B3/S1). The slide is an ENTRANCE gesture: the re-place is
+    /// never animated.
+    func repositionIfVisible() {
+        guard isVisible, !isSlideClosing else { return }
+        setFrame(Self.frame(on: screenUnderPointer()), display: true)
     }
 
     func hide() {
         removeKeyMonitor()
         removeOutsideClickMonitors()
+        // A hide during the exit slide is not another close: the hook has
+        // still not run, and a second run would double it (B3: exactly once).
+        guard !isSlideClosing else { return }
+        if isVisible, Self.animates, !isSlideOpening {
+            isSlideClosing = true
+            let exit = Self.offscreenFrame(from: frame)
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = Self.closeDuration
+                context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                context.allowsImplicitAnimation = true
+                self.setFrame(exit, display: true)
+            }, completionHandler: { [weak self] in
+                guard let self else { return }
+                isSlideClosing = false
+                orderOut(nil)
+                onHidden?()
+            })
+            return
+        }
         orderOut(nil)
         onHidden?()
     }
@@ -106,7 +234,9 @@ final class CaptureHistoryPanel: NSPanel {
     /// The monitors that close the panel on the first click anywhere else —
     /// Maccy's behaviour, which is what a paste-style palette teaches a user to
     /// expect: the panel does not need Esc or a second shortcut to get out of
-    /// the way.
+    /// the way. (B3 re-derivation: with the sheet spanning the bottom strip,
+    /// "else" is anything outside that strip — a click anywhere in it keeps
+    /// the sheet open.)
     ///
     /// Two monitors because one cannot see both worlds: a LOCAL one for clicks
     /// inside Stare (another of our windows, or the board) and a GLOBAL one for
@@ -147,8 +277,10 @@ final class CaptureHistoryPanel: NSPanel {
     }
 
     /// A click on the panel belongs to the panel; one inside its frame is a
-    /// near miss the user still reads as the panel's. Everything else closes
-    /// it, and the click itself goes on to whatever it landed on.
+    /// near miss the user still reads as the panel's — and since B3 that frame
+    /// is the full-width bottom strip, so the clause reads: a click anywhere
+    /// in the bottom strip keeps the sheet open. Everything else closes it,
+    /// and the click itself goes on to whatever it landed on.
     private func handleClickOutside(_ event: NSEvent?) {
         guard isVisible else { return }
         let hides = Self.hides(
@@ -228,23 +360,22 @@ final class CaptureHistoryPanel: NSPanel {
         }
     }
 
-    /// Centres the panel inside `screen`'s visible frame, clamped so it never
-    /// leaves the screen.
+    /// The anchored bottom-sheet frame inside `screen`'s visible frame (B3):
+    /// full visible width, flush to the visible bottom, at the fixed height
+    /// rule — never below one card row plus the header, never over the screen.
+    /// Kept screen-free below so the rule is value-testable without displays.
     static func frame(on screen: NSScreen?) -> CGRect {
         guard let screen else {
-            return CGRect(origin: .zero, size: contentSize)
+            return CGRect(origin: .zero, size: fallbackContentSize)
         }
-        let frame = screen.visibleFrame
-        let origin = CGPoint(
-            x: frame.midX - contentSize.width / 2,
-            y: frame.midY - contentSize.height / 2
-        )
-        return CGRect(
-            x: min(max(origin.x, frame.minX), frame.maxX - contentSize.width),
-            y: min(max(origin.y, frame.minY), frame.maxY - contentSize.height),
-            width: contentSize.width,
-            height: contentSize.height
-        )
+        return sheetFrame(inVisibleFrame: screen.visibleFrame)
+    }
+
+    /// The height rule, value side: `0.42 × visible.height`, floored at one
+    /// card row plus the header, clamped to the visible height it lives in.
+    static func sheetFrame(inVisibleFrame visible: CGRect, minimumHeight: CGFloat = defaultMinimumShelfHeight) -> CGRect {
+        let height = min(max(visible.height * sheetHeightFraction, minimumHeight), visible.height)
+        return CGRect(x: visible.minX, y: visible.minY, width: visible.width, height: height)
     }
 
     private func screenUnderPointer() -> NSScreen? {
@@ -458,7 +589,7 @@ struct CaptureHistoryPanelContent: View {
                 Button("Clear") { model.clearHistory() }
                     .disabled(model.isEmpty)
             }
-            .padding([.top, .horizontal], 14)
+            .padding([.top, .horizontal], 16)
 
             if model.isEmpty {
                 VStack(spacing: 6) {
@@ -486,8 +617,8 @@ struct CaptureHistoryPanelContent: View {
                                 )
                             }
                         }
-                        .padding(.horizontal, 14)
-                        .padding(.bottom, 14)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 16)
                         // The grid tells the model how wide it is, so the
                         // vertical arrows can move by a row (see columnCount).
                         .background(
@@ -514,7 +645,11 @@ struct CaptureHistoryPanelContent: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        // The slab (B3/S1): frosted material with only the TOP corners
+        // rounded; the window itself stays rectangular, and the radius is on
+        // the sheet's material so it reads as a plate rising from the bottom
+        // edge, not a floating card.
+        .background(.regularMaterial, in: UnevenRoundedRectangle(topLeadingRadius: 16, topTrailingRadius: 16))
     }
 }
 
@@ -538,7 +673,7 @@ struct CaptureHistoryCell: View {
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(maxWidth: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
             } else {
                 Image(systemName: "photo")
                     .font(.system(size: 20))
@@ -552,11 +687,11 @@ struct CaptureHistoryCell: View {
         }
         .padding(6)
         .background(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 12)
                 .fill(isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 12)
                 .strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 2)
         )
         .onTapGesture { model.pick(at: index) }
