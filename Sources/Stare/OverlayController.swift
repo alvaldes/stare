@@ -160,6 +160,12 @@ final class OverlayController {
     private var toolbar: ToolbarPanel?
     /// The hidden tools' own window (T6), alive only while the bar asks for it.
     private var overflowPanel: ToolbarOverflowPanel?
+    /// Closes the extras panel on the first interaction that is not one of its
+    /// own tools: a press anywhere else in the app, a key, a scroll, or the app
+    /// itself going away. Without it the panel stayed up while the bar was dragged
+    /// by its gripper and the hidden tools were left floating on their own.
+    private var overflowDismissMonitor: Any?
+    private var appResignedObserver: (any NSObjectProtocol)?
     /// The event monitor that gives the bar its cursor over its whole area
     /// (T6/S6). The bar's own per-view cursor paths cannot do it: the panel
     /// can never become key, so its cursor rectangles are never honoured, and
@@ -1764,11 +1770,50 @@ final class OverlayController {
         )
         overflowPanel = panel
         panel.orderFrontRegardless()
+        installOverflowDismissMonitor()
     }
 
     private func hideOverflowPanel() {
+        removeOverflowDismissMonitor()
         overflowPanel?.orderOut(nil)
         overflowPanel = nil
+    }
+
+    /// Whether an event that arrived in `window` closes the extras panel: any
+    /// window but the panel's own. Pure, so the rule is pinned without a live
+    /// event stream.
+    static func closesOverflow(forEventIn window: NSWindow?, panel: NSWindow?) -> Bool {
+        guard let panel else { return false }
+        return window !== panel
+    }
+
+    private func installOverflowDismissMonitor() {
+        guard overflowDismissMonitor == nil else { return }
+        overflowDismissMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown, .scrollWheel]
+        ) { [weak self] event in
+            guard let self else { return event }
+            if Self.closesOverflow(forEventIn: event.window, panel: self.overflowPanel) {
+                self.hideOverflowPanel()
+            }
+            return event
+        }
+        // Another app taking over closes it too: the panel is not a thing that
+        // waits in the background.
+        appResignedObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.hideOverflowPanel() }
+        }
+    }
+
+    private func removeOverflowDismissMonitor() {
+        if let monitor = overflowDismissMonitor { NSEvent.removeMonitor(monitor) }
+        overflowDismissMonitor = nil
+        if let observer = appResignedObserver { NotificationCenter.default.removeObserver(observer) }
+        appResignedObserver = nil
     }
 }
 

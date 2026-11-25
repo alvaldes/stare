@@ -225,3 +225,9 @@ files. Delivery shape when publishing stays the owner's call, and `main` is merg
   de horizontal". Fixed by never dropping a fit request and by adopting the content's fitting size before
   positioning. The preview goes back to ALWAYS horizontal (owner's call, L24's change reverted); the pixel
   test that pins it is back. Verified: 866 `StareCoreTests` + 299 `StareTests`, 0 failures, exit 0.
+- **L26** (S8, closing item): the extras panel closes on the first interaction that is not one of its own
+  tools — a press anywhere else in the app, a key, a scroll, or the app going away — so dragging the bar by
+  its gripper no longer leaves the hidden tools floating on their own. A local event monitor scoped to the
+  panel (`closesOverflow(forEventIn:panel:)`, pure and tested with two real windows) plus
+  `NSApplication.didResignActive`, installed and removed with the panel's own life. Verified: 866
+  `StareCoreTests` + 300 `StareTests`, 0 failures, exit 0.

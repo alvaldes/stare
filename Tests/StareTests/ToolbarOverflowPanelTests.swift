@@ -63,6 +63,20 @@ final class ToolbarOverflowPanelTests: XCTestCase {
         XCTAssertEqual(picked, [.spotlight, .line])
     }
 
+    /// The panel closes on the first interaction that is not one of its own
+    /// tools — a press on the canvas, on the bar, a key, the app going away — and
+    /// survives a press inside itself. Dragging the bar by its gripper is the case
+    /// the owner named: the press lands in the bar's window, so the panel goes.
+    func testThePanelClosesOnAnyInteractionThatIsNotItsOwn() throws {
+        let panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 40, height: 40), styleMask: [.borderless], backing: .buffered, defer: false)
+        let elsewhere = NSWindow(contentRect: NSRect(x: 100, y: 0, width: 40, height: 40), styleMask: [.borderless], backing: .buffered, defer: false)
+
+        XCTAssertFalse(OverlayController.closesOverflow(forEventIn: panel, panel: panel), "its own tools must not close it")
+        XCTAssertTrue(OverlayController.closesOverflow(forEventIn: elsewhere, panel: panel), "the bar or the canvas closes it")
+        XCTAssertTrue(OverlayController.closesOverflow(forEventIn: nil, panel: panel), "a stray event closes it")
+        XCTAssertFalse(OverlayController.closesOverflow(forEventIn: elsewhere, panel: nil), "nothing to close")
+    }
+
     /// Only the hidden tools are in the panel: nothing of the bar's own tail.
     func testThePanelShowsExactlyTheHiddenTools() {
         let hidden: [Tool] = [.line, .number, .blur, .spotlight, .laser]
