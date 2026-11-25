@@ -12,11 +12,11 @@ export function PointerSection() {
           Presenting? Point at it
         </h2>
         <p class="mt-3 text-[17px] leading-relaxed text-muted">
-          Press <Kbd>⌥⇧M</Kbd> and a ring follows your pointer, so everyone watching your screen knows where to look.
+          Press <Kbd>⌥⇧M</Kbd> and a highlight follows your pointer, so everyone watching your screen knows where to look.
           Clicks and focus stay with the app you're presenting. Try it right here.
         </p>
       </div>
-      <div id="pointer-controls" data-reveal style={{ '--delay': '120ms' }} class="mt-10 min-h-[300px]">
+      <div id="pointer-controls" data-reveal style={{ '--delay': '120ms' }} class="mt-10 min-h-[360px]">
         <noscript>
           <p class="text-muted">Turn on JavaScript to try the pointer highlight on this page.</p>
         </noscript>
