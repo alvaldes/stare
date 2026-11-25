@@ -9,8 +9,11 @@ import StareCore
 /// The measurements the settings shell and its panes share, so the sidebar,
 /// the pane padding and the column break stay one decision instead of three.
 enum SettingsMetrics {
-    /// The sidebar's fixed width; the pane area takes everything else.
-    static let sidebarWidth: CGFloat = 190
+    /// The sidebar's fixed width; the pane area takes everything else. Wide
+    /// enough for the longest row title in SEMIBOLD — the weight the selected
+    /// row uses — because a row that fits regular and wraps when selected
+    /// jumps the whole list. `SettingsSidebarWidthTests` measures it.
+    static let sidebarWidth: CGFloat = 214
     /// The pane area's horizontal padding, per side.
     static let panePadding: CGFloat = 22
     /// Below this card width a pane shows one column instead of two: a
@@ -135,29 +138,77 @@ struct SettingsStage<Content: View>: View {
     }
 }
 
-/// One or two columns of cards. Two columns use the width a wide window already
-/// has instead of stretching every row across it; a narrow window folds back to
-/// one column, in the order the pane reads when it is collapsed.
-struct SettingsColumns<Left: View, Right: View>: View {
+/// One or two columns of cards, laid out as ROWS: every row holds one card
+/// from each column, and the row is as tall as the taller of the two, so both
+/// cards in a row end on the same line (B8, the owner's own first clause: "en
+/// una fila ambas card tengan la misma altura").
+///
+/// Rows, not columns, because a `Grid` equalises a row natively — its height is
+/// the tallest cell's, and both cells fill it — while equalising two COLUMNS
+/// needs them measured and re-laid out, which inside the pane's `ScrollView`
+/// feeds the previous stretch straight back into the measurement (L24: the
+/// shorter column reported the whole viewport as its ideal). Nothing is measured
+/// here that the layout system does not already measure for its own purposes.
+///
+/// A column with fewer cards simply has no cell in the later rows, and the card
+/// beside it keeps its own side by holding the slot with a clear filler.
+///
+/// The width of a column is fixed from the width the shell hands down, so the
+/// two columns are always the same width regardless of what the cards contain.
+struct SettingsColumns: View {
     let width: CGFloat
-    @ViewBuilder let left: Left
-    @ViewBuilder let right: Right
+    let left: [AnyView]
+    let right: [AnyView]
+
+    init(width: CGFloat, left: [AnyView], right: [AnyView]) {
+        self.width = width
+        self.left = left
+        self.right = right
+    }
+
+    /// One row per card of the longer column.
+    var rows: Int { max(left.count, right.count) }
+
+    private var gap: CGFloat { SettingsMetrics.cardSpacing }
+
+    private var columnWidth: CGFloat {
+        max(0, (width - gap) / 2)
+    }
 
     var body: some View {
         if width >= SettingsMetrics.twoColumnMinimum {
-            HStack(alignment: .top, spacing: SettingsMetrics.cardSpacing) {
-                VStack(spacing: SettingsMetrics.cardSpacing) { left }
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                VStack(spacing: SettingsMetrics.cardSpacing) { right }
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            Grid(alignment: .topLeading, horizontalSpacing: gap, verticalSpacing: gap) {
+                ForEach(0..<rows, id: \.self) { row in
+                    GridRow {
+                        cell(left, row)
+                        cell(right, row)
+                    }
+                }
             }
         } else {
-            VStack(spacing: SettingsMetrics.cardSpacing) {
-                left
-                right
+            VStack(spacing: gap) {
+                ForEach(Array((left + right).enumerated()), id: \.offset) { _, card in
+                    card
+                }
             }
             .settingsSingleColumn()
         }
+    }
+
+    /// One card in its column. Both cells of a row are the same width and both
+    /// fill the row's height, which is what makes a short card match the tall
+    /// one beside it. A row on the shorter side holds its place with a clear
+    /// filler, so the other card never slides into the wrong column.
+    private func cell(_ cards: [AnyView], _ row: Int) -> some View {
+        Group {
+            if row < cards.count {
+                cards[row]
+            } else {
+                Color.clear
+            }
+        }
+        .frame(width: columnWidth, alignment: .topLeading)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
@@ -197,7 +248,12 @@ struct SettingsCard<Content: View>: View {
             content
         }
         .padding(14)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
+        // The card FILLS the space it is given, not just its content: the two
+        // columns are rows of a `Grid`, and a row is as tall as its taller card
+        // — so the shorter card has to grow into the row for the two to end on
+        // the same line. In a single column nothing offers extra height, so the
+        // card stays exactly as tall as its content.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 13))
         .overlay(
             RoundedRectangle(cornerRadius: 13)

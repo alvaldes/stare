@@ -22,46 +22,55 @@ final class CaptureHistoryPaneTests: XCTestCase {
         return context.makeImage()
     }
 
+    /// A store on a throwaway directory, so the pane never touches the
+    /// user's real history.
+    private func makeStore(_ images: [(Int, Int)]) throws -> CaptureHistoryStore {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let store = CaptureHistoryStore(directory: directory)
+        for (width, height) in images {
+            _ = store.add(try XCTUnwrap(solidImage(width, height)))
+        }
+        return store
+    }
+
     // MARK: The pane's reopen routes through the history hook
 
-    func testOpeningAnEntryHandsTheEntryToTheReopenHook() throws {
+    func testOpeningAStoredCaptureHandsItToTheReopenHook() throws {
+        let store = try makeStore([(10, 10)])
         let history = CaptureHistory(capacity: 2)
-        let entry = CaptureHistoryEntry(
-            id: UUID(),
-            image: try XCTUnwrap(solidImage(10, 10)),
-            date: Date(timeIntervalSince1970: 100)
-        )
-        history.onReopen = { handed in
-            XCTAssertEqual(handed.id, entry.id)
-            XCTAssertTrue(handed.image === entry.image)
-        }
-        let pane = HistoryPane(history: history)
+        var handed: CaptureHistoryEntry?
+        history.onReopen = { handed = $0 }
+        let pane = HistoryPane(store: store, history: history)
 
-        pane.open(entry)
+        let stored = try XCTUnwrap(store.entries.first)
+        pane.open(stored)
+
+        // A capture from an earlier session reopens exactly like one from this
+        // one: the hook is the history's only editor path.
+        XCTAssertEqual(handed?.id, stored.id)
+        XCTAssertEqual(handed?.image.width, 10)
+        XCTAssertEqual(handed?.image.height, 10)
+        XCTAssertEqual(handed?.date, stored.date)
     }
 
     func testOpeningWithNoHookWiredChangesNothing() throws {
-        let history = CaptureHistory(capacity: 2)
-        let composed = try XCTUnwrap(solidImage(10, 10))
-        history.record(composed, at: Date())
-        let pane = HistoryPane(history: history)
+        let store = try makeStore([(10, 10)])
+        let pane = HistoryPane(store: store, history: CaptureHistory(capacity: 2))
 
         // No reopen closure wired yet — the pane's open is a no-op, not a
-        // crash, and it never mutates the history.
-        pane.open(history.entries[0])
-        XCTAssertEqual(history.entries.count, 1)
-        XCTAssertTrue(history.entries[0].image === composed)
+        // crash, and it never removes the stored capture.
+        pane.open(try XCTUnwrap(store.entries.first))
+        XCTAssertEqual(store.entries.count, 1)
     }
 
-    func testClearingThePaneEmptiesTheHistory() throws {
-        let history = CaptureHistory(capacity: 2)
-        history.record(try XCTUnwrap(solidImage(10, 10)), at: Date())
-        history.record(try XCTUnwrap(solidImage(20, 10)), at: Date())
-        let pane = HistoryPane(history: history)
+    func testClearingThePaneEmptiesThePersistedHistory() throws {
+        let store = try makeStore([(10, 10), (20, 10)])
+        let pane = HistoryPane(store: store, history: CaptureHistory(capacity: 2))
 
         pane.clear()
 
-        XCTAssertEqual(history.entries, [])
+        XCTAssertEqual(store.entries, [], "Clear forgets the stored history, not the session's list")
     }
 
     // MARK: The overlay wires the reopen through the editor handoff
