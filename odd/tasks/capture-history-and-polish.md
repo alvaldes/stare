@@ -539,3 +539,19 @@ part of this work.
   **Evidence**: whole suite exit 0, no signal line, bundle passed, **1170 started / 1170 passed / 0
   failed**; installed 01:5x and relaunched with `STARE_DIAG=1` so the next pass has evidence instead of
   guesses.
+
+- **L37** (item 1, second instrumented pass, and the real root): the log line that named it was
+  `undo skipped kind=mark display=2` twice — including the step the restore itself had just added. So the
+  mark WAS in the session and `undoMark` still refused it: it asks
+  `session.canUndo(markWithID:)`, which scans the session's own `undoOps`, and
+  `DrawingSession.restored(strokes:)` returned the strokes with an EMPTY journal. ⌘Z after a mode cycle
+  therefore had nothing it could apply while the marks sat on screen.
+  `restored(strokes:)` cannot simply grow a journal, and the suite said so: the capture editor seeds the
+  marks a capture ARRIVED with, and its "pristine" baseline is those marks — journalling them made
+  `testUndoRemovesAReceivedCaptureThroughTheSharedJournal` fail because the last ⌘Z ate the baseline. The
+  two cases are different on purpose, so there are two entry points now: `restored` (unjournalled, the
+  editor's baseline) and `restoredUndoable` (journalled, what a mode restores). The overlay's
+  `restoreDrawingSessions` uses the second, and the per-stroke `.mark` steps it appends can finally apply.
+  **Evidence**: `testARestoredSessionCanUndoItsOwnMarks` (the newest restored mark undoes, then the one
+  before it), `testRestoredStrokesKeepTheirIds`, the editor's baseline test green again, whole suite exit 0
+  / no signal line / bundle passed, **1171 started / 1171 passed / 0 failed**.

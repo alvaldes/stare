@@ -683,4 +683,19 @@ public extension DrawingSession {
         session.nextStepNumber = (live.compactMap(\.stepNumber).max() ?? 0) + 1
         return session
     }
+
+    /// A session whose marks came back from the archive and are UNDOABLE.
+    ///
+    /// `restored(strokes:)` deliberately returns them unjournalled: the capture
+    /// editor seeds the marks a capture arrived with, and those are its
+    /// baseline — undoing them would eat the capture the user opened. The modes
+    /// are the other case: their marks are the user's own work, restored after a
+    /// cycle, and they must undo exactly like freshly drawn ones. The journal is
+    /// what `canUndo(markWithID:)` scans, so an unjournalled session answers NO
+    /// for every mark and ⌘Z found nothing to do while the marks sat on screen.
+    static func restoredUndoable(strokes: [Stroke]) -> DrawingSession {
+        var session = restored(strokes: strokes)
+        session.undoOps = session.strokes.map { .added($0) }
+        return session
+    }
 }

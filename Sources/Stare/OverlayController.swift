@@ -818,7 +818,7 @@ final class OverlayController {
         guard sessionPersistenceEnabled, let archive = sessionStore?.load() else { return }
         for canvas in canvases.values {
             guard let stored = archive.displays[String(canvas.displayID)], !stored.isEmpty else { continue }
-            let restored = DrawingSession.restored(strokes: stored.compactMap(Stroke.init(persisted:)))
+            let restored = DrawingSession.restoredUndoable(strokes: stored.compactMap(Stroke.init(persisted:)))
             guard !restored.isEmpty else { continue }
             canvas.view.session = restored
             // The marks came back; their undo steps come back with them, so ⌘Z
