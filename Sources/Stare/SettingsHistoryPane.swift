@@ -19,6 +19,10 @@ struct HistoryPane: View {
     /// history alone: the preview card is the only thing that needs it, and a
     /// test that renders the list must not reach the user's real preferences.
     private let preferences: PreferencesModel?
+    /// Bumped after Clear so the list rebuilds from the store it just emptied:
+    /// the store is not observable, and a pane that only reads it at body time
+    /// keeps showing the captures it no longer holds.
+    @State private var historyRevision = 0
 
     init(
         store: CaptureHistoryStore = .shared,
@@ -42,6 +46,9 @@ struct HistoryPane: View {
                 // empties comes after it.
                 clearCard
                 capturesCard
+                    // Clear empties the store, and the list has to show that
+                    // without closing and reopening the window.
+                    .id(historyRevision)
             }
             .settingsSingleColumn()
         }
@@ -144,6 +151,7 @@ struct HistoryPane: View {
     /// afterwards.
     func clear() {
         store.clear()
+        historyRevision &+= 1
     }
 }
 

@@ -349,6 +349,13 @@ final class CaptureHistoryPanelModel: ObservableObject {
 
     /// Arrow navigation: moves the selection by `delta`, clamped so it never
     /// leaves the entries.
+    /// "3 / 12" — the selection's place in the history, or nil when nothing is
+    /// selected. The header shows it so the focus is legible, not only outlined.
+    var selectionPosition: String? {
+        guard let index = selectedIndex, !entries.isEmpty else { return nil }
+        return "\(index + 1) / \(entries.count)"
+    }
+
     func moveSelection(_ delta: Int) {
         guard let current = selectedIndex else { return }
         let next = min(max(current + delta, 0), entries.count - 1)
@@ -406,6 +413,15 @@ struct CaptureHistoryPanelContent: View {
             HStack {
                 Text("Capture History")
                     .font(.headline)
+                // Which capture the keys are on, in words: the outline alone was
+                // not readable as "the one in focus", and a position makes the
+                // state legible even while the grid scrolls under it.
+                if let position = model.selectionPosition {
+                    Text(position)
+                        .font(.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 Button("Clear") { model.clearHistory() }
                     .disabled(model.isEmpty)

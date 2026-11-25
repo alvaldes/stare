@@ -478,3 +478,27 @@ part of this work.
   the card answers with the arrow even with a crosshair set (the board's state). Whole suite exit 0, no
   signal line, bundle passed, **1164 started / 1164 passed / 0 failed**. What a test cannot see is the
   pointer itself: this is the one item in the whole ledger whose verdict is the owner's eye on the board.
+
+- **L34** (the owner's manual pass on L27-L33: three findings, one of them serious).
+  **Undo died after closing and reopening the board (and in drawing mode after it).** Both halves I can
+  reach headless pass — the wiring (`onBoardImageEdited` on the second board's canvas) and the key path
+  (⌘Z delivered to the view after a close/reopen) — and the controller routes ⌘Z from a LOCAL monitor, so
+  the handler never depends on who is first responder. That leaves exactly one explanation: Stare was not
+  the active app, and a local monitor only sees our own events. `openBoard` called `deactivate()` with its
+  default, which RESTORES focus to the app the user came from — an activation that can land AFTER the
+  `NSApp.activate` the board then performs. Switching modes is not leaving to another app, so it is
+  `deactivate(restoringFocus: false)` now; the board's own deferred block still re-asserts key and front.
+  Two of my own tests were wrong before they were right: the first took "the first board canvas" on a
+  machine with several displays, and the second asked whether ANY canvas carried a layer — but the board
+  KEEPS its pages across a close, so the previous paste was still there. It now asks about the id of the
+  layer that paste created, and is stable 3/3.
+  **The history had no legible focus (B10's real face).** The arrows were moving the model all along —
+  the renders prove the outline follows and Enter copies the moved one — but a 2 pt accent outline is not
+  an indicator a user can read. The header now shows the position ("3 / 12") next to the title, so the
+  focus is stated as well as drawn.
+  **Clear did not refresh the list (R3-001's neighbour).** The store is not observable, so the pane kept
+  rendering the entries it had already read; the captures card carries a revision id that Clear bumps, and
+  the list empties in place.
+  **Evidence**: whole suite exit 0, no signal line, bundle passed, **1166 started / 1166 passed / 0
+  failed**; installed 00:5x. The two items still needing his eye: ⌘Z after a board cycle, and whether the
+  "3 / 12" reads as the focus he was looking for.

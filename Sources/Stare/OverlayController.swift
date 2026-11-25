@@ -800,7 +800,13 @@ final class OverlayController {
     /// leave). The pages stay in memory for the whole session.
     private func openBoard() {
         guard !isBoardActive, !NSScreen.screens.isEmpty else { return }
-        if isActive { deactivate() }
+        // NOT `deactivate()`: its default restores focus to the app the user came
+        // from, and that activation can land AFTER the `NSApp.activate` below —
+        // Stare ends up in the background with its panel non-key, so ⌘Z (which
+        // this controller routes from a local monitor and therefore needs our app
+        // to be the active one) never arrives. Switching modes is not leaving to
+        // another app.
+        if isActive { deactivate(restoringFocus: false) }
         if isPointerActive { stopPointerMode() }
         isBoardActive = true
 

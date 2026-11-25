@@ -145,6 +145,90 @@ final class BoardImageUndoTests: XCTestCase {
         XCTAssertEqual(view.board.currentPage.image?.rect, pasted.rect)
     }
 
+    /// The owner's report: after closing and reopening the board, ⌘Z and ⇧⌘Z
+    /// stop working — in board mode and in drawing mode alike. Closing the board
+    /// clears the history on purpose, so what has to survive is the WIRING: a
+    /// canvas built by the second `openBoard` must report its image edits too.
+    func testUndoStillWorksAfterTheBoardIsClosedAndReopened() throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "no screens: the board canvases need one")
+        _ = NSApplication.shared
+        let controller = OverlayController(captureService: CaptureService())
+        controller.toggleBoard()
+        guard let firstView = controller.selfTestViews.compactMap({ $0 as? WhiteboardView }).first else {
+            controller.toggleBoard()
+            throw XCTSkip("board canvas could not be created")
+        }
+        firstView.pasteImage(solid(40, 20))
+        XCTAssertEqual(controller.historyEntryCount, 1)
+
+        // Close and reopen — the owner's sequence.
+        controller.toggleBoard()
+        controller.toggleBoard()
+        defer { controller.toggleBoard() }
+        guard let secondView = controller.selfTestViews.compactMap({ $0 as? WhiteboardView }).first else {
+            throw XCTSkip("board canvas could not be created after reopening")
+        }
+        secondView.pasteImage(solid(40, 20))
+        XCTAssertEqual(
+            controller.historyEntryCount, 1,
+            "a paste on the reopened board is a step on the stream too"
+        )
+
+        // The entry routes to the display the paste happened on, and a machine
+        // with more than one screen has a canvas per display — and the board
+        // KEEPS its pages across a close, so the first paste is still there.
+        // The question is only about the layer this paste created.
+        let pastedID = try XCTUnwrap(secondView.board.currentPage.image?.id)
+        func carries(_ id: UUID) -> Bool {
+            controller.selfTestViews
+                .compactMap { $0 as? WhiteboardView }
+                .contains { $0.board.currentPage.image?.id == id }
+        }
+        XCTAssertTrue(carries(pastedID))
+        controller.undo()
+        XCTAssertFalse(carries(pastedID), "⌘Z still takes it off after the reopen")
+        controller.redo()
+        XCTAssertTrue(carries(pastedID), "and ⇧⌘Z still puts it back")
+    }
+
+    /// The key path itself: ⌘Z delivered to the board's view, after a
+    /// close/reopen cycle. This separates "the handler is wrong" from "the event
+    /// never arrives", which headless cannot decide the other way round.
+    func testCommandZReachesTheBoardAfterAReopen() throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "no screens: the board canvases need one")
+        _ = NSApplication.shared
+        let controller = OverlayController(captureService: CaptureService())
+        controller.toggleBoard()
+        guard let view = controller.selfTestViews.compactMap({ $0 as? WhiteboardView }).first else {
+            controller.toggleBoard()
+            throw XCTSkip("board canvas could not be created")
+        }
+        controller.toggleBoard()
+        controller.toggleBoard()
+        defer { controller.toggleBoard() }
+        guard let reopened = controller.selfTestViews.compactMap({ $0 as? WhiteboardView }).first else {
+            throw XCTSkip("board canvas could not be created after reopening")
+        }
+        _ = view
+
+        reopened.pasteImage(solid(40, 20))
+        XCTAssertNotNil(reopened.board.currentPage.image)
+
+        func commandZ(shift: Bool) -> NSEvent {
+            NSEvent.keyEvent(
+                with: .keyDown, location: .zero,
+                modifierFlags: shift ? [.command, .shift] : [.command],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: 0,
+                context: nil, characters: "z", charactersIgnoringModifiers: "z",
+                isARepeat: false, keyCode: 6
+            )!
+        }
+        reopened.keyDown(with: commandZ(shift: false))
+        XCTAssertNil(reopened.board.currentPage.image, "⌘Z on the view takes the paste off")
+        reopened.keyDown(with: commandZ(shift: true))
+        XCTAssertNotNil(reopened.board.currentPage.image, "⇧⌘Z puts it back")
+    }
+
     func testRestoringAPageThatNoLongerExistsReportsNothing() throws {
         let (view, _, window) = try makeBoardView()
         defer { window.orderOut(nil) }
