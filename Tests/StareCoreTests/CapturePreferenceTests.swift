@@ -44,6 +44,15 @@ final class CapturePreferenceTests: XCTestCase {
         XCTAssertEqual(CapturePreference.standard, CapturePreference())
     }
 
+    func testFreshInstallTemplateIsTheDocumentedTemplate() {
+        // The shipped default is the explicit template that says what it does: it
+        // renders, byte for byte, the name the empty template's legacy branch
+        // produced — so the field's own example row and the save paths agree.
+        XCTAssertEqual(CapturePreference.defaultFileNameTemplate, "Stare-{date}-at-{time}")
+        XCTAssertEqual(CapturePreference().fileNameTemplate, "Stare-{date}-at-{time}")
+        XCTAssertEqual(CapturePreference.standard.fileNameTemplate, "Stare-{date}-at-{time}")
+    }
+
     // MARK: File name shape
 
     func testFileNameHasPinnedShapeAndExtensionPerFormat() {
@@ -58,6 +67,11 @@ final class CapturePreferenceTests: XCTestCase {
     func testFileNameGroupNameStaysStableWithCustomPrefix() {
         var prefs = CapturePreference.standard
         prefs.fileNamePrefix = "Shots"
+        // The prefix drives the name only when no template is set — the
+        // stored-empty case (S4): a stored preference with `""` keeps the
+        // user's prefix, byte for byte. A fresh install carries the explicit
+        // default template instead, pinned where the default is tested.
+        prefs.fileNameTemplate = ""
         XCTAssertEqual(prefs.fileName(at: date(2026, 1, 2, 3, 4, 5), calendar: calendar), "Shots-2026-01-02-at-03-04-05.png")
     }
 
@@ -151,8 +165,15 @@ final class CapturePreferenceTests: XCTestCase {
     }
 
     func testMissingFieldsTakeStandard() throws {
+        // The template field is the one deliberate difference: a blob without
+        // it is an existing stored preference, and it decodes to the EMPTY
+        // template — the legacy route, byte for byte the names it already
+        // wrote — never to the fresh-install default, so no existing user's
+        // names change (S4).
         let decoded = try decode(#"{}"#)
-        XCTAssertEqual(decoded, CapturePreference.standard)
+        var expected = CapturePreference.standard
+        expected.fileNameTemplate = ""
+        XCTAssertEqual(decoded, expected)
     }
 
     // MARK: Round trip

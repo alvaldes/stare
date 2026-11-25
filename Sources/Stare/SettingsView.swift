@@ -1705,6 +1705,16 @@ private struct CapturePane: View {
         }
     }
 
+    /// The File name card (S4 follow-up, option A — destination-
+    /// independent): with a template set it builds the WHOLE file name, so
+    /// the prefix field that governed the legacy name stands down — on the
+    /// clipboard and on folder saves alike — and comes back the moment the
+    /// template is cleared. The caption under the rows says so, instead of
+    /// a control being silently dead: the control that governs is the one
+    /// that looks alive. The prefix row keeps its character-set detail for
+    /// the state where it governs, and the two rows keep the pane's whole
+    /// behaviour: no naming rule, sanitising or legacy empty-template path
+    /// changed.
     private var fileNameCard: some View {
         SettingsCard(title: "File name", symbol: "doc.text") {
             SettingRow(
@@ -1712,14 +1722,22 @@ private struct CapturePane: View {
                 detail: "Letters, numbers, hyphen, underscore and dot. Anything else falls back to “Stare”.",
                 content: TextField("", text: $model.capture.fileNamePrefix)
                     .frame(width: 180)
+                    // Destination-independent (S4 decision): the template
+                    // naming every file is what retires the prefix, not
+                    // where the capture goes — so an empty template keeps
+                    // the prefix live on the clipboard path too.
+                    .disabled(!model.capture.fileNameTemplate.isEmpty)
             )
             SettingRow(
                 title: "Name template",
-                detail: "Folder saves: build the name from tokens — {date} · {time} · {app} · {display} — plus letters, numbers, hyphen, underscore and dot; the preview shows a sample app and display. An unknown token, an unsafe character, or an app or display name that isn't there falls back to the prefix name, and .png or .jpg is added automatically.",
+                detail: "Folder saves: build the name from tokens — {date} · {time} · {app} · {display} — plus letters, numbers, hyphen, underscore and dot. {app} and {display} come from the capture itself; when they aren't known — as in this preview, and on an editor save — they fall back to the prefix name, exactly what the preview shows. An unknown token or an unsafe character falls back too, and .png or .jpg is added automatically.",
                 content: TextField("", text: $model.capture.fileNameTemplate)
                     .frame(width: 180)
                     .disabled(isClipboard)
             )
+            Text("While a template is set it builds the whole file name; clear it and the prefix names the files again.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             HStack(spacing: 6) {
                 Text("Files are named like")
                     .font(.caption)
@@ -1777,8 +1795,12 @@ private struct CapturePane: View {
     }
 
     /// One sample name at a fixed instant, so the row does not tick every
-    /// second with the clock. The template's app and display tokens are shown
-    /// with sample values, since neither exists before a capture is taken.
+    /// second with the clock — produced by the same call with the same
+    /// inputs the editor's save panel uses
+    /// (`CaptureEditorCanvas.savePanelFileName`): no app, no display,
+    /// because neither can be known before a capture is taken. An `{app}` or
+    /// `{display}` template therefore previews the fallback the save really
+    /// writes, never a name no path can produce.
     private var exampleName: String {
         var components = DateComponents()
         components.year = 2026
@@ -1788,7 +1810,7 @@ private struct CapturePane: View {
         components.minute = 5
         components.second = 33
         let sample = Calendar.current.date(from: components) ?? Date()
-        return model.capture.fileName(at: sample, app: "Safari", display: "Built-in")
+        return CaptureEditorCanvas.savePanelFileName(preference: model.capture, at: sample)
     }
 }
 

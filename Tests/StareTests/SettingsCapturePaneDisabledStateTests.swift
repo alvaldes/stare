@@ -43,7 +43,8 @@ final class SettingsCapturePaneDisabledStateTests: XCTestCase {
         )
         XCTAssertEqual(pane.template.stringValue, "{date}",
             "the disabled field must be the template one, not its live prefix neighbour")
-        XCTAssertTrue(pane.prefix.isEnabled, "the prefix carries the clipboard name and stays editable")
+        XCTAssertFalse(pane.prefix.isEnabled,
+            "the template owns the whole file name while it is set, so the prefix stands down — destination-independent; it comes back editable the moment the template is cleared")
         XCTAssertTrue(
             pane.backdropFields.allSatisfy { !$0.isEnabled },
             "the adjacent backdrop fields share the same condition and are disabled with it"
@@ -58,7 +59,8 @@ final class SettingsCapturePaneDisabledStateTests: XCTestCase {
         )
         XCTAssertEqual(pane.template.stringValue, "{date}",
             "the enabled field must be the template one, not its live prefix neighbour")
-        XCTAssertTrue(pane.prefix.isEnabled, "the prefix stays editable either way")
+        XCTAssertFalse(pane.prefix.isEnabled,
+            "the template governs the name while it is set, so the prefix is disabled on a folder save too — the same template rule there and here; clearing it brings the prefix back")
         XCTAssertTrue(
             pane.backdropFields.allSatisfy(\.isEnabled),
             "the adjacent backdrop fields share the same condition and are enabled with it"

@@ -205,15 +205,56 @@ final class CaptureFileNameTemplateTests: XCTestCase {
         XCTAssertEqual(preference.fileName(at: date, calendar: calendar), "shot.png")
     }
 
+    // MARK: The shipped default documents itself (S4)
+
+    func testShippedDefaultTemplateRendersTheDocumentedExample() {
+        // The field's own example: `Stare-{date}-at-{time}` on
+        // 2026-11-21 14:05:33 must produce the name the Settings preview row
+        // has always shown — byte for byte what the empty template's legacy
+        // branch produces, so the visible text never lies.
+        XCTAssertEqual(
+            CapturePreference.standard.fileName(at: date, calendar: calendar),
+            "Stare-2026-11-21-at-14-05-33.png"
+        )
+        var legacy = CapturePreference.standard
+        legacy.fileNameTemplate = ""
+        XCTAssertEqual(
+            legacy.fileName(at: date, calendar: calendar),
+            CapturePreference.standard.fileName(at: date, calendar: calendar),
+            "the default template and the stored-empty legacy branch agree on the same name"
+        )
+    }
+
+    func testRenderedNameFollowsTheTemplateAsItChanges() {
+        // The preview is live: as the template changes, the rendered name
+        // follows it — including the `{app}` token, which a caller that knows
+        // the app (an overlay folder save) renders as that app.
+        var preference = CapturePreference.standard
+        XCTAssertEqual(preference.fileName(at: date, calendar: calendar), "Stare-2026-11-21-at-14-05-33.png")
+        preference.fileNameTemplate = "{app}"
+        XCTAssertEqual(
+            preference.fileName(at: date, calendar: calendar, app: "Safari"),
+            "Safari.png"
+        )
+        preference.fileNameTemplate = "{date}_{time}"
+        XCTAssertEqual(preference.fileName(at: date, calendar: calendar), "2026-11-21_14-05-33.png")
+    }
+
     // MARK: Empty template is today's behaviour, byte for byte
 
     func testEmptyTemplateIgnoresAppAndDisplayAndKeepsThePrefixName() {
+        // The explicit default template also ignores app and display: a
+        // caller that knows neither still gets the documented example (S4).
         var preference = CapturePreference.standard
         preference.fileNamePrefix = "Shots"
         XCTAssertEqual(
             preference.fileName(at: date, calendar: calendar, app: "Safari", display: "Studio"),
-            "Shots-2026-11-21-at-14-05-33.png"
+            "Stare-2026-11-21-at-14-05-33.png",
+            "app and display are not part of the default template, so unavailable values change nothing"
         )
+        // The empty template — what a stored preference carries (S4: the
+        // fresh-install default is the explicit documented template) — keeps
+        // the prefix name byte for byte, ignoring app and display.
         preference.fileNameTemplate = ""
         XCTAssertEqual(
             preference.fileName(at: date, calendar: calendar, app: "Safari", display: "Studio"),
@@ -258,7 +299,14 @@ final class CaptureFileNameTemplateTests: XCTestCase {
             from: Data(#"{"format":"jpeg","destination":{"folder":"/tmp/shots"},"fileNamePrefix":"Shots"}"#.utf8)
         )
         XCTAssertEqual(decoded.fileNameTemplate, "")
-        XCTAssertEqual(decoded, CapturePreference(format: .jpeg, destination: .folder(path: "/tmp/shots"), fileNamePrefix: "Shots"))
+        // The absent field decodes to the EMPTY template, never the
+        // fresh-install default: this is an existing stored preference, and
+        // empty keeps its legacy names byte for byte (S4).
+        var expected = CapturePreference(
+            format: .jpeg, destination: .folder(path: "/tmp/shots"), fileNamePrefix: "Shots"
+        )
+        expected.fileNameTemplate = ""
+        XCTAssertEqual(decoded, expected)
     }
 
     func testUnknownOrUnsafeTemplateInBlobDecodesEmptyAndKeepsTheRest() throws {

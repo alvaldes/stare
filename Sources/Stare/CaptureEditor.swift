@@ -1890,16 +1890,36 @@ final class CaptureEditorCanvas: NSView {
         Diag.log("editor copied \(composed.width)x\(composed.height)")
     }
 
+    /// The name the save panel's field defaults from — one call, and the
+    /// same call with the same inputs the Settings preview makes (S4): no
+    /// app, no display. The editor genuinely cannot know either. The capture
+    /// instant is gone by the time the panel opens: while the editor is up,
+    /// Stare itself is the frontmost application, so even `CaptureAppIdentity`
+    /// — the capture path's own resolver — refuses `{app}` by contract (`{app}`
+    /// must name what was captured, never the tool), and the only screen the
+    /// editor sees is its own window's, never necessarily the captured
+    /// display. Asking nothing is the honest answer: with no value the tokens
+    /// refuse and the template degrades to the prefix name — the same
+    /// fallback the Settings preview shows, never a name the preview does
+    /// not promise.
+    static func savePanelFileName(
+        preference: CapturePreference, at date: Date, calendar: Calendar = .current
+    ) -> String {
+        preference.fileName(at: date, calendar: calendar, app: nil, display: nil)
+    }
+
     /// The save panel defaults to the persisted capture preference: the file
-    /// name is `CapturePreference.fileName(at:)` — prefix plus timestamp —
-    /// and the chosen format sets the panel's type and extension, instead of
-    /// the hardcoded "Stare.png" (T11/S6).
+    /// name is `CapturePreference.fileName(at:)` — the template's rendered
+    /// shape, the prefix name when the template is empty or refuses — and
+    /// the chosen format sets the panel's type and extension, instead of
+    /// the hardcoded "Stare.png" (T11/S6). The inputs are the preview's
+    /// inputs (S4): `app` and `display` are `nil`, see `savePanelFileName`.
     func savePanel(preference: CapturePreference, onSaved: (() -> Void)? = nil) {
         guard let composed = composedImage() else { return }
         let panel = NSSavePanel()
         let isPNG = preference.format == .png
         panel.allowedContentTypes = [isPNG ? UTType.png : UTType.jpeg]
-        panel.nameFieldStringValue = preference.fileName(at: Date())
+        panel.nameFieldStringValue = Self.savePanelFileName(preference: preference, at: Date())
         panel.begin { response in
             guard response == .OK, let url = panel.url,
                 let data = CaptureFile.data(for: composed, format: preference.format) else {

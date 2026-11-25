@@ -126,16 +126,27 @@ public struct CapturePreference: Codable, Equatable, Sendable {
     /// The maximum width a fresh install gets for `.maxWidth` saves.
     public static let defaultMaxSaveWidth = 1600
 
-    /// The file-name template a fresh install gets: empty, today's behaviour.
-    public static let defaultFileNameTemplate = ""
+    /// The file-name template a fresh install gets: the explicit shape that
+    /// says what it does and renders, byte for byte, the same name the
+    /// legacy branch produced — `Stare-2026-11-21-at-14-05-33.png` — so the
+    /// field documents itself instead of relying on an empty string. The
+    /// empty template keeps its meaning for preferences already stored on
+    /// disk (T10/S17): blobs saved before the field existed decode without
+    /// it, and every sanitisation refusal still lands on `""`, so neither
+    /// route may change an existing user's names — the empty case in
+    /// `fileName(at:)` stays for them, never a fresh-install state.
+    public static let defaultFileNameTemplate = "Stare-{date}-at-{time}"
 
     /// The only words a `{…}` token may carry in a template (T10/S17). Any
     /// other word — or any brace left dangling, empty or nested — makes the
     /// whole template fall back to today's prefix-based name.
     static let templateTokens: Set<String> = ["date", "time", "app", "display"]
 
-    /// Token-driven name template for folder saves (T10/S17), off by default:
-    /// an empty template is today's behaviour, byte for byte. Literal text
+    /// Token-driven name template for folder saves (T10/S17): a fresh
+    /// install gets `Stare-{date}-at-{time}` (S4), which renders exactly the
+    /// name the legacy branch produced; an empty stored template keeps
+    /// today's behaviour byte for byte for preferences already on disk.
+    /// Literal text
     /// keeps the same safe character set as the prefix, and every `{date}`,
     /// `{time}`, `{app}` and `{display}` token is substituted; anything a
     /// template cannot honour — an unknown token, malformed braces, an unsafe
@@ -260,6 +271,11 @@ public struct CapturePreference: Codable, Equatable, Sendable {
         display: String? = nil
     ) -> String {
         guard !fileNameTemplate.isEmpty,
+            // The empty case is not dead: preferences stored before the field
+            // existed decode to `""` and every unusable template stores as
+            // `""`. Both must keep the legacy name byte for byte, so no
+            // existing user's saved names change — only a fresh install
+            // starts on the explicit default template above.
             let rendered = Self.renderedTemplate(
                 fileNameTemplate, date: date, calendar: calendar, app: app, display: display
             )
