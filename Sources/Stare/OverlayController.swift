@@ -218,7 +218,7 @@ final class OverlayController {
     /// The panel's pick routes through `deliverHistoryPick`, the seam T2b
     /// extends with a whiteboard route. Internal so the tests can drive the
     /// panel's real event path and observe where its hiding sends focus.
-    private let captureHistoryStore = CaptureHistoryStore()
+    private let captureHistoryStore = CaptureHistoryStore.shared
     private(set) lazy var captureHistoryPanel = CaptureHistoryPanel(
         store: captureHistoryStore,
         // Read on every open, so the thumbnail size chosen in Settings (B1)

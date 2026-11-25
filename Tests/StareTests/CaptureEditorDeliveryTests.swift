@@ -51,6 +51,7 @@ final class CaptureEditorDeliveryTests: XCTestCase {
     }
 
     func testTheEditorControllerCarriesTheHookToEachWindowItOpens() {
+        try? XCTSkipIf(NSScreen.screens.isEmpty, "no screen: a window cannot be ordered on screen")
         let controller = CaptureEditorController()
         var delivered = 0
         controller.onDeliver = { _ in delivered += 1 }
@@ -64,5 +65,13 @@ final class CaptureEditorDeliveryTests: XCTestCase {
         XCTAssertNotNil(content)
         content?.deliverComposed()
         XCTAssertEqual(delivered, 1)
+
+        // The window goes away with the test: leaving it on screen is state the
+        // rest of the suite inherits, and a later test that resolves "the window
+        // under the pointer" pays for it.
+        for window in controller.windowsForTesting {
+            window.orderOut(nil)
+            window.close()
+        }
     }
 }

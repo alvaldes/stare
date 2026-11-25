@@ -5,8 +5,8 @@ import StareCore
 /// The capture history's settings: what a preview looks like, the one way to
 /// forget the whole thing, and the history itself.
 ///
-/// The list is the PERSISTED history — the same `CaptureHistoryStore` the ⌥⇧I
-/// panel reads — not the session's in-memory list: a capture taken yesterday is
+/// The list is the PERSISTED history — the very same `CaptureHistoryStore.shared`
+/// the ⌥⇧I panel reads, so a Clear here is a Clear there — not the session's in-memory list: a capture taken yesterday is
 /// just as much "the history" as one taken a minute ago, and a pane that only
 /// showed this session's read as if the rest had been thrown away. That means
 /// the pane outlives the session's `CaptureHistory` on purpose; the `CaptureHistory`
@@ -21,7 +21,7 @@ struct HistoryPane: View {
     private let preferences: PreferencesModel?
 
     init(
-        store: CaptureHistoryStore = CaptureHistoryStore(),
+        store: CaptureHistoryStore = .shared,
         history: CaptureHistory = .shared,
         model: PreferencesModel? = nil
     ) {
@@ -75,8 +75,13 @@ struct HistoryPane: View {
     }
 
     private func entryRow(_ entry: PersistedCaptureEntry) -> some View {
-        HStack(spacing: 12) {
-            if let image = store.image(for: entry) {
+        // The image is read ONCE per row: it draws the thumbnail and it decides
+        // whether Open can do anything. An entry whose file was removed outside
+        // Stare has no image to open, and a button that looks live and does
+        // nothing on click is worse than one that says so (R3-002).
+        let image = store.image(for: entry)
+        return HStack(spacing: 12) {
+            if let image {
                 Image(decorative: image, scale: 1.0)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
@@ -97,7 +102,8 @@ struct HistoryPane: View {
             }
             Spacer()
             Button("Open") { open(entry) }
-                .disabled(history.onReopen == nil)
+                .disabled(!canOpen(entry))
+                .help(image == nil ? "This capture's file is no longer there" : "Open it in the editor")
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Capture from \(entry.date.formatted(date: .abbreviated, time: .shortened))")
@@ -121,8 +127,17 @@ struct HistoryPane: View {
     /// like one from this one. Unwired (before the overlay builds), nothing
     /// happens.
     func open(_ entry: PersistedCaptureEntry) {
-        guard let onReopen = history.onReopen, let image = store.image(for: entry) else { return }
+        guard canOpen(entry), let onReopen = history.onReopen,
+            let image = store.image(for: entry) else { return }
         onReopen(CaptureHistoryEntry(id: entry.id, image: image, date: entry.date))
+    }
+
+    /// Whether the row's Open can actually do something: it needs the editor
+    /// hook AND the stored image the editor would open. Deciding it here keeps
+    /// the button and the action on one rule, so a capture whose file is gone
+    /// never offers a click that silently does nothing (R3-002).
+    func canOpen(_ entry: PersistedCaptureEntry) -> Bool {
+        history.onReopen != nil && store.image(for: entry) != nil
     }
 
     /// Forgets every stored capture; the store keeps accepting records

@@ -245,7 +245,7 @@ struct SettingsView: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(10)
+        .padding(SettingsMetrics.sidebarPadding)
         .frame(width: SettingsMetrics.sidebarWidth)
         .frame(maxHeight: .infinity)
         .background(.ultraThinMaterial)
@@ -255,11 +255,11 @@ struct SettingsView: View {
         Button {
             self.area = area
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: SettingsMetrics.sidebarRowSpacing) {
                 Image(systemName: area.symbol)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(self.area == area ? Color(nsColor: .controlAccentColor) : .secondary)
-                    .frame(width: 18)
+                    .frame(width: SettingsMetrics.sidebarRowSymbolWidth)
                 Text(area.title)
                     .font(.system(size: 13,
                                   weight: self.area == area ? .semibold : .regular))
@@ -270,7 +270,7 @@ struct SettingsView: View {
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, SettingsMetrics.sidebarRowPadding)
             .padding(.vertical, 7)
             .background {
                 if self.area == area {

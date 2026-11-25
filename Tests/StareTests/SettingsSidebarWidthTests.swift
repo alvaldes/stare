@@ -11,12 +11,19 @@ import StareCore
 /// The toolbar's label is `.lineLimit(1)` now, so this measures the number that
 /// decides whether that limit ever bites: every area's title, in the SEMIBOLD
 /// the selected row uses, has to fit the width a row's text actually gets.
+@MainActor
 final class SettingsSidebarWidthTests: XCTestCase {
 
     /// What a row's label gets: the sidebar, less the sidebar's own padding,
-    /// less the row's padding, less the symbol and the gap beside it.
+    /// less the row's padding, less the symbol and the gap beside it — all of
+    /// it read from the same metrics the row is built with, so this cannot
+    /// silently measure a row that no longer exists.
     private var availableTextWidth: CGFloat {
-        SettingsMetrics.sidebarWidth - 2 * 10 - 2 * 10 - 18 - 10
+        SettingsMetrics.sidebarWidth
+            - 2 * SettingsMetrics.sidebarPadding
+            - 2 * SettingsMetrics.sidebarRowPadding
+            - SettingsMetrics.sidebarRowSymbolWidth
+            - SettingsMetrics.sidebarRowSpacing
     }
 
     private func width(of title: String, weight: NSFont.Weight) -> CGFloat {

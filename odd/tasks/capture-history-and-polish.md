@@ -393,3 +393,27 @@ part of this work.
   carries the hook to the window), whole suite **exit 0, no signal line, `StareTests.xctest` passed,
   1153 started / 1153 passed / 0 failed** — the first run of this branch where every test in both bundles
   actually executed.
+
+- **L29** (the Settings slice's review, and what it caught): the native review of `407c50f` came back
+  APPROVED with seven non-blocking findings, three of which were real. Fixed here:
+  **R3-001 (a genuine defect)**: the Settings history pane built its own `CaptureHistoryStore()`, so it
+  and the ⌥⇧I panel held two stores over one directory and could diverge in memory — a Clear in Settings
+  invisible to an open panel. `CaptureHistoryStore.shared` is the one store now and both read it.
+  Following it through also showed why the fix must stay injectable: `OverlayController` had been
+  constructing a private store, so making it the shared one broke a pick test that depends on a fresh
+  store — the store is a parameter with `.shared` as its default, and tests keep passing their own.
+  **R3-002 (narrower than reported)**: `canOpen` now decides both the button's state and the action, so a
+  row that cannot be opened never offers a live-looking click. The reviewer's scenario — an entry whose
+  file vanished — is only reachable in-session: `loadIndex` already drops entries whose file is gone. The
+  guard is defensive and the test says exactly that.
+  **R2-002/R3-003**: the sidebar width guard no longer hardcodes the row geometry in literals; the row's
+  padding, symbol width, gap and the sidebar inset are `SettingsMetrics` values used by both the row and
+  the guard. **R3-004** `@MainActor` on that test class. **R2-003** the `SettingsColumns` declaration now
+  says which panes still use two columns and why the rest are single. **R2-001** (type-erased card arrays)
+  stands as the price of pairing cards into rows, and is documented as such.
+  **A flake this exposed, and its cause**: the whole-suite run then failed
+  `testAPickWhileTheBoardIsOpenPastesOntoThePageAndNeverTouchesThePasteboard` — green 3/3 in isolation.
+  The suspect was my own `CaptureEditorDeliveryTests`, which opens a real editor window and never closed
+  it, leaving it on screen for every later test that resolves "the window under the pointer". It closes
+  its windows now, and the suite is **exit 0, no signal line, `StareTests.xctest` passed,
+  1156 started / 1156 passed / 0 failed**.

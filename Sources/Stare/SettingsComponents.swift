@@ -22,6 +22,15 @@ enum SettingsMetrics {
     /// Cards never grow past this in a single-column pane, so a row's label
     /// and its control stay within one glance on a wide window.
     static let singleColumnMaximum: CGFloat = 700
+    /// The sidebar's own inset, around the whole column.
+    static let sidebarPadding: CGFloat = 10
+    /// A sidebar row: its inner horizontal padding, the symbol column and the
+    /// gap between the symbol and the title. Shared with the guard that proves
+    /// a title never wraps, so the measurement cannot drift from the row it
+    /// measures (review R2-002/R3-003).
+    static let sidebarRowPadding: CGFloat = 10
+    static let sidebarRowSymbolWidth: CGFloat = 18
+    static let sidebarRowSpacing: CGFloat = 10
     /// Between two cards, and between the cards and the stage.
     static let cardSpacing: CGFloat = 14
     /// Between the stage's label and its note, on the top row above the
@@ -155,6 +164,13 @@ struct SettingsStage<Content: View>: View {
 ///
 /// The width of a column is fixed from the width the shell hands down, so the
 /// two columns are always the same width regardless of what the cards contain.
+///
+/// Only Pointer Highlight uses this today (a genuine two-vs-two: Shape/Stroke
+/// beside Motion/Colour). Overlay, Capture and Whiteboard pass their cards as a
+/// plain `VStack` with `.settingsSingleColumn()` because their cards pair
+/// unevenly — a lone card beside a pair, or a short card beside one carrying a
+/// paragraph — and a row that equalises those leaves the short one mostly
+/// empty. Two columns are a pairing decision, not a default.
 struct SettingsColumns: View {
     let width: CGFloat
     let left: [AnyView]
