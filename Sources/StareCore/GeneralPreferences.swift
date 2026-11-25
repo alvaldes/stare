@@ -488,6 +488,18 @@ public struct ToolbarToolLayout: Codable, Equatable, Sendable {
     /// that is the only kind `upgradingUncustomised` may move.
     public static let currentVersion = 2
 
+    /// Whether this document may still be migrated (S3): only one that carries
+    /// **no** version at all. A version that exists but cannot be read as an
+    /// integer is a document this build does not understand, and reading it as
+    /// 0 would re-run the upgrade on a layout a user arranged — so it is
+    /// treated as current, never as pre-batch. A readable older version still
+    /// migrates.
+    private static func mayMigrate(_ container: KeyedDecodingContainer<CodingKeys>) -> Bool {
+        guard container.contains(.version) else { return true }
+        guard let version = try? container.decode(Int.self, forKey: .version) else { return false }
+        return version < currentVersion
+    }
+
     /// Lenient decoding. The v0.5 shape holds `items` (identifier strings:
     /// `tool:` plus a tool raw value, or the `separator` token) and `pool`
     /// (raw tool values); unknown identifiers drop. A blob without that shape
@@ -498,8 +510,7 @@ public struct ToolbarToolLayout: Codable, Equatable, Sendable {
     /// build's shipped bar (S3); every other saved layout is kept as saved.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        // 0 for every document written before this batch, in either shape.
-        let version = (try? container.decode(Int.self, forKey: .version)) ?? 0
+        let migrates = Self.mayMigrate(container)
         if container.contains(.items) {
             let rawItems = (try? container.decode([String].self, forKey: .items)) ?? []
             let rawPool = (try? container.decode([String].self, forKey: .pool)) ?? []
@@ -507,9 +518,7 @@ public struct ToolbarToolLayout: Codable, Equatable, Sendable {
                 items: rawItems.compactMap(ToolbarLayoutItem.init(identifier:)),
                 pool: rawPool.compactMap(Tool.init(rawValue:))
             )
-            self = version >= ToolbarToolLayout.currentVersion
-                ? decoded
-                : ToolbarToolLayout.upgradingUncustomised(decoded)
+            self = migrates ? ToolbarToolLayout.upgradingUncustomised(decoded) : decoded
             return
         }
         let rawTools = (try? container.decode([String].self, forKey: .tools)) ?? []
@@ -525,10 +534,11 @@ public struct ToolbarToolLayout: Codable, Equatable, Sendable {
         for tool in rawTools.compactMap(Tool.init(rawValue:)) where seen.insert(tool).inserted {
             stored.append(tool)
         }
-        self = ToolbarToolLayout.upgradingUncustomised(ToolbarToolLayout(
+        let versioned = ToolbarToolLayout(
             items: Self.itemsWithFamilySeparators(stored.filter { !rawHidden.contains($0.rawValue) }),
             pool: stored.filter { rawHidden.contains($0.rawValue) }
-        ))
+        )
+        self = migrates ? ToolbarToolLayout.upgradingUncustomised(versioned) : versioned
     }
 
     public func encode(to encoder: Encoder) throws {

@@ -107,6 +107,31 @@ final class ToolbarOverflowMigrationTests: XCTestCase {
         XCTAssertEqual(decoded.toolShortcuts[.blur], "Q")
     }
 
+    /// A version this build cannot read is not "pre-batch": a garbled or
+    /// hand-mangled version must never re-run the upgrade on a layout a user
+    /// arranged.
+    func testAGarbledVersionNeverMigratesAnything() throws {
+        let identifiers = Self.v05Items.map { "\"" + $0.identifier + "\"" }.joined(separator: ",")
+        for garbled in ["\"abc\"", "true", "2.5", "null", "\"2\"", "[]"] {
+            let json = "{\"version\":" + garbled + ",\"items\":[" + identifiers + "],\"pool\":[]}"
+            let layout = try decode(json)
+            XCTAssertEqual(
+                layout, ToolbarToolLayout(items: Self.v05Items, pool: []),
+                "a document whose version is \(garbled) must be left alone")
+        }
+    }
+
+    /// The same rule for the older shape: this build never writes `tools`/
+    /// `hidden`, so a document that pairs them with any version is not one this
+    /// build may move.
+    func testAVersionedOldShapeIsNotMigrated() throws {
+        let tools = ToolbarToolLayout.defaultOrder.map { "\"" + $0.rawValue + "\"" }.joined(separator: ",")
+        let json = "{\"version\":2,\"tools\":[" + tools + "],\"hidden\":[]}"
+        let layout = try decode(json)
+        XCTAssertEqual(layout.visibleTools.count, Tool.allCases.count)
+        XCTAssertTrue(layout.pool.isEmpty)
+    }
+
     /// The shipped bar itself is stable across a save.
     func testTheShippedBarRoundTrips() throws {
         XCTAssertEqual(try roundTrip(.standard), .standard)
