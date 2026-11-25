@@ -233,20 +233,22 @@ final class ToolAndInkTests: XCTestCase {
     }
 
     // T2/S2: the tool → role choice itself, pinned per tool. System cursors
-    // where one genuinely matches the tool's job; drawn glyphs elsewhere.
+    // where one genuinely matches the tool's job; drawn glyphs elsewhere —
+    // since batch A/S3 the number joins the drawn set with its
+    // circle-inside-a-circle shape.
     func testCursorRolesNameTheirToolExactly() {
         let expected: [Tool: ToolCursor] = [
             .select: .editArrow,
             .text: .textIBeam,
-            .number: .numberHand,
+            .number: .numberRings,
             .line: .lineCrosshair,
-            .pen: .penNib,
-            .highlighter: .markerChisel,
+            .pen: .penDot,
+            .highlighter: .markerBeam,
             .arrow: .arrowHead,
             .rectangle: .rectangleFrame,
             .ellipse: .ellipseRing,
             .laser: .laserSpark,
-            .eraser: .eraserBlock,
+            .eraser: .eraserRing,
             .blur: .blurDots,
             .spotlight: .spotlightBeam,
         ]

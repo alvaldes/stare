@@ -531,12 +531,13 @@ enum SelfTest {
         let distinct = Set(roles).count == Tool.allCases.count
         let coversVocabulary = Set(roles) == Set(ToolCursor.allCases)
 
-        // The four roles AppKit answers by identity; every other role must be
-        // one of the drawn 16-pt glyphs with the hotspot at the centre.
+        // The three roles AppKit answers by identity; every other role — the
+        // number's rings included, since the count tool joined the drawn set
+        // (S3, batch A) — must be one of the drawn 16-pt glyphs with the
+        // hotspot at the centre.
         let systemIdentities: [ToolCursor: NSCursor] = [
             .editArrow: .arrow,
             .textIBeam: .iBeam,
-            .numberHand: .pointingHand,
             .lineCrosshair: .crosshair,
         ]
         var systemOK = true

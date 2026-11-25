@@ -478,26 +478,26 @@ class OverlayView: NSView {
     /// The role → `NSCursor` mapping, `internal` so the self test exercises
     /// the real path the canvas shows. System cursors where one genuinely
     /// does the tool's job: the arrow for the edit cursor, the I-beam for
-    /// text, the pointing hand for the click-to-place numbered badge, and the
-    /// crosshair — the drafting cursor — for the straight line alone. Every
-    /// other role is a small glyph drawn here, centred on the hotspot: a
-    /// white core over a dark outline reads on light and on dark canvases,
-    /// and no new asset files exist. The glyph for each role is schematic —
-    /// it says the tool's shape, not the toolbar's exact SF Symbol — which is
-    /// the documented "dentro de lo posible" trade (see `ToolCursor`).
+    /// text, and the crosshair — the drafting cursor — for the straight line
+    /// alone. Every other role is a small glyph drawn here, centred on the
+    /// hotspot: a white core over a dark outline reads on light and on dark
+    /// canvases, and no new asset files exist. The glyph for each role is
+    /// schematic — it says the tool's shape, not the toolbar's exact SF Symbol
+    /// — which is the documented "dentro de lo posible" trade (see
+    /// `ToolCursor`).
     static func cursor(for role: ToolCursor) -> NSCursor {
         switch role {
         case .editArrow: .arrow
         case .textIBeam: .iBeam
-        case .numberHand: .pointingHand
         case .lineCrosshair: .crosshair
-        case .penNib: glyphCursors[role] ?? .crosshair
-        case .markerChisel: glyphCursors[role] ?? .crosshair
+        case .penDot: glyphCursors[role] ?? .crosshair
+        case .markerBeam: glyphCursors[role] ?? .crosshair
         case .arrowHead: glyphCursors[role] ?? .crosshair
         case .rectangleFrame: glyphCursors[role] ?? .crosshair
         case .ellipseRing: glyphCursors[role] ?? .crosshair
+        case .numberRings: glyphCursors[role] ?? .crosshair
         case .laserSpark: glyphCursors[role] ?? .crosshair
-        case .eraserBlock: glyphCursors[role] ?? .crosshair
+        case .eraserRing: glyphCursors[role] ?? .crosshair
         case .blurDots: glyphCursors[role] ?? .crosshair
         case .spotlightBeam: glyphCursors[role] ?? .crosshair
         }
@@ -2253,16 +2253,17 @@ private enum ToolGlyphCursor {
 
     private static func draw(_ role: ToolCursor) {
         switch role {
-        case .penNib: drawPencilNib()
-        case .markerChisel: drawChiselTip()
+        case .penDot: drawPenDot()
+        case .markerBeam: drawMarkerBeam()
         case .arrowHead: drawArrowHead()
         case .rectangleFrame: outline(NSBezierPath(rect: NSRect(x: 4.2, y: 4.2, width: 7.6, height: 7.6)))
-        case .ellipseRing: outline(NSBezierPath(ovalIn: NSRect(x: 4.0, y: 4.0, width: 8.0, height: 8.0)))
+        case .ellipseRing: outline(NSBezierPath(ovalIn: NSRect(x: 3.8, y: 4.9, width: 8.4, height: 6.2)))
+        case .numberRings: drawNumberRings()
         case .laserSpark: drawSpark()
-        case .eraserBlock: drawEraserBlock()
+        case .eraserRing: drawEraserRing()
         case .blurDots: drawDotGrid()
         case .spotlightBeam: drawSpotlightBeam()
-        case .editArrow, .textIBeam, .numberHand, .lineCrosshair:
+        case .editArrow, .textIBeam, .lineCrosshair:
             break // system roles: AppKit answers, nothing to draw
         }
     }
@@ -2271,17 +2272,23 @@ private enum ToolGlyphCursor {
 
     /// Strokes the path twice: thick in dark first — the outline that keeps
     /// the glyph readable on a light background — then thin in white on top
-    /// for a dark background. One path, one pass per theme trick.
-    private static func outline(_ path: NSBezierPath, dark: NSColor = .black, light: NSColor = .white) {
+    /// for a dark background. One path, one pass per theme trick. The widths
+    /// tune down for roles that draw several rings close together (the
+    /// number's circle-in-circle), where the default weight would weld the
+    /// two circles into one thick ring.
+    private static func outline(
+        _ path: NSBezierPath, dark: NSColor = .black, light: NSColor = .white,
+        darkWidth: CGFloat = 3.0, lightWidth: CGFloat = 1.25
+    ) {
         let outline = path.copy() as! NSBezierPath
         for stroke in [outline, path] {
             stroke.lineCapStyle = .round
             stroke.lineJoinStyle = .round
         }
-        outline.lineWidth = 3.0
+        outline.lineWidth = darkWidth
         dark.setStroke()
         outline.stroke()
-        path.lineWidth = 1.25
+        path.lineWidth = lightWidth
         light.setStroke()
         path.stroke()
     }
@@ -2302,29 +2309,22 @@ private enum ToolGlyphCursor {
 
     // MARK: The glyphs
 
-    /// Freehand ink: a pencil-like nib, tip pointing down-left, body to the
-    /// top-right — the silhouette says "draws a stroke".
-    private static func drawPencilNib() {
-        let nib = NSBezierPath()
-        nib.move(to: NSPoint(x: 4.8, y: 11.2)) // the tip
-        nib.line(to: NSPoint(x: 3.8, y: 10.2))
-        nib.line(to: NSPoint(x: 11.0, y: 3.4))
-        nib.line(to: NSPoint(x: 13.0, y: 5.0))
-        nib.line(to: NSPoint(x: 5.8, y: 12.2))
-        nib.close()
-        outline(nib)
+    /// Freehand ink: a filled dot sitting exactly on the hotspot (the owner's
+    /// pen shape) — the pointer's own tip is the point the stroke starts from.
+    private static func drawPenDot() {
+        dot(centre: NSPoint(x: 8, y: 8), radius: 2.0)
     }
 
-    /// The highlighter's flat swab: a wide chisel, narrow at the handle and
-    /// flat and broad at the far edge.
-    private static func drawChiselTip() {
-        let chisel = NSBezierPath()
-        chisel.move(to: NSPoint(x: 6.0, y: 4.4))
-        chisel.line(to: NSPoint(x: 10.0, y: 4.4))
-        chisel.line(to: NSPoint(x: 12.2, y: 11.6))
-        chisel.line(to: NSPoint(x: 3.8, y: 11.6))
-        chisel.close()
-        outline(chisel)
+    /// The highlighter's flat swab: a filled horizontal beam with flat edges,
+    /// wider than tall so it never reads as the rectangle's square frame (the
+    /// owner's highlighter shape). A fill cannot use the thick-outline trick,
+    /// so the block is built the way the dot is: a dark body with a light core.
+    private static func drawMarkerBeam() {
+        let beam = NSRect(x: 3.8, y: 5.8, width: 8.4, height: 4.4)
+        NSColor.black.setFill()
+        NSBezierPath(rect: beam).fill()
+        NSColor.white.setFill()
+        NSBezierPath(rect: beam.insetBy(dx: 1.1, dy: 1.1)).fill()
     }
 
     /// The straight arrow mark: a diagonal shaft with an open head, the same
@@ -2347,16 +2347,20 @@ private enum ToolGlyphCursor {
         line(NSPoint(x: 11.6, y: 8), NSPoint(x: 13.6, y: 8)) // east
     }
 
-    /// The eraser: a slanted block with its felt-and-holder dividing line.
-    private static func drawEraserBlock() {
-        let block = NSBezierPath()
-        block.move(to: NSPoint(x: 3.8, y: 11.2))
-        block.line(to: NSPoint(x: 8.8, y: 6.2))
-        block.line(to: NSPoint(x: 12.2, y: 9.6))
-        block.line(to: NSPoint(x: 7.2, y: 14.6))
-        block.close()
-        outline(block)
-        line(NSPoint(x: 5.5, y: 12.9), NSPoint(x: 10.5, y: 7.9)) // divider
+    /// The eraser: an EMPTY circle centred on the hotspot — border only, no
+    /// fill (the owner's eraser shape) — the sweep area it removes, drawn so
+    /// the pixels under the pointer stay visible through it.
+    private static func drawEraserRing() {
+        outline(circle(centre: NSPoint(x: 8, y: 8), radius: 5.0))
+    }
+
+    /// The numbered badge: a circle inside a circle (the owner's count shape).
+    /// Both rings stroke thin, so the two circles stay two circles at 16 pt
+    /// instead of welding into one thick ring.
+    private static func drawNumberRings() {
+        let ringWidths = (darkWidth: CGFloat(2.2), lightWidth: CGFloat(1.0))
+        outline(circle(centre: NSPoint(x: 8, y: 8), radius: 5.9), darkWidth: ringWidths.darkWidth, lightWidth: ringWidths.lightWidth)
+        outline(circle(centre: NSPoint(x: 8, y: 8), radius: 2.7), darkWidth: ringWidths.darkWidth, lightWidth: ringWidths.lightWidth)
     }
 
     /// The blur: a small grid of soft dots, the frosted patch it paints.

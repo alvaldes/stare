@@ -1593,8 +1593,23 @@ final class CaptureEditorCanvas: NSView {
         return nil
     }
 
-    private func reassertCursor() {
-        (gestureCursor ?? NSCursor.arrow).set()
+    /// The armed item's cursor (S3, batch A): the editor is where the drawing
+    /// happens, so it answers with the active tool's own cursor the way the
+    /// overlay does. The armed crop keeps the plain arrow (its staged
+    /// rectangle has its own pointer vocabulary), a tool that cannot work over
+    /// a still image never shows its cursor here even if the detached state
+    /// still carries it, and a missing state leaves the arrow.
+    private var toolCursor: NSCursor {
+        guard let state, case .tool(let tool) = state.captureSelection,
+            tool.worksInCaptureEditor else { return NSCursor.arrow }
+        return OverlayView.cursor(for: tool.cursor)
+    }
+
+    /// The cursor this layer shows right now: the gesture cursor while a
+    /// gesture runs, the tool's cursor otherwise. Every cursor the editor
+    /// shows is set here and nowhere else.
+    func reassertCursor() {
+        (gestureCursor ?? toolCursor).set()
     }
 
     override func cursorUpdate(with event: NSEvent) {

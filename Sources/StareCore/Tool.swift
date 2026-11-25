@@ -63,16 +63,16 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
     public var cursor: ToolCursor {
         switch self {
         case .select: .editArrow
-        case .pen: .penNib
-        case .highlighter: .markerChisel
+        case .pen: .penDot
+        case .highlighter: .markerBeam
         case .arrow: .arrowHead
         case .line: .lineCrosshair
         case .rectangle: .rectangleFrame
         case .ellipse: .ellipseRing
         case .text: .textIBeam
-        case .number: .numberHand
+        case .number: .numberRings
         case .laser: .laserSpark
-        case .eraser: .eraserBlock
+        case .eraser: .eraserRing
         case .blur: .blurDots
         case .spotlight: .spotlightBeam
         }
@@ -168,8 +168,8 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
 /// System cursors only where one genuinely does the tool's job; the rest get
 /// a minimal app-drawn glyph. The gap the "dentro de lo posible" spec admits,
 /// on the record: every tool CAN be told apart, but the drawn glyphs are
-/// schematic icons (a pencil-like nib, a chisel tip), not exact replicas of
-/// the toolbar's SF Symbols — building richer art would need new assets, and
+/// schematic icons (a filled dot, a filled beam), not exact replicas of the
+/// toolbar's SF Symbols — building richer art would need new assets, and
 /// the spec prefers cursor-per-tool over shipped art the app does not have.
 public enum ToolCursor: Equatable, CaseIterable, Sendable {
     /// The edit cursor: the system arrow, which users already read as
@@ -177,26 +177,30 @@ public enum ToolCursor: Equatable, CaseIterable, Sendable {
     case editArrow
     /// The system I-beam: text places a field to type into.
     case textIBeam
-    /// The system pointing hand: the numbered badge is placed with one click,
-    /// the click-me gesture the system hand already means.
-    case numberHand
+    /// A circle inside a circle — two thin concentric rings — for the
+    /// numbered badge (the owner's count shape).
+    case numberRings
     /// The system crosshair, the drafting cursor, kept for the straight line
     /// alone (it used to be the shared default of every tool).
     case lineCrosshair
-    /// A drawn pencil nib, for freehand ink.
-    case penNib
-    /// A drawn wide chisel tip, for the flat highlighter swab.
-    case markerChisel
+    /// A drawn filled dot at the hotspot, for freehand ink (the owner's pen
+    /// shape).
+    case penDot
+    /// A drawn filled beam — a wide block with flat edges — for the flat
+    /// highlighter swab (the owner's highlighter shape).
+    case markerBeam
     /// A drawn shaft-and-head arrow, for the straight arrow mark.
     case arrowHead
     /// A drawn rectangle frame.
     case rectangleFrame
-    /// A drawn ellipse ring.
+    /// A drawn ellipse ring — a true oval, so it never reads as the eraser's
+    /// circle.
     case ellipseRing
     /// A drawn dot with rays, for the fading laser trail.
     case laserSpark
-    /// A drawn slanted eraser block.
-    case eraserBlock
+    /// A drawn empty circle, border only, no fill, for the eraser (the
+    /// owner's eraser shape).
+    case eraserRing
     /// A drawn grid of dots, for the frosted blur patch.
     case blurDots
     /// A drawn ring around a beam dot, for the dimming spotlight region.
