@@ -99,6 +99,10 @@ final class AreaCaptureLoupeViewTests: XCTestCase {
 
         // ⇧S again: the remembered area must be on screen already, no drag.
         view.beginAreaSelection()
+        // Land the armed chrome's pointer deterministically (its point is
+        // seeded from the real screen pointer at arm time): place it at the
+        // corner, where neither rule nor loupe reaches the sampled ranges.
+        view.mouseMoved(with: mouseEvent(.mouseMoved, at: CGPoint(x: 20, y: 20), window: window))
         let rep = try render(view)
 
         // Inside the remembered rect: clear — the shroud's even-odd hole.
@@ -349,9 +353,10 @@ final class AreaCaptureLoupeViewTests: XCTestCase {
         XCTAssertFalse(
             hasRingPixel(rep, near: CGPoint(x: 544, y: 394)),
             "with the preference off, no loupe crosshair paints where one did")
-        // The guides survive: the drag rect (450, 300)–(460, 310) grows a
-        // right-edge rule at x = 460 running below it, and its dim white
-        // dotted top stroke clears the 0.45 guide threshold there.
+        // The guides survive: the pointer's own vertical rule — the last
+        // pointer point is (460, 310), so it runs at x = 460 through the
+        // display — and its dim white dotted top stroke clears the 0.45
+        // guide threshold there.
         XCTAssertTrue(
             hasGuideDot(rep, near: CGPoint(x: 460, y: 350)),
             "turning the loupe off must not take the guides down with it")

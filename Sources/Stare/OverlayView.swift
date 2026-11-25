@@ -241,10 +241,14 @@ class OverlayView: NSView {
     /// Settings.
     private var areaMemory = AreaCaptureMemory()
 
-    /// The pointer while the area drag runs, so the loupe can follow it. Set
-    /// on the drag's mouse down and on every drag move; nil the moment the
-    /// drag ends, so the loupe never outlives it.
-    private var areaLoupePoint: CGPoint?
+    /// The pointer while area mode is armed (S4), so the guides and the loupe
+    /// can follow it. It is set the moment the mode arms — read straight off
+    /// the screen's pointer, no click needed — on every `mouseMoved` (the
+    /// armed state tracks the pointer without a drag), and on every drag move;
+    /// nil the moment the mode leaves or the pointer leaves this display, so
+    /// the chrome never outlives the armed state or the pointer's presence on
+    /// it. The guides read it too: both pieces are the pointer's own chrome.
+    private var areaPointerPoint: CGPoint?
 
     /// Whether this canvas is an area-capture display. The controller wires
     /// `onAreaSelectionFrame` on display canvases only — board canvases never
@@ -439,10 +443,17 @@ class OverlayView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         for area in trackingAreas { removeTrackingArea(area) }
+        // `.mouseMoved` is the delivery half of the armed area mode (S4): the
+        // guides and the loupe are the pointer's crosshair and must follow the
+        // pointer before any click, so the canvas has to hear bare moves. The
+        // window already opts in (`acceptsMouseMovedEvents`), the way the
+        // editor canvas and the cards solved the same need; the only other
+        // answer a move gets is the cursor re-assertion below — no second
+        // ambient `NSCursor` path is added.
         addTrackingArea(
             NSTrackingArea(
                 rect: bounds,
-                options: [.cursorUpdate, .activeAlways, .inVisibleRect, .mouseEnteredAndExited],
+                options: [.cursorUpdate, .activeAlways, .inVisibleRect, .mouseEnteredAndExited, .mouseMoved],
                 owner: self,
                 userInfo: nil
             )
@@ -513,6 +524,12 @@ class OverlayView: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         reassertCursor()
+        // The armed area mode's chrome is the pointer's, so a pointer that
+        // enters this display from another one places the crosshair at once,
+        // without waiting for the first `mouseMoved` tick inside.
+        if isSelectingArea {
+            updateAreaPointer(at: convert(event.locationInWindow, from: nil))
+        }
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -521,9 +538,29 @@ class OverlayView: NSView {
         // change only after jumping to another display. A gesture cursor (S3)
         // wins while it is set.
         reassertCursor()
+        // Armed area mode follows the pointer with no click (S4): the guides
+        // and the loupe are the pointer's crosshair, so the move itself is
+        // where their chrome lives. Before the mode is armed a move has no
+        // drawing meaning.
+        guard isSelectingArea else { return }
+        updateAreaPointer(at: convert(event.locationInWindow, from: nil))
+    }
+
+    private func updateAreaPointer(at point: CGPoint) {
+        guard areaPointerPoint != point else { return }
+        areaPointerPoint = point
+        needsDisplay = true
     }
 
     override func mouseExited(with event: NSEvent) {
+        // The pointer left this display: the armed mode's crosshair and loupe
+        // draw nothing here until it returns (a pointer that is not on this
+        // display has no crosshair to draw, and the other display's canvas is
+        // the one that answers).
+        if isSelectingArea, areaPointerPoint != nil {
+            areaPointerPoint = nil
+            needsDisplay = true
+        }
         guard let previous = pointerLocation else { return }
         pointerLocation = nil
         setNeedsDisplay(pointerRect(around: previous, scale: pointerPulseScale))
@@ -555,7 +592,7 @@ class OverlayView: NSView {
         areaFrameStock = nil
         stockCaptureInFlight = false
         areaMemory.clear()
-        areaLoupePoint = nil
+        areaPointerPoint = nil
         noteBlurInterestChanged()
         noteSessionChanged()
         needsDisplay = true
@@ -765,7 +802,7 @@ class OverlayView: NSView {
         if isSelectingArea {
             selectionOrigin = viewPoint
             selectionRect = CGRect(origin: viewPoint, size: .zero)
-            areaLoupePoint = viewPoint
+            areaPointerPoint = viewPoint
             needsDisplay = true
             return
         }
@@ -833,7 +870,7 @@ class OverlayView: NSView {
                 square: event.modifierFlags.contains(.shift),
                 bounds: bounds
             )
-            areaLoupePoint = point
+            areaPointerPoint = point
             needsDisplay = true
             return
         }
@@ -903,7 +940,7 @@ class OverlayView: NSView {
             isSelectingArea = false
             selectionOrigin = nil
             selectionRect = nil
-            areaLoupePoint = nil
+            areaPointerPoint = nil
             needsDisplay = true
             if let rect, AreaSelectionGeometry.isCaptureWorthy(rect) {
                 // The capture runs first, while the frozen base still holds:
@@ -975,7 +1012,15 @@ class OverlayView: NSView {
         // marquee — a plain `Return` captures it with no drag, and starting a
         // drag replaces it. The whiteboard never pre-loads.
         selectionRect = isAreaCaptureCanvas ? areaMemory.preload : nil
-        areaLoupePoint = nil
+        // S4: the chrome is the pointer's and must be present from the
+        // moment the mode arms — no click, no move needed — so the pointer's
+        // own location is read straight off the screen right here, the same
+        // way the pointer highlight syncs (`NSEvent.mouseLocation` through
+        // the window's convert). A pointer not over this display converts
+        // out of bounds and paints nothing here until it moves onto it.
+        // From here on every `mouseMoved` lands the point (and a pointer
+        // entering this display places it through `mouseEntered`).
+        areaPointerPoint = areaPointerFromScreen()
         // The drag runs on a frame that was stocked ahead of it — the screen
         // as it was when drawing mode was entered, refreshed after each
         // capture. Only when none is on hand does it ask for its own frame.
@@ -984,11 +1029,20 @@ class OverlayView: NSView {
         Diag.log("area selection started preload=\(selectionRect != nil)")
     }
 
+    /// The pointer's location in this view, read off the screen (never an
+    /// `NSCursor` path — the cursor answers stay untouched): the armed mode's
+    /// chrome must be present at arm time, before any `mouseMoved` arrives.
+    /// Nil when there is no window to convert through.
+    private func areaPointerFromScreen() -> CGPoint? {
+        guard let window else { return nil }
+        return convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil)
+    }
+
     private func cancelAreaSelection() {
         isSelectingArea = false
         selectionOrigin = nil
         selectionRect = nil
-        areaLoupePoint = nil
+        areaPointerPoint = nil
         releaseAreaFrame()
         needsDisplay = true
         Diag.log("area selection cancelled")
@@ -1001,7 +1055,7 @@ class OverlayView: NSView {
         isSelectingArea = false
         selectionOrigin = nil
         selectionRect = nil
-        areaLoupePoint = nil
+        areaPointerPoint = nil
         needsDisplay = true
         onCaptureRequest?(rect)
         if isAreaCaptureCanvas {
@@ -1296,20 +1350,25 @@ class OverlayView: NSView {
         context.strokePath()
     }
 
-    /// The area drag's dotted guides (S1): while a selection is being drawn,
-    /// each of its four edges runs out, dotted and subdued, to THIS display's
-    /// edges, so the eye can follow a line to the edge before committing. The
-    /// rules come from `AreaCaptureGuides.guides(for:bounds:)` — the same
-    /// `selectionRect` the capture at mouse-up crops with (S3) — and the type
-    /// has already clipped them to `bounds`, so none of them can imply an
-    /// edge outside this display. Subdued chrome: a dim dark rule under a dim
-    /// white dotted top stroke, the same dark-under/bright-on-top trick the
-    /// loupe's ring and the drawn cursors use — it reads on light and on dark
-    /// content and never fights the frame. View chrome only: never a
-    /// `Stroke`, never in `committedBounds`, never in the capture.
+    /// The area drag's dotted guides (S4): while area mode is armed — both
+    /// before and during the drag — the pointer carries THE crosshair, one
+    /// vertical and one horizontal dotted rule through the pointer, out to
+    /// THIS display's edges, so the eye can follow a line to the edge before
+    /// clicking, and during the drag exactly one rule per axis exists — the
+    /// pointer's; the origin's rule the first version drew is gone. The rules
+    /// come from `AreaCaptureGuides.guides(at:bounds:)` from the pointer's
+    /// own point — chrome, not commitment: what the capture crops with is
+    /// still the `selectionRect` alone, which the guides never read — and
+    /// the type has already clipped them to `bounds`, so none of them can
+    /// imply an edge outside this display. Subdued chrome: a dim dark rule
+    /// under a dim white dotted top stroke, the same
+    /// dark-under/bright-on-top trick the loupe's ring and the drawn cursors
+    /// use — it reads on light and on dark content and never fights the
+    /// frame. View chrome only: never a `Stroke`, never in
+    /// `committedBounds`, never in the capture.
     private func drawAreaGuides(in context: CGContext) {
         guard state.showAreaGuides, isSelectingArea else { return }
-        let guides = AreaCaptureGuides.guides(for: selectionRect, bounds: bounds)
+        let guides = AreaCaptureGuides.guides(at: areaPointerPoint, bounds: bounds)
         guard !guides.isEmpty else { return }
         context.saveGState()
         context.setLineDash(
@@ -1353,7 +1412,7 @@ class OverlayView: NSView {
     /// View chrome only: the capture composes from the frozen base and the
     /// marks, so the loupe can never enter the captured image.
     private func drawAreaLoupe(in context: CGContext) {
-        guard state.showAreaLoupe, isSelectingArea, let point = areaLoupePoint, let base = frozenAreaBase else { return }
+        guard state.showAreaLoupe, isSelectingArea, let point = areaPointerPoint, let base = frozenAreaBase else { return }
         let pixelsPerPoint = CGFloat(base.width) / max(bounds.width, 1)
         guard let plan = AreaCaptureLoupe.plan(
             at: point,

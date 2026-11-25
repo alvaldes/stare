@@ -4,12 +4,15 @@ import XCTest
 @testable import Stare
 import StareCore
 
-/// The area drag's dotted guides at the view layer (S1): thin, dotted,
-/// subdued rules from the selection's four edges out to the display's edges,
-/// painted over the real `OverlayView` mid-drag and asserted in pixels — the
-/// same real-view bitmap pattern the freeze tests established. The windows
-/// these tests open are confined to the primary screen
-/// (`PrimaryScreenTestWindow`), never the user's other monitors.
+/// The area drag's dotted guides at the view layer (S4): the pointer's
+/// crosshair — one vertical and one horizontal dotted rule through the
+/// pointer, out to the display's edges — present from the moment area mode
+/// arms (no click needed) and during the drag, where the origin's edges the
+/// first version ruled must never paint again. Painted over the real
+/// `OverlayView` and asserted in pixels — the same real-view bitmap pattern
+/// the freeze tests established. The windows these tests open are confined
+/// to the primary screen (`PrimaryScreenTestWindow`), never the user's other
+/// monitors.
 @MainActor
 final class AreaCaptureGuidesViewTests: XCTestCase {
     private let size = CGSize(width: 900, height: 600)
@@ -84,13 +87,57 @@ final class AreaCaptureGuidesViewTests: XCTestCase {
         return false
     }
 
-    // MARK: The guides are on screen
+    /// A bare `mouseMoved` event (no click), the delivery the armed state's
+    /// chrome lives on.
+    private func mouseMoved(at viewPoint: CGPoint, window: NSWindow, on view: OverlayView) {
+        view.mouseMoved(with: mouseEvent(.mouseMoved, at: viewPoint, window: window))
+    }
 
-    /// Dragging from (100, 100) to (400, 300) frames that rect; its four
-    /// edges must show dotted chrome out to the display's edges — sampled on
-    /// two of the eight rules (the right edge's lower ray and the top edge's
-    /// right ray, both well away from the loupe's frame).
-    func testTheDraggedSelectionsEdgesCarryDottedGuidesOutToTheDisplayEdges() throws {
+    // MARK: The chrome exists with no click at all
+
+    /// ⇧S arms the mode and the pointer's crosshair is on screen before any
+    /// mouse-down (S4, the owner's complaint "debe salir desde que se presiona
+    /// shift+S no al hacer click"): arming, a bare `mouseMoved` through the
+    /// real delivery method, and the vertical rule through the pointer
+    /// sampled mid-display and the horizontal rule sampled right of the
+    /// loupe's frame — plus the loupe painting already, over its frozen
+    /// frame at the pointer.
+    func testArmedWithNoClickThePointerCrosshairAndLoupeAreOnScreen() throws {
+        let view = makeView()
+        let window = try hostWindow(view)
+        defer { window.orderOut(nil) }
+
+        view.beginAreaSelection()
+        view.landAreaFrame(makeSolidImage(width: 1800, height: 1200, red: 0.1, green: 0.9, blue: 0.2))
+        mouseMoved(at: CGPoint(x: 400, y: 200), window: window, on: view)
+
+        let rep = try render(view)
+        // The pointer's vertical rule runs at x = 400 through the full
+        // display height: a dot must sit on it below the loupe's frame.
+        XCTAssertTrue(
+            hasChromeDot(rep, near: CGPoint(x: 400, y: 450)),
+            "with area mode armed there is a vertical rule through the pointer, no click needed")
+        // The pointer's horizontal rule runs at y = 200, right of the loupe's
+        // frame (which hangs at (424, 224)).
+        XCTAssertTrue(
+            hasChromeDot(rep, near: CGPoint(x: 700, y: 200)),
+            "with area mode armed there is a horizontal rule through the pointer, no click needed")
+        // The loupe is the same pointer's chrome and paints from the same
+        // moment: its ring's top edge at the frame the plan hangs below-right
+        // of (400, 200) — (424, 224, 120, 120).
+        XCTAssertTrue(
+            hasChromeDot(rep, near: CGPoint(x: 484, y: 224)),
+            "the loupe also paints while area mode is armed with no click")
+    }
+
+    // MARK: During a drag, exactly one rule per axis — the pointer's
+
+    /// Dragging from (100, 100) to (400, 300): only the POINTER's rules may
+    /// paint. The origin's rules at x = 100 and y = 100 — the reported defect
+    /// — must be absent where they ran in the first version (x = 100 below
+    /// the selection, y = 100 right of it), while the pointer's rules at
+    /// x = 400 and y = 300 are on screen.
+    func testDuringADragOnlyThePointerSRulesPaintNeverTheOriginS() throws {
         let view = makeView()
         let window = try hostWindow(view)
         defer { window.orderOut(nil) }
@@ -101,46 +148,93 @@ final class AreaCaptureGuidesViewTests: XCTestCase {
         view.mouseDragged(with: mouseEvent(.leftMouseDragged, at: CGPoint(x: 400, y: 300), window: window))
 
         let rep = try render(view)
-        // The right edge (x = 400) runs below the selection to the display's
-        // bottom edge (y = 600): a dot must sit on that line, inside the view.
+        // The pointer's vertical rule at x = 400 runs below the selection to
+        // the display's bottom edge: a dot must sit on that line.
         XCTAssertTrue(
             hasChromeDot(rep, near: CGPoint(x: 400, y: 450)),
-            "the selection's right edge must carry a dotted rule running to the display's bottom edge")
-        // The top edge (y = 100) runs right of the selection to the display's
-        // right edge (x = 900): a dot must sit on that line too.
+            "the pointer's vertical rule paints during the drag")
+        // The pointer's horizontal rule at y = 300 runs right of the
+        // selection (the loupe hangs at (424, 324), so x = 650 is clear).
         XCTAssertTrue(
+            hasChromeDot(rep, near: CGPoint(x: 650, y: 300)),
+            "the pointer's horizontal rule paints during the drag")
+        // The ORIGIN's rules — the defect — must paint nothing: x = 100 below
+        // the selection and y = 100 right of it (the loupe frame tops out at
+        // x = 544, well short of 650).
+        XCTAssertFalse(
+            hasChromeDot(rep, near: CGPoint(x: 100, y: 450)),
+            "the origin's vertical rule must not paint during the drag")
+        XCTAssertFalse(
             hasChromeDot(rep, near: CGPoint(x: 650, y: 100)),
-            "the selection's top edge must carry a dotted rule running to the display's right edge")
+            "the origin's horizontal rule must not paint during the drag")
     }
 
     // MARK: The clipping holds in pixels too
 
-    /// A selection flush against a display edge draws NO rule along that
-    /// edge: the display's own edge already says where the capture ends, and
-    /// a rule there could only imply a farther edge that does not exist.
-    func testASelectionFlushWithTheDisplayEdgeCarriesNoRuleAlongIt() throws {
+    /// A pointer sitting exactly on a display edge draws no rule along that
+    /// edge: the display's own edge already says where the screen ends, and a
+    /// rule there could only imply a farther edge that does not exist. The
+    /// perpendicular rule through the pointer keeps its place.
+    func testAPointerOnTheDisplayEdgeCarriesNoRuleAlongIt() throws {
         let view = makeView()
         let window = try hostWindow(view)
         defer { window.orderOut(nil) }
 
         view.beginAreaSelection()
         view.landAreaFrame(makeSolidImage(width: 1800, height: 1200, red: 0.1, green: 0.9, blue: 0.2))
-        view.mouseDown(with: mouseEvent(.leftMouseDown, at: CGPoint(x: 0, y: 200), window: window))
-        view.mouseDragged(with: mouseEvent(.leftMouseDragged, at: CGPoint(x: 400, y: 300), window: window))
+        mouseMoved(at: CGPoint(x: 0, y: 200), window: window, on: view)
 
         let rep = try render(view)
-        // Scan the display's left edge for chrome dots (outside the
-        // selection's own y range, so the drag's border stroke cannot count):
-        // nothing may paint there — no rule, no implied edge beyond the
-        // display.
+        // Scan the display's left edge for chrome dots, outside the
+        // horizontal rule's own y range (its neighbourhood), so nothing may
+        // paint there — no rule along the display's boundary.
         var foundChrome = false
-        for y in 5..<190 where foundChrome == false {
+        func ruleNeighbourhood(_ y: Int) -> Bool { y >= 195 && y < 206 }
+        for y in 0..<200 where foundChrome == false && !ruleNeighbourhood(y) {
             foundChrome = hasChromeDot(rep, near: CGPoint(x: 1, y: CGFloat(y)), radius: 2)
         }
-        for y in 310..<595 where foundChrome == false {
+        for y in 210..<598 where foundChrome == false {
             foundChrome = hasChromeDot(rep, near: CGPoint(x: 1, y: CGFloat(y)), radius: 2)
         }
         XCTAssertFalse(foundChrome, "no rule may paint along the display's left edge")
+        // The perpendicular rule stays: the horizontal rule through the
+        // pointer reaches the display.
+        XCTAssertTrue(
+            hasChromeDot(rep, near: CGPoint(x: 80, y: 200)),
+            "the horizontal rule through the pointer still paints past the edge point")
+    }
+
+    /// A pointer not on this display draws nothing (S4's clipping): the
+    /// crosshair rules and the loupe go dark here — `mouseExited` is the
+    /// delivery of the pointer leaving, the same tracking area that brings
+    /// the moves in.
+    func testAPointerLeavingTheDisplayDrawsNothing() throws {
+        let view = makeView()
+        let window = try hostWindow(view)
+        defer { window.orderOut(nil) }
+
+        view.beginAreaSelection()
+        view.landAreaFrame(makeSolidImage(width: 1800, height: 1200, red: 0.1, green: 0.9, blue: 0.2))
+        mouseMoved(at: CGPoint(x: 400, y: 300), window: window, on: view)
+        let before = try render(view)
+        XCTAssertTrue(
+            hasChromeDot(before, near: CGPoint(x: 400, y: 450)),
+            "the chrome paints while the pointer is on the display")
+
+        // An `NSEvent` cannot be synthesized for the exit type itself, but
+        // the handler reads nothing from the event — going armed is the
+        // whole decision.
+        view.mouseExited(with: mouseEvent(.mouseMoved, at: CGPoint(x: 950, y: 640), window: window))
+        let rep = try render(view)
+        XCTAssertFalse(
+            hasChromeDot(rep, near: CGPoint(x: 400, y: 450)),
+            "no vertical rule may paint for a pointer off the display")
+        XCTAssertFalse(
+            hasChromeDot(rep, near: CGPoint(x: 650, y: 300)),
+            "no horizontal rule may paint for a pointer off the display")
+        XCTAssertFalse(
+            hasChromeDot(rep, near: CGPoint(x: 484, y: 324)),
+            "the loupe too must stay absent for a pointer off the display")
     }
 
     // MARK: The preference turns exactly the guides off
@@ -158,6 +252,7 @@ final class AreaCaptureGuidesViewTests: XCTestCase {
 
         view.beginAreaSelection()
         view.landAreaFrame(makeSolidImage(width: 1800, height: 1200, red: 1, green: 0, blue: 1))
+        mouseMoved(at: CGPoint(x: 100, y: 100), window: window, on: view)
         view.mouseDown(with: mouseEvent(.leftMouseDown, at: CGPoint(x: 100, y: 100), window: window))
         view.mouseDragged(with: mouseEvent(.leftMouseDragged, at: CGPoint(x: 400, y: 300), window: window))
 
@@ -166,10 +261,10 @@ final class AreaCaptureGuidesViewTests: XCTestCase {
             hasChromeDot(rep, near: CGPoint(x: 400, y: 450)),
             "with the preference off, no guide dot paints where one did")
         XCTAssertFalse(
-            hasChromeDot(rep, near: CGPoint(x: 650, y: 100)),
+            hasChromeDot(rep, near: CGPoint(x: 650, y: 300)),
             "with the preference off, no guide dot paints where one did")
         // The loupe is the other chrome and must survive: its ring's top edge
-        // sits below-right of the last drag point (400, 300), frame
+        // sits below-right of the last pointer point (400, 300), frame
         // (424, 324, 120, 120).
         XCTAssertTrue(
             hasChromeDot(rep, near: CGPoint(x: 484, y: 324)),
