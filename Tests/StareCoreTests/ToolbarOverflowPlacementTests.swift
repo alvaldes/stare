@@ -75,6 +75,41 @@ final class ToolbarOverflowPlacementTests: XCTestCase {
         }
     }
 
+    /// The side is decided by where the bar IS, not by the edge it is docked to:
+    /// the gripper moves the window without moving its border, so a bar docked
+    /// left but parked against the right edge has no room on its right and must
+    /// open to its left. Without this the panel is computed off-screen and the
+    /// clamp slides it back, which reads as "opens on the wrong side".
+    func testABarParkedAgainstTheOtherEdgeOpensWhereThereIsRoom() {
+        // Docked left, dragged all the way right.
+        let parkedRight = CGRect(x: 1388, y: 400, width: 44, height: 400)
+        let vertical = ToolbarOverflowPlacement.panelFrame(
+            panelSize: panel, barFrame: parkedRight, border: .left, visibleFrame: visible)
+        XCTAssertEqual(
+            vertical.maxX, parkedRight.minX - ToolbarOverflowPlacement.gap,
+            "no room on the right: the panel opens on the left")
+        XCTAssertTrue(visible.contains(vertical), "\(vertical) is not inside \(visible)")
+
+        // Docked top, dragged all the way down.
+        let parkedBottom = CGRect(x: 400, y: 8, width: 600, height: 42)
+        let horizontal = ToolbarOverflowPlacement.panelFrame(
+            panelSize: panel, barFrame: parkedBottom, border: .top, visibleFrame: visible)
+        XCTAssertEqual(
+            horizontal.minY, parkedBottom.maxY + ToolbarOverflowPlacement.gap,
+            "no room below: the panel opens above the bar")
+        XCTAssertTrue(visible.contains(horizontal), "\(horizontal) is not inside \(visible)")
+    }
+
+    /// The mirror of the owner's case, so the rule is read from geometry and not
+    /// from the dock: a bar docked right but parked on the left edge opens right.
+    func testADockedRightBarParkedOnTheLeftOpensToItsRight() {
+        let parkedLeft = CGRect(x: 8, y: 400, width: 44, height: 400)
+        let frame = ToolbarOverflowPlacement.panelFrame(
+            panelSize: panel, barFrame: parkedLeft, border: .right, visibleFrame: visible)
+        XCTAssertEqual(frame.minX, parkedLeft.maxX + ToolbarOverflowPlacement.gap)
+        XCTAssertTrue(visible.contains(frame), "\(frame) is not inside \(visible)")
+    }
+
     /// The panel centres on the button that opened it, along the bar's axis, so
     /// it reads as belonging to that button and not to the bar's far end.
     func testThePanelCentresOnTheButtonThatOpenedIt() {
