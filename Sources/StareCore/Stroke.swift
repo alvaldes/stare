@@ -34,13 +34,16 @@ public enum RedactionStyle: String, CaseIterable, Sendable, Codable {
     case randomizedPixelate
 }
 
-/// S2/S3: the shape the spotlight draws. One tool, three shapes: the shape is
-/// a property of the mark itself — the same disposition the fill and the
-/// arrow head already have (S15) — so a saved drawing restores the shape it
-/// was drawn with, and the armed choice rides `EditorState` the way
-/// `arrowHeadStyle` does into every minting site. The control is ⌥-click on
-/// the spotlight's own button, cycling exactly this order, never a second
-/// tool and never a preference.
+/// S2/S3 with S4's revision: the shape the spotlight draws. One tool — the
+/// shape is a property of the mark itself — the same disposition the fill and
+/// the arrow head already have (S15) — so a saved drawing restores the shape
+/// it was drawn with, and the armed choice rides `EditorState` the way
+/// `arrowHeadStyle` does into every minting site. The control is a context
+/// menu on the spotlight's own button offering exactly the two shapes the
+/// owner wants (`menuChoices`), never a second tool and never a preference.
+/// The plain rectangle is withdrawn from that offer but kept as data: its raw
+/// value stays decodable and its silhouette stays renderable, so a mark drawn
+/// with it keeps looking like that.
 public enum SpotlightShape: String, CaseIterable, Sendable, Codable {
     case rectangle
     case ellipse
@@ -51,22 +54,19 @@ public enum SpotlightShape: String, CaseIterable, Sendable, Codable {
     /// into the region's half sides so a small region never inverts).
     public static let roundedRectRadius: CGFloat = 16
 
-    /// The name the spotlight button's help prints for the armed shape.
+    /// S4: the shapes the control offers, in menu order. Exactly two — the
+    /// shipped ellipse first, the rounded rectangle beside it. `.rectangle`
+    /// is deliberately absent: not an option any more, but still an
+    /// `allCases` member every legacy mark may carry.
+    public static let menuChoices: [SpotlightShape] = [.ellipse, .roundedRectangle]
+
+    /// The name the spotlight button's help and context menu print for a
+    /// shape.
     public var displayName: String {
         switch self {
         case .rectangle: "Rectangle"
         case .ellipse: "Ellipse"
         case .roundedRectangle: "Rounded rectangle"
-        }
-    }
-
-    /// The next style when the ⌥-click cycles the choice:
-    /// rectangle → ellipse → rounded rectangle → back.
-    public var next: SpotlightShape {
-        switch self {
-        case .rectangle: .ellipse
-        case .ellipse: .roundedRectangle
-        case .roundedRectangle: .rectangle
         }
     }
 }
@@ -109,11 +109,13 @@ public struct Stroke: Identifiable, Equatable, Sendable {
     /// decodes as blur, so every mark drawn before it existed renders byte
     /// -identically to what it always rendered.
     public var redactionStyle: RedactionStyle = .blur
-    /// S2/S3: the shape this spotlight mark draws — the dragged rectangle, its
-    /// inscribed ellipse (today's look, the default every legacy mark decodes
-    /// to) or a rounded rectangle. A property of the mark like the fill and
-    /// the head, appended last and persisted by the same lenient discipline
-    /// `redactionStyle` keeps.
+    /// S2/S3: the shape this spotlight mark draws — the dragged rectangle,
+    /// its inscribed ellipse (today's look, the default every legacy mark
+    /// decodes to) or a rounded rectangle. A property of the mark like the
+    /// fill and the head, appended last and persisted by the same lenient
+    /// discipline `redactionStyle` keeps. S4 no longer offers the plain
+    /// rectangle, but a mark drawn with it before the withdrawal keeps
+    /// decoding and rendering as the rectangle it was drawn as.
     public var spotlightShape: SpotlightShape = .ellipse
 
     public init(

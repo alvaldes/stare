@@ -34,7 +34,7 @@ Two backlog items about how the editor's chrome reads.
 | ID | Specs | Task | Route | Commit |
 | --- | --- | --- | --- | --- |
 | T1 | S1, S3 | The crop frame and its grab rules | worker | 3d811b6 |
-| T2 | S2, S3 | The spotlight's three shapes without a second tool | worker | 3d811b6 |
+| T2 | S2, S3, S4 | The spotlight's two shapes without a second tool | worker | uncommitted |
 | T3 | S1-S3 | Docs: CHANGELOG and this log | worker | |
 
 ## Log
@@ -104,3 +104,41 @@ Two backlog items about how the editor's chrome reads.
   Settings knob (S3), no extra tool, no toolbar pixel-pin for the marked
   spotlight cell (the SwiftUI cell is unchanged and `ToolbarGripperTests`
   already pins the bar's render path).
+
+- **L4** (S4, 2026-11-25). The owner rejected the ⌥-click control and cut the offer
+  to two shapes (_"opt+click no es una buena forma de hacer y me interesa solo el
+  elimpse y el redondeado"_), keeping everything else. **The control.** A
+  **context menu on the spotlight's own button** — right-click over the non-key
+  bar opens it: a modifier click was a hidden gesture, and a context menu is the
+  standard mechanism for a button on a bar that cannot become key (a popover
+  needs key status; a context menu does not). The menu is `SpotlightToolButtonView.menu(for:)`,
+  built fresh each time the user opens it: its two items are `SpotlightShape.menuChoices`
+  — application-ordered: **ellipse, rounded rectangle** — titled with the shape,
+  the armed one check-marked (`.on`), and picking an item arms the shape through
+  `EditorState.spotlightShape` exactly as before; the plain click stays a plain
+  tool pick, and the shape operates identically on the capture editor's chrome.
+  The tooltip and the accessibility label now read "right-click changes the
+  shape: <armed>" — still naming the armed shape, S4's requirement. `SpotlightShape.next`
+  (the ⌥-click cycle it fed) is gone, and the three-shape cycle pin of L3 is
+  re-derived by the two-shape menu pins. **The withdrawn shape.** `SpotlightShape.rectangle`
+  is out of `menuChoices` but stays an enum case, raw value `"rectangle"` and a
+  `CaseIterable` member: a mark drawn in the last build keeps decoding and
+  rendering exactly the rectangle it was drawn as — nothing anyone drew is
+  thrown away, only the offer is withdrawn. Everything else is byte-for-byte
+  the L3 story: the ellipse's T8b pins and the legacy-mark raster pin all pass
+  untouched; the rounded rectangle keeps its clamp-rounded corners;
+  append-last, leniently-decoded persistence unchanged; the minting sites and
+  the drawing overlay unchanged. **Verification.** RED: `swift test --filter
+  "SpotlightShapeTests"` EXIT=1 (missing `menuChoices`). Focused:
+  `swift test --filter "Spotlight"` EXIT=0 — 50 tests (37 StareCoreTests, 13
+  StareTests) — inc. the new `testTheControlOffersExactlyTheTwoShapesTheOwnerWants`,
+  `testTheSpotlightButtonSContextMenuOffersExactlyTheTwoShapesWithTheArmedOneChecked`,
+  `testPickingAShapeFromTheMenuArmsTheNextMarkWithIt` (menu pick → armed state →
+  minted mark carries the shape), `testTheEditorChromeSMenuMatchesTheDrawingBarS`,
+  and `testAMarkPersistedWithThePlainRectangleStillDecodesAndRenders` (round-trip
+  decode plus raster equality). Full suite unpiped `swift test > .build/w23.log
+  2>&1; echo EXIT=$?` → EXIT=0: StareCoreTests 919 (+1), StareTests 429 (+1), 0
+  failures (baseline 918 + 428). Chose not to do: no CHANGELOG edit (CHANGELOG.md
+  still says ⌥-click on line 59 — the parent's call; the file is not on this
+  task's edit surface), no Settings knob (S3), no popover (needs key status),
+  no hidden modifier gesture anywhere.

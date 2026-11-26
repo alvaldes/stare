@@ -5,12 +5,14 @@ import XCTest
 @testable import Stare
 @testable import StareCore
 
-/// S2/S3: the spotlight keeps its one button and picks its shape from the
-/// button itself — ⌥-click cycles rectangle → ellipse → rounded rectangle —
-/// on both surfaces the bar serves (the drawing bar and the capture editor's
-/// chrome), and the armed shape rides `EditorState` into every minting site
-/// the way `arrowHeadStyle` does. Pinned over the real bar with a real ⌥
-/// event down to the button's own view.
+/// S2/S3 with S4's revision: the spotlight keeps its one button and picks its
+/// shape from the button itself — a context menu offering exactly the two
+/// shapes with the armed one checked, right-click over the non-key bar being
+/// a control a user can actually find (⌥-click, the withdrawn gesture, is
+/// gone). Pinned over the real bar with the real menu route down to the
+/// button's own view, on both surfaces the bar serves (the drawing bar and
+/// the capture editor's chrome), and the armed shape rides `EditorState` into
+/// every minting site the way `arrowHeadStyle` does.
 @MainActor
 final class CaptureSpotlightShapeTests: XCTestCase {
     // MARK: - Fixtures
@@ -28,12 +30,12 @@ final class CaptureSpotlightShapeTests: XCTestCase {
     }
 
     private func click(
-        _ view: NSView, options: Bool,
+        _ view: NSView,
         file: StaticString = #filePath, line: UInt = #line
     ) throws {
         let event = try XCTUnwrap(NSEvent.mouseEvent(
             with: .leftMouseDown, location: CGPoint(x: view.bounds.midX, y: 5),
-            modifierFlags: options ? [.option] : [], timestamp: 0,
+            modifierFlags: [], timestamp: 0,
             windowNumber: view.window?.windowNumber ?? 0, context: nil,
             eventNumber: 0, clickCount: 1, pressure: 1),
             "the synthetic press could not be built", file: file, line: line)
@@ -72,9 +74,22 @@ final class CaptureSpotlightShapeTests: XCTestCase {
         return names
     }
 
-    // MARK: - ⌥-click cycles the three shapes, in drawing order
+    // MARK: - The context menu offers exactly the two shapes (S4)
 
-    func testOptionClickOnTheSpotlightButtonCyclesTheThreeShapes() throws {
+    /// The menu is read off the real button — the same route a right-click
+    /// travels — so the checkmark and the items are the user's, not a copy.
+    private func shapeMenu(item shape: SpotlightShape, on button: NSView) throws -> NSMenuItem {
+        let press = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .leftMouseDown, location: CGPoint(x: button.bounds.midX, y: 5),
+            modifierFlags: [], timestamp: 0, windowNumber: button.window?.windowNumber ?? 0,
+            context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        let menu = try XCTUnwrap(
+            button.menu(for: press), "the spotlight's button must carry a context menu")
+        return try XCTUnwrap(
+            menu.items.first { ($0.representedObject as? SpotlightShape) == shape })
+    }
+
+    func testTheSpotlightButtonSContextMenuOffersExactlyTheTwoShapesWithTheArmedOneChecked() throws {
         let (window, state) = try hostedDrawingBar()
         defer { window.orderOut(nil) }
         let button = try XCTUnwrap(
@@ -83,16 +98,42 @@ final class CaptureSpotlightShapeTests: XCTestCase {
 
         // The shipped armed shape is the ellipse — today's spotlight.
         XCTAssertEqual(state.spotlightShape, .ellipse)
-        try click(button, options: true)
+        let press = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .leftMouseDown, location: CGPoint(x: button.bounds.midX, y: 5),
+            modifierFlags: [], timestamp: 0, windowNumber: button.window?.windowNumber ?? 0,
+            context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        let menu = try XCTUnwrap(button.menu(for: press))
         XCTAssertEqual(
-            state.spotlightShape, .roundedRectangle,
-            "the first ⌥-click turns the shipped ellipse into the rounded rectangle")
-        try click(button, options: true)
-        XCTAssertEqual(state.spotlightShape, .rectangle)
-        try click(button, options: true)
+            menu.items.map(\.title),
+            [SpotlightShape.ellipse.displayName, SpotlightShape.roundedRectangle.displayName],
+            "exactly the two offered shapes, in menu order")
         XCTAssertEqual(
-            state.spotlightShape, .ellipse,
-            "the cycle returns to the ellipse and never grows a fourth shape")
+            menu.items.first { $0.state == .on }?.representedObject as? SpotlightShape,
+            .ellipse, "the armed shape is the checked one")
+        XCTAssertNil(
+            menu.items.first { ($0.representedObject as? SpotlightShape) == .rectangle },
+            "the plain rectangle is withdrawn from the offer")
+    }
+
+    /// Picking a shape arms it on the state — and the state's shape is what
+    /// the next mark carries (the minting site route the overlay test pins).
+    func testPickingAShapeFromTheMenuArmsTheNextMarkWithIt() throws {
+        let (window, state) = try hostedDrawingBar()
+        defer { window.orderOut(nil) }
+        let button = try XCTUnwrap(spotlightButton(in: window.contentView!))
+
+        let pick = try shapeMenu(item: .roundedRectangle, on: button)
+        pick.target!.perform(try XCTUnwrap(pick.action), with: pick)
+        XCTAssertEqual(
+            state.spotlightShape, .roundedRectangle, "the pick arms the shape")
+        try click(button)
+        XCTAssertEqual(
+            state.tool, .spotlight, "the plain click arms the tool with the armed shape")
+        let mark = try XCTUnwrap(
+            self.mintedSpotlight(state, size: CGSize(width: 500, height: 400)),
+            "the drag commits a spotlight mark")
+        XCTAssertEqual(
+            mark.spotlightShape, .roundedRectangle, "and the next mark carries it")
     }
 
     /// A plain click on the button stays exactly the tool pick every tool's
@@ -102,14 +143,14 @@ final class CaptureSpotlightShapeTests: XCTestCase {
         defer { window.orderOut(nil) }
         let button = try XCTUnwrap(spotlightButton(in: window.contentView!))
 
-        try click(button, options: false)
+        try click(button)
         XCTAssertEqual(state.tool, .spotlight, "the plain click arms the tool")
         XCTAssertEqual(state.spotlightShape, .ellipse, "and names the armed shape nothing")
     }
 
     // MARK: - The same control on the capture editor's chrome
 
-    func testTheEditorChromeSCycleMatchesTheDrawingBarS() throws {
+    func testTheEditorChromeSMenuMatchesTheDrawingBarS() throws {
         let content = CaptureEditorContent(
             image: try XCTUnwrap(Self.solidImage()),
             capture: .standard,
@@ -127,10 +168,19 @@ final class CaptureSpotlightShapeTests: XCTestCase {
             spotlightButton(in: content),
             "the editor's chrome carries the same spotlight button name")
         XCTAssertEqual(content.state.spotlightShape, .ellipse)
-        try click(button, options: true)
+        let press = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .leftMouseDown, location: CGPoint(x: button.bounds.midX, y: 5),
+            modifierFlags: [], timestamp: 0, windowNumber: button.window?.windowNumber ?? 0,
+            context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        let menu = try XCTUnwrap(button.menu(for: press))
+        XCTAssertEqual(
+            menu.items.map(\.title),
+            [SpotlightShape.ellipse.displayName, SpotlightShape.roundedRectangle.displayName])
+        XCTAssertEqual(
+            menu.items.first { $0.state == .on }?.representedObject as? SpotlightShape, .ellipse)
+        let pick = try shapeMenu(item: .roundedRectangle, on: button)
+        pick.target!.perform(try XCTUnwrap(pick.action), with: pick)
         XCTAssertEqual(content.state.spotlightShape, .roundedRectangle)
-        try click(button, options: true)
-        XCTAssertEqual(content.state.spotlightShape, .rectangle)
     }
 
     // MARK: - Every minting site stamps the armed shape
@@ -139,7 +189,7 @@ final class CaptureSpotlightShapeTests: XCTestCase {
     /// the state's redaction style (T6b's route) — a real drag through
     /// `OverlayView` commits a mark carrying the armed shape.
     func testTheDrawingOverlayMintsTheArmedShape() throws {
-        for shape in [SpotlightShape.rectangle, .roundedRectangle, .ellipse] {
+        for shape in SpotlightShape.menuChoices {
             let state = EditorState()
             state.tool = .spotlight
             if shape != .ellipse { state.spotlightShape = shape }

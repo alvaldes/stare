@@ -792,9 +792,9 @@ struct ToolbarView: View {
         // current tool, so this reduces to today's `tool == tool` marking.
         let marked = state.isToolMarked(tool)
         return Group {
-            // S2/S3: the spotlight's own button hosts the shape's cycle, so it
-            // takes the AppKit-backed surface that can read the ↓ modifiers at
-            // the click; every other tool keeps the plain button.
+            // S2/S3, S4: the spotlight's own button hosts the shape's context
+            // menu, so it takes the AppKit-backed surface a right-click
+            // route lives on; every other tool keeps the plain button.
             if tool == .spotlight {
                 SpotlightToolButton(state: state, marked: marked, pick: pick)
             } else {
@@ -933,16 +933,18 @@ struct ToolbarView: View {
     }
 }
 
-// MARK: - The spotlight's own button (S2/S3)
+// MARK: - The spotlight's own button (S2/S3, S4)
 
 /// The spotlight's tool cell, AppKit-backed on purpose (S2/S3): a plain click
-/// arms the spotlight exactly like every other tool's button, and ⌥-click
-/// cycles the armed shape — rectangle → ellipse → rounded rectangle — right on
-/// the one button the tool keeps (no second tool, no Settings knob). The
-/// modifier at the click decides, which a plain SwiftUI `Button` action cannot
-/// see, so a real `NSEvent` down to this view is the route both surfaces share
-/// — the drawing bar and the capture editor's chrome — and the one seam the
-/// tests drive too.
+/// arms the spotlight exactly like every other tool's button, and a
+/// right-click opens a context menu on the same cell offering exactly the two
+/// shapes (`SpotlightShape.menuChoices`) with the armed one checked. That menu
+/// is S4's control — the owner rejected the ⌥-click gesture; a context menu
+/// is the standard, findable mechanism for a button on a bar that cannot
+/// become key, and it works over a non-key panel where a popover will not.
+/// The AppKit host is what carries the menu, so a real `NSView` down to this
+/// cell is the route both surfaces share — the drawing bar and the capture
+/// editor's chrome — and the one seam the tests drive too.
 private struct SpotlightToolButton: NSViewRepresentable {
     @ObservedObject var state: EditorState
     var marked: Bool
@@ -978,7 +980,7 @@ private struct SpotlightToolButtonLabel: View {
 
 /// The press surface: 28×26 like every tool cell, hosting the SwiftUI label
 /// with hit-testing off (the label never swallows a click; this view owns the
-/// presses), reading the modifiers at the click.
+/// presses and the context menu).
 final class SpotlightToolButtonView: NSView {
     private var state: EditorState
     private var marked: Bool
@@ -1024,7 +1026,7 @@ final class SpotlightToolButtonView: NSView {
             self.host = host
             addSubview(host)
         }
-        toolTip = "\(Tool.spotlight.displayName) (\(state.toolShortcuts[.spotlight])) · ⌥-click changes the shape: \(shape.displayName)"
+        toolTip = accessText(prefix: "right-click changes the shape: \(shape.displayName)")
         setAccessibilityLabel(accessibilityText)
     }
 
@@ -1033,21 +1035,46 @@ final class SpotlightToolButtonView: NSView {
         subviews.first?.frame = bounds
     }
 
+    private func accessText(prefix: String) -> String {
+        "\(Tool.spotlight.displayName) (\(state.toolShortcuts[.spotlight])) · \(prefix)"
+    }
+
     private var accessibilityText: String {
-        "\(Tool.spotlight.displayName) (\(state.toolShortcuts[.spotlight])) · ⌥-click changes the shape: \(state.spotlightShape.displayName)"
+        accessText(prefix: "right-click changes the shape: \(state.spotlightShape.displayName)")
     }
 
     override func mouseDown(with event: NSEvent) {
-        if event.modifierFlags.contains(.option) {
-            state.spotlightShape = state.spotlightShape.next
-        } else {
-            state.select(.spotlight)
-            pick?()
-        }
+        state.select(.spotlight)
+        pick?()
     }
 
-    /// The label host refuses every event, so the presses land here — the
-    /// modifier route on the button itself.
+    /// S4: the shape control lives here, in the standard mechanism every
+    /// context-menu-bearing control on a panel that cannot become key uses.
+    /// Built fresh per invocation so the checkmark is the armed truth at the
+    /// moment the user opens it.
+    override func menu(for event: NSEvent?) -> NSMenu? {
+        let menu = NSMenu()
+        for shape in SpotlightShape.menuChoices {
+            let item = NSMenuItem(
+                title: shape.displayName,
+                action: #selector(chooseShapeMenuItem(_:)),
+                keyEquivalent: "")
+            item.target = self
+            item.representedObject = shape
+            let stateValue: NSControl.StateValue = shape == state.spotlightShape ? .on : .off
+            item.state = stateValue
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    @objc private func chooseShapeMenuItem(_ sender: NSMenuItem) {
+        guard let shape = sender.representedObject as? SpotlightShape else { return }
+        state.spotlightShape = shape
+    }
+
+    /// The label host refuses every event, so the presses and the right-click
+    /// land here — the menu on the button itself.
     private final class LabelHost: NSHostingView<SpotlightToolButtonLabel> {
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }

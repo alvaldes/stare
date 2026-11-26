@@ -3,15 +3,18 @@ import XCTest
 
 import StareCore
 
-/// S2/S3: the spotlight stops being only round. One tool still — no second
-/// button and no preference — and the shape is a property of the mark itself
+/// S2/S3 with S4's revision: the spotlight stops being only round, but now
+/// offers exactly the two shapes the owner wants — the ellipse and the
+/// rounded rectangle — picked from the spotlight's own button through a
+/// context menu (the control a user can find, pinned over the real bar in
+/// `CaptureSpotlightShapeTests`). The shape is a property of the mark itself
 /// (the `redactionStyle` persistence discipline: appended last, lenient
-/// decode to the current ellipse default, explicit encode), cycled with
-/// ⌥-click on the spotlight's own button (pinned over the real bar in
-/// `CaptureSpotlightShapeTests`). The dimming and the blending the ellipse
-/// keeps exactly as shipped; the rectangle and the rounded rectangle cut the
-/// same weight of dim along their own silhouette, so a sampled row and a
-/// sampled column tell the three shapes apart.
+/// decode to the current ellipse default, explicit encode). The plain
+/// rectangle is withdrawn from the offer but kept as data: its raw value
+/// decodes and its silhouette renders exactly as it always did. The dimming
+/// and the blending the ellipse keeps exactly as shipped; the flat shapes
+/// cut the same weight of dim along their own silhouettes, so a sampled row
+/// and a sampled column tell the shapes apart.
 final class SpotlightShapeTests: XCTestCase {
     // MARK: - Pixel harness
 
@@ -124,13 +127,36 @@ final class SpotlightShapeTests: XCTestCase {
         XCTAssertEqual(pixel.red, pixel.blue, accuracy: 0.02, "colourless dim", file: file, line: line)
     }
 
-    // MARK: - The cycle and the enum
+    // MARK: - The offer and the withdrawn shape (S4)
 
-    /// S2/S3: ⌥-click cycles rectangle → ellipse → rounded rectangle.
-    func testTheShapeCycleRunsRectangleToEllipseToRoundedRectangleAndBack() {
-        XCTAssertEqual(SpotlightShape.rectangle.next, .ellipse)
-        XCTAssertEqual(SpotlightShape.ellipse.next, .roundedRectangle)
-        XCTAssertEqual(SpotlightShape.roundedRectangle.next, .rectangle)
+    /// S4: the control offers exactly the two shapes the owner wants — the
+    /// ellipse first, the rounded rectangle beside it — and the plain
+    /// rectangle is no longer offered. The three-shape ⌥-click cycle pin of
+    /// the last round is re-derived by this test and by the rectangle's
+    /// survivorship test below.
+    func testTheControlOffersExactlyTheTwoShapesTheOwnerWants() {
+        XCTAssertEqual(SpotlightShape.menuChoices, [.ellipse, .roundedRectangle])
+        XCTAssertFalse(
+            SpotlightShape.menuChoices.contains(.rectangle),
+            "the plain rectangle is withdrawn from the offer")
+    }
+
+    /// S4: the withdrawn plain rectangle is data, not an option. A mark drawn
+    /// with it (the last build offered the ⌥-click cycle over three shapes)
+    /// keeps decoding and rendering as the rectangle it was drawn as.
+    func testAMarkPersistedWithThePlainRectangleStillDecodesAndRenders() throws {
+        let stroke = spotlightStroke(.rectangle)
+        let data = try JSONEncoder().encode(stroke.persisted)
+        let restored = try JSONDecoder().decode(PersistedStroke.self, from: data)
+        let mark = try XCTUnwrap(Stroke(persisted: restored))
+        XCTAssertEqual(
+            SpotlightShape(rawValue: "rectangle"), .rectangle,
+            "the withdrawn raw value stays decodable")
+        XCTAssertEqual(mark.spotlightShape, .rectangle)
+        XCTAssertEqual(
+            raster(of: mark, canvas: Self.canvas),
+            raster(of: spotlightStroke(.rectangle), canvas: Self.canvas),
+            "a rectangle mark renders exactly as it always did")
     }
 
     func testTheShapeRawValuesDecode() {
