@@ -837,7 +837,8 @@ class OverlayView: NSView {
             ink: state.ink,
             fill: state.shapesFilled,
             arrowHead: state.arrowHeadStyle,
-            redactionStyle: state.redactionStyle
+            redactionStyle: state.redactionStyle,
+            spotlightShape: state.spotlightShape
         )
         if state.tool.isTransient { startLaserTimer() }
         noteBlurInterestChanged()

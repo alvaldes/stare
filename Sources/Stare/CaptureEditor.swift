@@ -483,6 +483,52 @@ struct EditorCropSpace: Equatable {
     }
 }
 
+/// The crop frame's pure geometry (S1): what the owner's replacement of the
+/// dotted treatment is made of — four L brackets at the corners and four
+/// short handles centred on the edge midpoints, in the app's selection accent
+/// (the same blue the overlay's selection chrome draws). No segment runs
+/// along an edge between a bracket and a handle: the dim marks the boundary
+/// there instead. Segments are in view space, so the sizes stay what the
+/// pointer sees at any zoom.
+struct CropFrame {
+    /// The bracket arm's length and the frame's stroke weight, view points.
+    static let bracketLength: CGFloat = 18
+    static let edgeHandleLength: CGFloat = 16
+    static let bandWidth: CGFloat = 2.5
+    /// The app's selection accent, the same value the board's and overlay's
+    /// chrome paint with.
+    static let accent = CGColor(srgbRed: 0.25, green: 0.55, blue: 1, alpha: 1)
+
+    /// The eight bracket segments: at each corner two arms running inward
+    /// along the edges.
+    static func brackets(of rect: CGRect) -> [(from: CGPoint, to: CGPoint)] {
+        let corners: [(CGPoint, CGVector)] = [
+            (CGPoint(x: rect.minX, y: rect.minY), CGVector(dx: 1, dy: 1)),
+            (CGPoint(x: rect.maxX, y: rect.minY), CGVector(dx: -1, dy: 1)),
+            (CGPoint(x: rect.minX, y: rect.maxY), CGVector(dx: 1, dy: -1)),
+            (CGPoint(x: rect.maxX, y: rect.maxY), CGVector(dx: -1, dy: -1)),
+        ]
+        return corners.flatMap { corner, inward in
+            [
+                (corner, CGPoint(x: corner.x + inward.dx * bracketLength, y: corner.y)),
+                (corner, CGPoint(x: corner.x, y: corner.y + inward.dy * bracketLength)),
+            ]
+        }
+    }
+
+    /// The four edge handles: short bars centred on each edge's midpoint,
+    /// running along the edge.
+    static func handles(of rect: CGRect) -> [(from: CGPoint, to: CGPoint)] {
+        let half = edgeHandleLength / 2
+        return [
+            (CGPoint(x: rect.midX - half, y: rect.minY), CGPoint(x: rect.midX + half, y: rect.minY)),
+            (CGPoint(x: rect.midX - half, y: rect.maxY), CGPoint(x: rect.midX + half, y: rect.maxY)),
+            (CGPoint(x: rect.minX, y: rect.midY - half), CGPoint(x: rect.minX, y: rect.midY + half)),
+            (CGPoint(x: rect.maxX, y: rect.midY - half), CGPoint(x: rect.maxX, y: rect.midY + half)),
+        ]
+    }
+}
+
 /// Pure crop geometry: regions are rects in the original capture's pixel
 /// space, so every rule here is testable without AppKit.
 struct EditorCropRule {
@@ -1144,9 +1190,12 @@ final class CaptureEditorCanvas: NSView {
         }
     }
 
-    /// The armed view: the region's edges over the dimmed rest of the
-    /// picture, with the eight grips drawn, so the crop can be taken again
-    /// and adjusted (S7).
+    /// The armed view (S1): the region's edges over the dimmed rest of the
+    /// picture, drawn as corner brackets and four edge handles in the accent
+    /// colour — the owner's idiom for the crop, replacing the old white border
+    /// and grip squares. No solid rule runs between bracket and handle: the
+    /// dim marks the boundary there, and the picture keeps its own brightness
+    /// inside the region.
     private func drawCropOverlay(space: EditorCropSpace, region: CGRect?, in context: CGContext) {
         guard let region else { return }
         let viewRegion = space.viewRect(fromPixel: region)
@@ -1156,29 +1205,19 @@ final class CaptureEditorCanvas: NSView {
         context.setFillColor(CGColor(gray: 0, alpha: 0.35))
         context.addPath(shroud)
         context.fillPath(using: .evenOdd)
-        context.setStrokeColor(CGColor(gray: 1, alpha: 0.9))
-        context.setLineWidth(1.5)
-        context.addRect(viewRegion)
-        context.strokePath()
 
-        let grips: [CGPoint] = [
-            CGPoint(x: viewRegion.minX, y: viewRegion.minY),
-            CGPoint(x: viewRegion.midX, y: viewRegion.minY),
-            CGPoint(x: viewRegion.maxX, y: viewRegion.minY),
-            CGPoint(x: viewRegion.minX, y: viewRegion.midY),
-            CGPoint(x: viewRegion.maxX, y: viewRegion.midY),
-            CGPoint(x: viewRegion.minX, y: viewRegion.maxY),
-            CGPoint(x: viewRegion.midX, y: viewRegion.maxY),
-            CGPoint(x: viewRegion.maxX, y: viewRegion.maxY),
-        ]
-        let side: CGFloat = 8
-        context.setFillColor(CGColor(gray: 1, alpha: 1))
-        context.setStrokeColor(CGColor(gray: 0, alpha: 0.5))
-        context.setLineWidth(1)
-        for grip in grips {
-            let square = CGRect(x: grip.x - side / 2, y: grip.y - side / 2, width: side, height: side)
-            context.addRect(square)
-            context.drawPath(using: .fillStroke)
+        context.setStrokeColor(CropFrame.accent)
+        context.setLineWidth(CropFrame.bandWidth)
+        context.setLineCap(.round)
+        for (from, to) in CropFrame.brackets(of: viewRegion) {
+            context.move(to: from)
+            context.addLine(to: to)
+            context.strokePath()
+        }
+        for (from, to) in CropFrame.handles(of: viewRegion) {
+            context.move(to: from)
+            context.addLine(to: to)
+            context.strokePath()
         }
     }
 
@@ -1332,7 +1371,13 @@ final class CaptureEditorCanvas: NSView {
         drawingStrokes = session.strokes
         // T6b/S13: the editor's marks redact the way the drawing overlay's do
         // — the state mirrors the one preference, so the minted mark stamps it.
-        let stroke = session.begin(at: point, tool: state.tool, ink: state.ink, redactionStyle: state.redactionStyle)
+        // S2/S3: the spotlight's armed shape rides the state the way
+        // `arrowHeadStyle` does, so an editor-drawn spotlight is the shape the
+        // user cycled to.
+        let stroke = session.begin(
+            at: point, tool: state.tool, ink: state.ink,
+            redactionStyle: state.redactionStyle,
+            spotlightShape: state.spotlightShape)
         spaces[stroke.id] = drawingSpace
         needsDisplay = true
     }
@@ -1375,8 +1420,13 @@ final class CaptureEditorCanvas: NSView {
                 stage.updatePreview(EditorCropRule.clamped(
                     EditorCropRule.marquee(between: start, and: pixel), in: fullBounds))
             case let .adjusting(handle, start):
-                stage.updatePreview(EditorCropRule.region(
-                    from: start, dragging: handle, to: pixel, in: fullBounds))
+                // Shift holds the start rectangle's aspect ratio (S1): the
+                // same locked rule the canvas layers resize with — free drag
+                // otherwise.
+                stage.updatePreview(
+                    event.modifierFlags.contains(.shift)
+                        ? EditorCropRule.lockedRegion(from: start, dragging: handle, to: pixel, in: fullBounds)
+                        : EditorCropRule.region(from: start, dragging: handle, to: pixel, in: fullBounds))
             case let .moving(start, grab):
                 stage.updatePreview(EditorCropRule.region(
                     from: start,

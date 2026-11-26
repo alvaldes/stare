@@ -34,6 +34,43 @@ public enum RedactionStyle: String, CaseIterable, Sendable, Codable {
     case randomizedPixelate
 }
 
+/// S2/S3: the shape the spotlight draws. One tool, three shapes: the shape is
+/// a property of the mark itself — the same disposition the fill and the
+/// arrow head already have (S15) — so a saved drawing restores the shape it
+/// was drawn with, and the armed choice rides `EditorState` the way
+/// `arrowHeadStyle` does into every minting site. The control is ⌥-click on
+/// the spotlight's own button, cycling exactly this order, never a second
+/// tool and never a preference.
+public enum SpotlightShape: String, CaseIterable, Sendable, Codable {
+    case rectangle
+    case ellipse
+    case roundedRectangle
+
+    /// The shipped corner radius of the rounded-rectangle shape, in points —
+    /// the shallow dish the third shape reads by (`PathBuilder` clamps it
+    /// into the region's half sides so a small region never inverts).
+    public static let roundedRectRadius: CGFloat = 16
+
+    /// The name the spotlight button's help prints for the armed shape.
+    public var displayName: String {
+        switch self {
+        case .rectangle: "Rectangle"
+        case .ellipse: "Ellipse"
+        case .roundedRectangle: "Rounded rectangle"
+        }
+    }
+
+    /// The next style when the ⌥-click cycles the choice:
+    /// rectangle → ellipse → rounded rectangle → back.
+    public var next: SpotlightShape {
+        switch self {
+        case .rectangle: .ellipse
+        case .ellipse: .roundedRectangle
+        case .roundedRectangle: .rectangle
+        }
+    }
+}
+
 /// One mark on the screen. Points live in a top-left-origin, display-local space
 /// measured in points, which is what the overlay view and the capture both use.
 public struct Stroke: Identifiable, Equatable, Sendable {
@@ -72,6 +109,12 @@ public struct Stroke: Identifiable, Equatable, Sendable {
     /// decodes as blur, so every mark drawn before it existed renders byte
     /// -identically to what it always rendered.
     public var redactionStyle: RedactionStyle = .blur
+    /// S2/S3: the shape this spotlight mark draws — the dragged rectangle, its
+    /// inscribed ellipse (today's look, the default every legacy mark decodes
+    /// to) or a rounded rectangle. A property of the mark like the fill and
+    /// the head, appended last and persisted by the same lenient discipline
+    /// `redactionStyle` keeps.
+    public var spotlightShape: SpotlightShape = .ellipse
 
     public init(
         id: UUID = UUID(),
@@ -86,7 +129,8 @@ public struct Stroke: Identifiable, Equatable, Sendable {
         rotation: CGFloat = 0,
         fill: Bool = false,
         arrowHead: ArrowHeadStyle = .open,
-        redactionStyle: RedactionStyle = .blur
+        redactionStyle: RedactionStyle = .blur,
+        spotlightShape: SpotlightShape = .ellipse
     ) {
         self.id = id
         self.tool = tool
@@ -101,6 +145,7 @@ public struct Stroke: Identifiable, Equatable, Sendable {
         self.isFilled = fill
         self.arrowHead = arrowHead
         self.redactionStyle = redactionStyle
+        self.spotlightShape = spotlightShape
     }
 
     /// The mark's own badge diameter, falling back to the default.

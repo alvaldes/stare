@@ -194,19 +194,43 @@ public enum MarkRenderer {
     /// committed marks, never takes this branch, so a capture always
     /// carries the dim.
     private static func drawSpotlightPreview(_ stroke: Stroke, in context: CGContext, opacity: CGFloat?) {
-        let outline = Stroke(
-            id: stroke.id,
-            tool: .ellipse,
-            ink: stroke.ink,
-            points: stroke.points,
-            rotation: stroke.rotation
-        )
-        draw(stroke: outline, in: context, opacity: opacity)
+        // The ellipse keeps today's preview byte for byte: the shared geometry
+        // renderer, fed an ellipse built from the same drag points.
+        if stroke.spotlightShape == .ellipse {
+            let outline = Stroke(
+                id: stroke.id,
+                tool: .ellipse,
+                ink: stroke.ink,
+                points: stroke.points,
+                rotation: stroke.rotation
+            )
+            draw(stroke: outline, in: context, opacity: opacity)
+            return
+        }
+        // The flat shapes preview their own silhouette, drawn with the shape
+        // outline tools' weight (3 — the rectangle's and ellipse's own), the
+        // same ink and the same ink behaviour, and the dim nowhere, exactly as
+        // the ellipse preview never dims.
+        guard let first = stroke.points.first, let last = stroke.points.last else { return }
+        let path = PathBuilder.spotlightPath(stroke.spotlightShape, from: first, to: last)
+        context.saveGState()
+        if stroke.rotation != 0 {
+            context.concatenate(
+                Stroke.rotationTransform(around: stroke.anchor, by: stroke.rotation)
+            )
+        }
+        context.setStrokeColor(stroke.ink.cgColor(alpha: opacity ?? stroke.opacity))
+        context.setLineWidth(3)
+        context.addPath(path)
+        context.strokePath()
+        context.restoreGState()
     }
 
     /// S15 slice B: the persistent spotlight. A dimming light, not a stroke:
     /// one silhouette — the dragged rectangle's inscribed ellipse, the shape
-    /// a beam of light makes — and the dim falls off from its edge in a
+    /// a beam of light makes (S2/S3: the mark's own `spotlightShape` — the
+    /// rectangle and the rounded rectangle cut the same dim below, in
+    /// `drawFlatSpotlight`) — and the dim falls off from its edge in a
     /// single radial gradient, across the whole canvas at once. There is no
     /// second geometry and no shroud fill: inside the boundary the gradient
     /// paints at alpha zero (the content beneath keeps its exact
@@ -232,6 +256,13 @@ public enum MarkRenderer {
         guard let first = stroke.points.first, let last = stroke.points.last else { return }
         let rect = PathBuilder.normalizedRect(from: first, to: last)
         guard rect.width > 0, rect.height > 0, canvas.width > 0, canvas.height > 0 else { return }
+
+        if stroke.spotlightShape != .ellipse {
+            drawFlatSpotlight(stroke, silhouette: PathBuilder.spotlightPath(
+                stroke.spotlightShape, from: first, to: last),
+                canvas: canvas, in: context)
+            return
+        }
 
         let rotation = stroke.rotation
         let rotate = Stroke.rotationTransform(around: stroke.anchor, by: rotation)
@@ -320,5 +351,41 @@ public enum MarkRenderer {
             options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
         )
         context.restoreGState()
+    }
+
+    /// S2/S3: the rectangle and the rounded rectangle's own silhouettes. The
+    /// dim around them is the shipped weight (`spotlightDimAlpha`) drawn the
+    /// source-over way the gradient's far field is; the shape itself cuts
+    /// where the light reaches, so the interior clears exactly and the dim
+    /// starts at the silhouette — no feather band, which the ellipse's curve
+    /// needs because its boundary distance is an arc and the mark has none:
+    /// a rectangle names its own boundary exactly. The path turns with the
+    /// mark's rotation; the dim stays over the whole canvas.
+    private static func drawFlatSpotlight(
+        _ stroke: Stroke,
+        silhouette lit: CGPath,
+        canvas: CGRect,
+        in context: CGContext
+    ) {
+        // Nothing to dim when the lit silhouette covers the canvas (the same
+        // early return the gradient takes when every corner sits inside): the
+        // silhouettes are convex, so the four corners answer for the whole
+        // canvas.
+        let rotate = Stroke.rotationTransform(around: stroke.anchor, by: stroke.rotation)
+        var transform = rotate
+        guard let litPath = lit.copy(using: &transform) else { return }
+        let covered = [
+            CGPoint(x: canvas.minX, y: canvas.minY),
+            CGPoint(x: canvas.maxX, y: canvas.minY),
+            CGPoint(x: canvas.maxX, y: canvas.maxY),
+            CGPoint(x: canvas.minX, y: canvas.maxY),
+        ].allSatisfy { litPath.contains($0) }
+        if covered { return }
+        let shroud = CGMutablePath()
+        shroud.addRect(canvas)
+        shroud.addPath(litPath)
+        context.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: spotlightDimAlpha))
+        context.addPath(shroud)
+        context.fillPath(using: .evenOdd)
     }
 }

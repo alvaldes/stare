@@ -31,6 +31,10 @@ public struct PersistedStroke: Codable, Equatable, Sendable {
     /// Optional because a document written before the field existed carries
     /// nothing: it decodes as nil and restores as the default blur.
     public var redactionStyle: String?
+    /// `SpotlightShape.rawValue` of a spotlight mark's shape (S2/S3). Nil in
+    /// documents written before the field existed — they decode as today's
+    /// ellipse, the exact look the field had never carried.
+    public var spotlightShape: String?
 }
 
 /// The persisted form of one mark (see `PersistedStroke`).
@@ -50,7 +54,8 @@ extension Stroke {
             rotation: rotation,
             fill: isFilled ? true : nil,
             arrowHead: isFilledHead ? arrowHead.rawValue : nil,
-            redactionStyle: redactionStyle.rawValue
+            redactionStyle: redactionStyle.rawValue,
+            spotlightShape: spotlightShape.rawValue
         )
     }
 
@@ -77,7 +82,11 @@ extension Stroke {
             // Lenient like the blob's own fields: a document without the
             // field (every drawing saved before it existed) restores as the
             // audited blur, and an unknown raw value falls back to it too.
-            redactionStyle: stroke.redactionStyle.flatMap(RedactionStyle.init(rawValue:)) ?? .blur
+            redactionStyle: stroke.redactionStyle.flatMap(RedactionStyle.init(rawValue:)) ?? .blur,
+            // The same leniency for the spotlight's shape: a document that
+            // never named it (and every legacy mark) decodes as the shipped
+            // ellipse — the look the field never carried explicitly.
+            spotlightShape: stroke.spotlightShape.flatMap(SpotlightShape.init(rawValue:)) ?? .ellipse
         )
     }
 
@@ -212,7 +221,8 @@ public struct DrawingSession: Equatable, Sendable {
         fill: Bool = false,
         arrowHead: ArrowHeadStyle = .open,
         now: Date = Date(),
-        redactionStyle: RedactionStyle = .blur
+        redactionStyle: RedactionStyle = .blur,
+        spotlightShape: SpotlightShape = .ellipse
     ) -> Stroke {
         guard !tool.isSelection else {
             return Stroke(tool: tool, ink: ink, points: [point])
@@ -228,6 +238,7 @@ public struct DrawingSession: Equatable, Sendable {
         switch tool {
         case .rectangle, .ellipse: stroke.isFilled = fill
         case .arrow: stroke.arrowHead = arrowHead
+        case .spotlight: stroke.spotlightShape = spotlightShape
         default: break
         }
 

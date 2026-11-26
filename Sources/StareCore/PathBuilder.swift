@@ -30,8 +30,10 @@ public enum PathBuilder {
             return linePath(from: first, to: points.last ?? first)
         case .arrow:
             return arrowPath(from: first, to: points.last ?? first)
-        case .rectangle, .blur, .spotlight:
+        case .rectangle, .blur:
             return rectanglePath(from: first, to: points.last ?? first)
+        case .spotlight:
+            return spotlightPath(stroke.spotlightShape, from: first, to: points.last ?? first)
         case .ellipse:
             return ellipsePath(from: first, to: points.last ?? first)
         case .pen, .highlighter, .laser:
@@ -104,6 +106,34 @@ public enum PathBuilder {
         let rect = normalizedRect(from: first, to: second)
         let path = CGMutablePath()
         path.addRect(rect)
+        return path
+    }
+
+    /// The spotlight's silhouette for one shape (S2/S3): the dragged
+    /// rectangle for `.rectangle`, its inscribed ellipse for `.ellipse`, and
+    /// the rounded rectangle beside them. Pure geometry, shared by the
+    /// renderer's committed dim, its in-progress preview and the mark's own
+    /// bounds.
+    public static func spotlightPath(
+        _ shape: SpotlightShape, from first: CGPoint, to second: CGPoint
+    ) -> CGPath {
+        let rect = normalizedRect(from: first, to: second)
+        switch shape {
+        case .rectangle:
+            return rectanglePath(from: first, to: second)
+        case .roundedRectangle:
+            return roundedRectanglePath(rect)
+        case .ellipse:
+            return ellipsePath(from: first, to: second)
+        }
+    }
+
+    /// A rectangle with `SpotlightShape`'s shipped corner radius, clamped
+    /// into the rect's half sides so a small region can never invert.
+    public static func roundedRectanglePath(_ rect: CGRect) -> CGPath {
+        let radius = min(SpotlightShape.roundedRectRadius, min(rect.width, rect.height) / 2)
+        let path = CGMutablePath()
+        path.addRoundedRect(in: rect, cornerWidth: radius, cornerHeight: radius)
         return path
     }
 

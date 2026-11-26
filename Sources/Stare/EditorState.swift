@@ -88,6 +88,15 @@ final class EditorState: ObservableObject {
     /// S15 slice A: the arrowhead style the next arrow is drawn with (see
     /// `shapesFilled` for why this stays out of the persistence plumbing).
     @Published var arrowHeadStyle: ArrowHeadStyle = .open
+    /// S2/S3: the shape the next spotlight draws. One tool — the spotlight
+    /// keeps its one button — and the shape is picked with ⌥-click on that
+    /// button itself, cycling rectangle → ellipse → rounded rectangle, in the
+    /// `arrowHeadStyle` disposition deliberately: armed state, nothing
+    /// persisted, and detached surfaces (the capture editor, the selftest
+    /// harness) keep the shipped ellipse that has always been there. It rides
+    /// every minting site: the drawing overlay and the capture editor stamp
+    /// marks with the state's shape.
+    @Published var spotlightShape: SpotlightShape = .ellipse
     /// The router the drawing surfaces resolve keys with: always rebuilt from
     /// the live map, so the map the Settings pane edits is the map that
     /// routes.

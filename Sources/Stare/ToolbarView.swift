@@ -772,18 +772,27 @@ struct ToolbarView: View {
         // crop. Outside the capture editor the armed item is always the
         // current tool, so this reduces to today's `tool == tool` marking.
         let marked = state.isToolMarked(tool)
-        return Button { if let pick { pick() } else { state.select(tool) } } label: {
-            Image(systemName: tool.symbolName)
-                .font(.system(size: 13, weight: .medium))
-                .frame(width: 28, height: 26)
-                .foregroundStyle(marked ? Color.white : Color.secondary)
-                .background(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(marked ? Color.accentColor.opacity(0.55) : Color.clear)
-                )
+        return Group {
+            // S2/S3: the spotlight's own button hosts the shape's cycle, so it
+            // takes the AppKit-backed surface that can read the ↓ modifiers at
+            // the click; every other tool keeps the plain button.
+            if tool == .spotlight {
+                SpotlightToolButton(state: state, marked: marked, pick: pick)
+            } else {
+                Button { if let pick { pick() } else { state.select(tool) } } label: {
+                    Image(systemName: tool.symbolName)
+                        .font(.system(size: 13, weight: .medium))
+                        .frame(width: 28, height: 26)
+                        .foregroundStyle(marked ? Color.white : Color.secondary)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(marked ? Color.accentColor.opacity(0.55) : Color.clear)
+                        )
+                }
+                .buttonStyle(.plain)
+                .help(Text(verbatim: "\(tool.displayName) (\(state.toolShortcuts[tool]))"))
+            }
         }
-        .buttonStyle(.plain)
-        .help(Text(verbatim: "\(tool.displayName) (\(state.toolShortcuts[tool]))"))
     }
 
     /// The `⁞` (S1/S6): three dots along the bar's axis while nothing hidden
@@ -902,5 +911,125 @@ struct ToolbarView: View {
             blue: Double(ink.rgb.blue),
             opacity: 1
         )
+    }
+}
+
+// MARK: - The spotlight's own button (S2/S3)
+
+/// The spotlight's tool cell, AppKit-backed on purpose (S2/S3): a plain click
+/// arms the spotlight exactly like every other tool's button, and ⌥-click
+/// cycles the armed shape — rectangle → ellipse → rounded rectangle — right on
+/// the one button the tool keeps (no second tool, no Settings knob). The
+/// modifier at the click decides, which a plain SwiftUI `Button` action cannot
+/// see, so a real `NSEvent` down to this view is the route both surfaces share
+/// — the drawing bar and the capture editor's chrome — and the one seam the
+/// tests drive too.
+private struct SpotlightToolButton: NSViewRepresentable {
+    @ObservedObject var state: EditorState
+    var marked: Bool
+    /// The extra route some slots add (the overflow closes itself after a
+    /// pick); nil on the palette's own body.
+    var pick: (() -> Void)?
+
+    func makeNSView(context: Context) -> SpotlightToolButtonView {
+        SpotlightToolButtonView(state: state, marked: marked, pick: pick)
+    }
+
+    func updateNSView(_ view: SpotlightToolButtonView, context: Context) {
+        view.refresh(state: state, marked: marked, pick: pick)
+    }
+}
+
+/// The label the button draws: the very cell every tool button is — the SF
+/// Symbol over the marked/unmarked plate — so the spotlight never reads as a
+/// different genus of control.
+private struct SpotlightToolButtonLabel: View {
+    let marked: Bool
+    var body: some View {
+        Image(systemName: Tool.spotlight.symbolName)
+            .font(.system(size: 13, weight: .medium))
+            .frame(width: 28, height: 26)
+            .foregroundStyle(marked ? Color.white : Color.secondary)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(marked ? Color.accentColor.opacity(0.55) : Color.clear)
+            )
+    }
+}
+
+/// The press surface: 28×26 like every tool cell, hosting the SwiftUI label
+/// with hit-testing off (the label never swallows a click; this view owns the
+/// presses), reading the modifiers at the click.
+final class SpotlightToolButtonView: NSView {
+    private var state: EditorState
+    private var marked: Bool
+    private var pick: (() -> Void)?
+    private var host: LabelHost?
+    private var rendered: (marked: Bool, shape: SpotlightShape)?
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("SpotlightToolButtonView is created in code only")
+    }
+
+    init(state: EditorState, marked: Bool, pick: (() -> Void)?) {
+        self.state = state
+        self.marked = marked
+        self.pick = pick
+        super.init(frame: CGRect(x: 0, y: 0, width: 28, height: 26))
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+        setAccessibilityLabel(accessibilityText)
+        refreshLabel(marked: marked)
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: 28, height: 26)
+    }
+
+    func refresh(state: EditorState, marked: Bool, pick: (() -> Void)?) {
+        self.state = state
+        self.pick = pick
+        refreshLabel(marked: marked)
+    }
+
+    private func refreshLabel(marked: Bool) {
+        let shape = state.spotlightShape
+        if let current = rendered, current == (marked, shape) { return }
+        rendered = (marked, shape)
+        let host = self.host ?? LabelHost(rootView: SpotlightToolButtonLabel(marked: marked))
+        host.frame = bounds
+        host.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin, .maxYMargin, .width, .height]
+        host.rootView = SpotlightToolButtonLabel(marked: marked)
+        if self.host == nil {
+            self.host = host
+            addSubview(host)
+        }
+        toolTip = "\(Tool.spotlight.displayName) (\(state.toolShortcuts[.spotlight])) · ⌥-click changes the shape: \(shape.displayName)"
+        setAccessibilityLabel(accessibilityText)
+    }
+
+    override func layout() {
+        super.layout()
+        subviews.first?.frame = bounds
+    }
+
+    private var accessibilityText: String {
+        "\(Tool.spotlight.displayName) (\(state.toolShortcuts[.spotlight])) · ⌥-click changes the shape: \(state.spotlightShape.displayName)"
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.option) {
+            state.spotlightShape = state.spotlightShape.next
+        } else {
+            state.select(.spotlight)
+            pick?()
+        }
+    }
+
+    /// The label host refuses every event, so the presses land here — the
+    /// modifier route on the button itself.
+    private final class LabelHost: NSHostingView<SpotlightToolButtonLabel> {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }
 }
