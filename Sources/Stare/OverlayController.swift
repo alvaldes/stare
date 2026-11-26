@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import ImageIO
 import StareCore
 
 /// One entry of the global history. A `mark` is a single mark that was added
@@ -561,6 +562,29 @@ final class OverlayController {
     /// tail makes and read back through the same lookup the handoff makes.
     func registerCaptureIdentity(_ image: CGImage, _ identity: CaptureEditorIdentity) {
         editorIdentities.register(image, identity: identity)
+    }
+
+    /// The windows the editor stands open — the seam a Dock/open-route test
+    /// reads the produced windows through (round four S6).
+    var editorWindowsForTesting: [CaptureEditorWindow] { editor.windowsForTesting }
+
+    /// The Finder's "Open With" route (round four S6): a file the system asks
+    /// Stare to open becomes an editor handoff — the SAME ONE
+    /// `openCaptureEditor` the capture cards and the session history share,
+    /// identity resolution included (an opened file is a foreign image: an
+    /// unknown naming identity, the same refusal into the prefix fallback).
+    /// The decode happens here, never in the delegate, and a file that is not
+    /// an image changes nothing. Returns whether a handoff ran.
+    @discardableResult
+    func openFileInEditor(at url: URL) -> Bool {
+        let noCache = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, noCache),
+            let image = CGImageSourceCreateImageAtIndex(source, 0, noCache) else {
+            Diag.log("open with stare: \(url.lastPathComponent) decoded to no image")
+            return false
+        }
+        openCaptureEditor(image)
+        return true
     }
 
     /// The identity for an image, read the way the handoff reads it (S5) —

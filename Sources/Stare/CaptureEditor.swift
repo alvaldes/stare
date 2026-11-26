@@ -41,6 +41,21 @@ final class CaptureEditorController {
     /// a test needs to reach the content it built.
     var windowsForTesting: [CaptureEditorWindow] { windows }
 
+    /// Round four S6: opening an editor and closing the last one moves the
+    /// app's Dock presence with the truth of the editor windows. Stare keeps
+    /// launching as the accessory menu-bar app (main.swift's policy, LSUIElement
+    /// untouched); only an editor ON SCREEN brings the Dock icon, so the open
+    /// editor "se queda la ventana abierta" behind every other app no more —
+    /// while it exists, the Dock shows Stare like another app, and the last
+    /// window's close returns the accessory contract atomically.
+    static func dockActivationPolicy(forEditorCount count: Int) -> NSApplication.ActivationPolicy {
+        count == 0 ? .accessory : .regular
+    }
+
+    private func reflectDockPresence() {
+        NSApp?.setActivationPolicy(Self.dockActivationPolicy(forEditorCount: windows.count))
+    }
+
     func open(
         image: CGImage, capture: CapturePreference = .standard, redactionStyle: RedactionStyle = .blur,
         app: String? = nil, displayName: String? = nil
@@ -53,9 +68,10 @@ final class CaptureEditorController {
             displayName: displayName,
             onDeliver: onDeliver
         ) { [weak self] closing in
-            self?.windows.removeAll { $0 === closing }
+            self?.editorWindowDidClose(closing)
         }
         windows.append(window)
+        reflectDockPresence()
         window.center()
         window.makeFirstResponder(window.contentView?.subviews.first { $0 is CaptureEditorCanvas })
         NSApp.activate()
@@ -64,6 +80,14 @@ final class CaptureEditorController {
         // above the frontmost application's windows, not just above our own.
         window.orderFrontRegardless()
         Diag.log("editor opened \(image.width)x\(image.height)")
+    }
+
+    /// The close tail (round four S6): the reflection runs after the removal,
+    /// so the last editor closing returns the accessory policy as the window
+    /// leaves.
+    private func editorWindowDidClose(_ window: CaptureEditorWindow) {
+        windows.removeAll { $0 === window }
+        reflectDockPresence()
     }
 }
 
@@ -246,6 +270,61 @@ final class CaptureEditorContent: NSView {
     func deliverComposed() {
         guard let composed = canvas.composedImage() else { return }
         onDeliver?(composed)
+    }
+
+    // MARK: - The editor window's cursor (round four S5)
+
+    /// The ONE decision of the editor's window (round four S5): the
+    /// canvas-backed answer — the armed tool's own glyph while the pointer is
+    /// over the picture, the arrow over the palette row, the title bar and
+    /// the window buttons. The content routes every crossing of the whole
+    /// content row through it; the canvas's own exit answers through it too,
+    /// so no cursor in this window is set anywhere else.
+    func cursor(atWindowPoint point: CGPoint) -> NSCursor {
+        canvas.cursor(atWindowPoint: point)
+    }
+
+    /// Applies the decision at `point` to the live pointer (the crossing
+    /// handlers' single call).
+    func applyEditorCursor(atWindowPoint point: CGPoint) {
+        cursor(atWindowPoint: point).set()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        // Only the areas this class installs: the canvas keeps its own.
+        for area in trackingAreas where area.owner === self { removeTrackingArea(area) }
+        // Round four S5's delivery half: nothing in the chrome ever answered
+        // a cursor update, because no tracking area covered the chrome —
+        // AppKit delivers the crossing and cursor-update events through an
+        // area or not at all (the same limitation the canvas's own delivery
+        // half documents, S7/3b). The content owns exactly the areas every
+        // other cursor surface installs, covering the chrome row and the
+        // canvas alike, and its handlers route through the one decision.
+        addTrackingArea(
+            NSTrackingArea(
+                rect: bounds,
+                options: [.cursorUpdate, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                owner: self,
+                userInfo: nil
+            )
+        )
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        applyEditorCursor(atWindowPoint: event.locationInWindow)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        applyEditorCursor(atWindowPoint: event.locationInWindow)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        // Leaving the content row — onto the title bar, the window buttons or
+        // another app: the point is off this content's visible rect, so the
+        // one decision answers the arrow (the same answer the standard
+        // window chrome serves while the app is active).
+        applyEditorCursor(atWindowPoint: event.locationInWindow)
     }
 
     override func layout() {
@@ -1280,12 +1359,28 @@ final class CaptureEditorCanvas: NSView {
         // crop refitting or the window moving never dislocates it (S7). The
         // marks never reach the backdrop's padding either: the compositor
         // draws them over the capture before the backdrop wraps it (S5).
+        // Round four S2: a selection drag replaces its committed mark with
+        // the ONE preview on the drawn set, so the dashed chrome (which
+        // already tracked the preview) and the ink land together — the frame
+        // used to travel alone and the ink dropped in only at mouseUp.
+        // Round four S3: blur marks never go through `MarkRenderer.draw`'s
+        // geometry stroke here (that path drew only the 0-width outline, while
+        // the committed capture was the patch): they paint their redaction
+        // live through the ONE dispatch (`drawLiveMark` below, whose blur
+        // branch is `drawLiveBlur` — the compositor's own crop rule).
         context.saveGState()
         context.clip(to: space.display.intersection(space.viewRect(fromPixel: fullBounds)))
-        MarkRenderer.draw(
-            strokes: session.visibleStrokes.map { space.convert($0, from: spaces[$0.id] ?? space) },
-            in: context
-        )
+        let livePreview = selectionPreview
+        var marks = session.visibleStrokes
+        if let livePreview { marks.removeAll { $0.id == livePreview.id } }
+        for mark in marks {
+            drawLiveMark(space.convert(mark, from: spaces[mark.id] ?? space), space: space, in: context)
+        }
+        if let livePreview {
+            drawLiveMark(
+                space.convert(livePreview, from: spaces[livePreview.id] ?? space),
+                space: space, in: context)
+        }
         context.restoreGState()
 
         if isCropping {
@@ -1458,6 +1553,73 @@ final class CaptureEditorCanvas: NSView {
             at: CGPoint(x: pill.minX + padding.width, y: pill.minY + padding.height),
             withAttributes: attributes
         )
+    }
+
+    /// One mark's live rendering (round four S3): blur paints the content
+    /// underneath as the redaction patch (the compositor's `drawBlur` rule —
+    /// the same source, the same pixel route, the same
+    /// `MarkRenderer.redactionPatch` dispatch), every other tool through
+    /// `MarkRenderer.draw` exactly as ever.
+    private func drawLiveMark(_ stroke: Stroke, space: EditorCropSpace, in context: CGContext) {
+        if stroke.tool == .blur {
+            withMarkRotation(stroke, in: context) { _ in
+                drawLiveBlur(stroke, in: context, space: space)
+            }
+            return
+        }
+        MarkRenderer.draw(stroke: stroke, in: context)
+    }
+
+    /// The rotation dance the compositor's own blur branch wraps its body in
+    /// (the `_ = mark` indirection keeps the two-argument helper shape below
+    /// close to the overlay's `withMarkRotation`).
+    private func withMarkRotation(
+        _ stroke: Stroke, in context: CGContext,
+        _ body: (CGContext) -> Void
+    ) {
+        guard stroke.rotation != 0 else {
+            body(context)
+            return
+        }
+        context.saveGState()
+        context.concatenate(Stroke.rotationTransform(around: stroke.anchor, by: stroke.rotation))
+        body(context)
+        context.restoreGState()
+    }
+
+    /// The live canvas's blur (round four S3): the content underneath the
+    /// mark, redacted through `MarkRenderer.redactionPatch` — exactly the
+    /// compositor's `drawBlur`: the crop over the SAME surface the canvas
+    /// draws (`composedGround` when the per-capture background composes, the
+    /// capture itself otherwise), the crop clipped to the surface (a mark
+    /// reaching past the picture never stretches), and the patch drawn at the
+    /// intersection with the flip the compositor's own placement uses. The
+    /// mark still mints through `DrawingSession.begin`, so preview, live view
+    /// and committed capture are one mark's three views.
+    private func drawLiveBlur(_ stroke: Stroke, in context: CGContext, space: EditorCropSpace) {
+        guard let first = stroke.points.first, let last = stroke.points.last else { return }
+        let rect = PathBuilder.normalizedRect(from: first, to: last)
+        guard rect.width > 0, rect.height > 0 else { return }
+        let source = composedGround?.surface ?? image
+        // The patch only exists where the surface is: the crop is the mark's
+        // rect clipped to the surface's own frame, in view space, exactly the
+        // compositor's intersection rule.
+        let surfaceRect = space.viewRect(fromPixel: CGRect(x: 0, y: 0, width: source.width, height: source.height))
+        let visible = rect.intersection(surfaceRect)
+        guard !visible.isNull, !visible.isEmpty else { return }
+        guard let patch = MarkRenderer.redactionPatch(
+            source,
+            pixelRect: space.pixelRect(fromView: visible),
+            style: stroke.redactionStyle,
+            seed: stroke.redactionSeed,
+            scale: space.pixelsPerPoint
+        ) else { return }
+        context.saveGState()
+        context.clip(to: rect)
+        context.translateBy(x: visible.minX, y: visible.maxY)
+        context.scaleBy(x: 1, y: -1)
+        context.draw(patch, in: CGRect(origin: .zero, size: visible.size))
+        context.restoreGState()
     }
 
     // MARK: - Eraser
@@ -2204,6 +2366,20 @@ final class CaptureEditorCanvas: NSView {
         (gestureCursor ?? toolCursor).set()
     }
 
+    /// Round four S5: the ONE cursor decision of the editor's window — the
+    /// tool (or gesture) glyph while the pointer is over the image, and the
+    /// plain arrow over every surface the image is not (the palette row, the
+    /// title bar, the window buttons). Nothing in the editor ever answered
+    /// for those surfaces before, so the last tool glyph followed the pointer
+    /// wherever it went once inside the window. The canvas's own handlers
+    /// (cursorUpdate, the crossings below) and the content's routing all
+    /// read this one function — no second ambient set().
+    func cursor(atWindowPoint point: CGPoint) -> NSCursor {
+        let local = convert(point, from: nil)
+        guard bounds.contains(local) else { return NSCursor.arrow }
+        return gestureCursor ?? toolCursor
+    }
+
     override func cursorUpdate(with event: NSEvent) {
         reassertCursor()
     }
@@ -2239,16 +2415,31 @@ final class CaptureEditorCanvas: NSView {
         // Re-assert on every move, the way the overlay canvas does: the
         // window opts in to moves (below), and re-answering on the move —
         // not only on rect crossings — is what kept a stale cursor from
-        // coming back there.
+        // coming back there. Round four S5: the moved event is routed to a
+        // responder (this canvas was often it), never necessarily to the
+        // view under the pointer — so the route asks the ONE decision at
+        // the event's OWN location: over the picture that is exactly today's
+        // reassertion; over the chrome it is the arrow, and the tool glyph
+        // can no longer follow the pointer onto the bar.
+        if let content = superview as? CaptureEditorContent {
+            content.applyEditorCursor(atWindowPoint: event.locationInWindow)
+            return
+        }
         reassertCursor()
     }
 
     override func mouseExited(with event: NSEvent) {
-        // The pointer leaving the canvas hands the cursor back to the
-        // editor's own chrome — toolbar, fields — so the last tool glyph
-        // never follows the pointer over the bar. It is this surface's own
-        // exit answer, not a second ambient path: over the chrome the
-        // canvas shows the one cursor the chrome serves, the arrow.
+        // The pointer leaving the canvas hands the cursor to the editor's
+        // window's next servant — the palette row, the title bar, the window
+        // buttons — through the ONE decision this editor answers with
+        // (round four S5): the point is off this canvas, so the decision
+        // answers the arrow. No content around this canvas (a bare harness
+        // window) keeps today's own exit answer; a bare canvas has no chrome
+        // of its own to serve.
+        if let content = superview as? CaptureEditorContent {
+            content.applyEditorCursor(atWindowPoint: event.locationInWindow)
+            return
+        }
         NSCursor.arrow.set()
     }
 

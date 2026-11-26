@@ -164,6 +164,13 @@ final class CaptureEditorBlurToolTests: XCTestCase {
     /// so the app he runs presents the pixelated look he asked for instead
     /// of honouring an old default he never picked. The mark minted from
     /// that migrated choice renders as a mosaic, never the blur twin.
+    // MARK: - S4b: the stored blur preference decodes to pixelate now
+
+    /// The reversal (S4): a stored `redactionStyle: "blur"` blob — the
+    /// owner's own pre-default document — decodes as the shipped pixelate,
+    /// so the app he runs presents the pixelated look he asked for instead
+    /// of honouring an old default he never picked. The mark minted from
+    /// that migrated choice renders as a mosaic, never the blur twin.
     func testAStoredBlurPreferenceDecodesToPixelateAndItsMarkRendersAsAMosaic() throws {
         let store = InMemoryBlurStore()
         store.set(Data(#"{"redactionStyle":"blur"}"#.utf8), forKey: AppPreferences.storageKey)
@@ -193,6 +200,69 @@ final class CaptureEditorBlurToolTests: XCTestCase {
         XCTAssertNotEqual(
             try tiff(mosaic), try tiff(blurred),
             "the mark from the migrated preference must render as a mosaic, never the blur twin")
+    }
+
+    // MARK: - Round four S3: the blur paints on the LIVE canvas
+
+    /// "en el editor 'b' no pinta pero en dibujo si funciona el pixelado" —
+    /// the defect: the committed capture redacted, but the live canvas only
+    /// stroked the mark's geometry (a 0-width hairline), never the patch. The
+    /// drag below arms through the REAL `b` key route, mints through the same
+    /// `DrawingSession` dispatch — the stamp the overlay and the compositor's
+    /// shared `MarkRenderer.redactionPatch` render — and the pin reads the
+    /// LIVE view: inside the mark the stripes are redacted. The committed
+    /// captures above already pin the composed half.
+    func testTheArmedBKeyPaintsTheRedactionPatchOnTheLiveCanvas() throws {
+        let image = try XCTUnwrap(Self.stripedImage())
+        let editor = Self.makeEditor(image: image)
+        editor.state.redactionStyle = .blur
+
+        editor.canvas.keyDown(with: try key(editor, characters: "b"))
+        XCTAssertEqual(editor.state.tool, .blur, "the key armed the blur")
+        try drawBlur(editor)
+        let mark = try XCTUnwrap(editor.canvas.marks.first, "the drag minted through the shared session dispatch")
+        XCTAssertEqual(mark.tool, .blur)
+
+        // The drag spans canvas view points (90,60)–(210,140); the 100×100
+        // fit in the 300×200 canvas is display (50,0,200,200), so the patch
+        // covers source pixels x 20–80. Stripe 10–12 stays outside it as the
+        // control; the gaussian twin's radius (15 pt of view) is far past the
+        // stripes' 4-pt ink width, so no near-black pixel may survive inside.
+        let rep = try XCTUnwrap(renderedLive(editor.canvas)) // canvas view points, 1:1
+        let darkestInside = deepestLuma(rep, in: CGRect(x: 100, y: 70, width: 100, height: 60))
+        let darkestOutside = deepestLuma(rep, in: CGRect(x: 55, y: 70, width: 30, height: 60))
+        XCTAssertGreaterThan(
+            darkestInside, 0.45,
+            "inside the blurred mark the live stripes read as a redaction — the patch painted, or the defect stands")
+        XCTAssertLessThan(
+            darkestOutside, 0.35,
+            "just outside the mark the raw surface keeps its black stripes — the blur redacts the mark, not the picture")
+    }
+
+    private func renderedLive(_ canvas: CaptureEditorCanvas) throws -> NSBitmapImageRep {
+        let rep = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: Int(canvas.bounds.width),
+            pixelsHigh: Int(canvas.bounds.height), bitsPerSample: 8, samplesPerPixel: 4,
+            hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+            bytesPerRow: 0, bitsPerPixel: 0))
+        canvas.cacheDisplay(in: canvas.bounds, to: rep)
+        return rep
+    }
+
+    /// The darkest luma (min rgb, the fixture is gray) inside `region`, in
+    /// canvas view points.
+    private func deepestLuma(_ rep: NSBitmapImageRep, in region: CGRect) -> CGFloat {
+        var darkest: CGFloat? = nil
+        for x in Int(region.minX)...Int(region.maxX) {
+            for y in Int(region.minY)...Int(region.maxY) {
+                guard x >= 0, x < rep.pixelsWide, y >= 0, y < rep.pixelsHigh,
+                    let colour = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB)
+                else { continue }
+                let luma = min(colour.redComponent, min(colour.greenComponent, colour.blueComponent))
+                darkest = min(darkest ?? 1, luma)
+            }
+        }
+        return darkest ?? 1
     }
 }
 

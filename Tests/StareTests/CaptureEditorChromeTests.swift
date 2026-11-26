@@ -148,4 +148,43 @@ final class CaptureEditorChromeTests: XCTestCase {
                 .drawnTrailingItems,
             ToolbarView.trailingItems)
     }
+
+    // MARK: - The spotlight's cell takes its neighbours' size (round four, S4)
+
+    /// The spotlight's AppKit-backed cell (the shape menu's carrier) used to
+    /// grow into whatever its row offered it: no fixed frame, so the editor's
+    /// row stretched it while its plain neighbours kept their 28×26 — the
+    /// owner's measurement "sigue igual", the cell ~400 pt wide, a third of
+    /// the bar. The fixed frame is the fix; the right-click shape menu stays
+    /// on the very same AppKit view, so this frame pin and the menu's tests
+    /// together cover the whole correction.
+    func testTheSpotlightsPaletteCellTakesTheToolCellSizeBack() throws {
+        let content = try layout()
+        let chrome = try XCTUnwrap(content.chrome)
+        // One layout tick, the way the toolbar's own hosted-content tests
+        // schedule SwiftUI's first pass.
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        func probe() -> NSView? {
+            var stack: [NSView] = [chrome]
+            var cell: NSView?
+            while let view = stack.popLast() {
+                if view is SpotlightToolButtonView { cell = view }
+                stack.append(contentsOf: view.subviews)
+            }
+            return cell
+        }
+        XCTAssertNotNil(probe(), "the editor's palette hosts the spotlight's AppKit cell")
+        // The editor's window is RESIZABLE: at a wide window the row has spare
+        // width to hand out — adding width is what stretched the unframed
+        // cell (the owner's "sigue igual" screenshot sat in a wide editor).
+        for width in [706.0, 1000.0] {
+            content.window?.setContentSize(NSSize(width: width, height: 320))
+            content.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
+        let cell = try XCTUnwrap(probe())
+        XCTAssertEqual(
+            cell.frame.size, CGSize(width: 28, height: 26),
+            "the spotlight cell must take its neighbours' 28×26 at every width, not the row's spare (measured \(cell.frame.size))")
+    }
 }

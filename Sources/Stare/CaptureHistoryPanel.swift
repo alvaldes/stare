@@ -707,44 +707,69 @@ final class CaptureHistoryPanelModel: ObservableObject {
     /// Runs one menu action against `index` (S2). Every action re-reads its
     /// own precondition through the store — the menu only ever opens the
     /// door, the store decides what is true.
+    /// Round four S1: an action that ACTED closes the sheet exactly the way a
+    /// pick does — `pick` runs `onPick` then `onClose`, and every acting
+    /// action here runs its act then the same `onClose`, which is the seam
+    /// the panel's hide and its focus restore ride. What stays open does so
+    /// on purpose: the arming Delete is the confirmation gesture's first
+    /// half, and a guard that found nothing to act on left the sheet where
+    /// the user was looking.
     func perform(_ action: CaptureHistoryContextAction, at index: Int) {
         guard entries.indices.contains(index) else { return }
         let entry = entries[index]
         let fileURL = store.fileURL(for: entry)
+        // Whether the action truly acted: a refusal is no action, and no
+        // action closes no sheet.
+        var acted = false
         switch action {
         case .edit:
             guard let onEdit, let image = store.image(for: entry) else { return }
             onEdit(image)
+            acted = true
         case .copyImage:
             guard let image = store.image(for: entry) else { return }
             CaptureHistoryPanel.copyToPasteboard(image)
+            acted = true
         case .copyFilePath:
             guard let fileURL else { return }
             CaptureHistoryPanel.copyFilePath(fileURL)
+            acted = true
         case .revealInFinder:
             guard let fileURL else { return }
             onReveal(fileURL)
+            acted = true
         case .saveCopy:
             guard let image = store.image(for: entry) else { return }
             onSaveCopy(image)
+            acted = true
         case .delete:
-            performDelete(at: index, entry: entry)
+            // The first click only arms — the confirmation has nowhere else
+            // to happen but on the sheet still standing (round four S1).
+            guard performDelete(at: index, entry: entry) else { return }
+            acted = true
         }
         Diag.log("history menu \(action) index=\(index)")
+        // Round four S1: the acted action closes the sheet like the pick does.
+        guard acted else { return }
+        onClose()
     }
 
     /// The Delete rule: the first click ARMS, the second on the same entry
     /// removes it through the store — entry, file, cache and index all go —
-    /// and the model refreshes so the count follows.
-    private func performDelete(at index: Int, entry: PersistedCaptureEntry) {
+    /// and the model refreshes so the count follows. Returns whether the
+    /// removal ran (true) or the click only armed (false): the caller reads
+    /// it as \"an action happened\", which is what closes the sheet (S1).
+    @discardableResult
+    private func performDelete(at index: Int, entry: PersistedCaptureEntry) -> Bool {
         if armedForDelete == entry.id {
             armedForDelete = nil
             store.remove(entry)
             refresh()
-            return
+            return true
         }
         armedForDelete = entry.id
         Diag.log("history delete armed index=\(index)")
+        return false
     }
 
     /// The shipped Save a Copy… (S2): a save panel names the destination and

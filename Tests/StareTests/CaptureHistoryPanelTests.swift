@@ -314,6 +314,29 @@ final class CaptureHistoryPanelTests: XCTestCase {
         XCTAssertLessThan(colour.redComponent, 0.2)
     }
 
+    // MARK: Round four S1: an acted menu action closes the sheet, focus follows
+
+    /// Full-panel half of S1: an action performed through the sheet's own
+    /// model closes the visible sheet, and the panel's hide runs the focus
+    /// hook exactly once — the same dismissal the pick drives.
+    func testAnActedMenuActionClosesTheVisibleSheetRunsTheFocusHookOnce() throws {
+        try XCTSkipIf(NSScreen.main == nil, "no display: the panel cannot be shown")
+        let store = makeStore(entries: 2)
+        let panel = CaptureHistoryPanel(store: store)
+        var hidden = 0
+        panel.onHidden = { hidden += 1 }
+        NSPasteboard.general.clearContents()
+        panel.showPanel()
+        XCTAssertTrue(panel.isVisible)
+
+        panel.model.perform(.copyImage, at: 0)
+
+        XCTAssertTrue(NSPasteboard.general.types?.contains(.png) ?? false, "the copy ran")
+        XCTAssertFalse(panel.isVisible, "the acted action closed the sheet like a pick does")
+        XCTAssertEqual(hidden, 1, "the focus-restoring hook ran once, exactly the pick's dismissal")
+        panel.model.onClose = {} // the test's own panel: detach the hook from the shared production wiring
+    }
+
     func testHidingTheCaptureHistoryHandsKeyFocusBackToTheSurfaceThatWasWorkingBeforeIt() throws {
         let (controller, view) = try makeBoardController()
         defer { controller.toggleBoard() }
@@ -596,6 +619,123 @@ final class CaptureHistoryContextMenuTests: XCTestCase {
         XCTAssertEqual(model.menuItems(for: 0)[0].action, .edit, "the first item is Edit")
         XCTAssertEqual(model.menuItems(for: 0).count, 6)
         XCTAssertNotEqual(entries.count, 0)
+    }
+
+    // MARK: - Round four S1: an acted action closes the sheet like a pick does
+
+    /// The owner quote (S1): "cualquier haccion sobre el menu en el historial
+    /// debe hace que se cierre el historial". Acting on a menu item closes
+    /// the sheet the way a pick does — the one `onClose` seam the panel's
+    /// hiding rests focus from. The model-level tests drive each action
+    /// against the model's `perform` (the real route the cell's menu runs);
+    /// the panel-level test pins the sheet and its focus hook.
+    private final class CloseBox { var count = 0 }
+
+    private func modelWithCloseWitness(entries: Int = 1) -> (model: CaptureHistoryPanelModel, store: CaptureHistoryStore, entryList: [PersistedCaptureEntry], closes: CloseBox) {
+        let store = CaptureHistoryStore(directory: makeStoreDirectory())
+        var added: [PersistedCaptureEntry] = []
+        for index in 0..<entries {
+            added.append(store.add(
+                makeImage(width: 10 + index),
+                date: Date(timeIntervalSince1970: TimeInterval(index + 1))
+            ))
+        }
+        let closes = CloseBox()
+        let model = CaptureHistoryPanelModel(
+            store: store,
+            onPick: { _ in },
+            onClose: { closes.count += 1 },
+            onEdit: { _ in })
+        model.refresh()
+        added.reverse() // newest first, the grid's order
+        return (model, store, added, closes)
+    }
+
+    func testEditClosesTheSheetLikeAPickDoes() throws {
+        let (model, _, entries, closes) = modelWithCloseWitness()
+
+        model.perform(.edit, at: 0)
+
+        XCTAssertEqual(closes.count, 1, "the edit closed the sheet like a pick")
+        XCTAssertEqual(model.entries.count, entries.count, "an edit never touches the history it acted from")
+    }
+
+    func testCopyImageClosesTheSheetLikeAPickDoes() {
+        let (model, _, _, closes) = modelWithCloseWitness()
+        NSPasteboard.general.clearContents()
+
+        model.perform(.copyImage, at: 0)
+
+        XCTAssertTrue(NSPasteboard.general.types?.contains(.png) ?? false, "the copy really ran before the close")
+        XCTAssertEqual(closes.count, 1, "the copy closed the sheet like a pick")
+    }
+
+    func testCopyFilePathClosesTheSheetLikeAPickDoes() {
+        let (model, store, entries, closes) = modelWithCloseWitness()
+        NSPasteboard.general.clearContents()
+
+        model.perform(.copyFilePath, at: 0)
+
+        XCTAssertEqual(
+            NSPasteboard.general.string(forType: .string), store.fileURL(for: entries[0])!.path,
+            "the copy ran before the close")
+        XCTAssertEqual(closes.count, 1, "the path copy closed the sheet like a pick")
+    }
+
+    func testRevealInFinderClosesTheSheetLikeAPickDoes() {
+        let (model, store, entries, closes) = modelWithCloseWitness()
+        var revealed: [URL] = []
+        model.onReveal = { revealed.append($0) }
+
+        model.perform(.revealInFinder, at: 0)
+
+        XCTAssertEqual(revealed, [store.fileURL(for: entries[0])!], "the reveal really ran before the close")
+        XCTAssertEqual(closes.count, 1, "the reveal closed the sheet like a pick")
+    }
+
+    func testSaveACopyClosesTheSheetLikeAPickDoes() throws {
+        let (model, _, _, closes) = modelWithCloseWitness()
+        let destination = makeStoreDirectory().appendingPathComponent("copy.png")
+        model.onSaveCopy = { image in
+            try! CaptureFile.data(for: image, format: .png)!.write(to: destination)
+        }
+
+        model.perform(.saveCopy, at: 0)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path), "the save really ran before the close")
+        XCTAssertEqual(closes.count, 1, "the save closed the sheet like a pick")
+    }
+
+    /// Delete's confirmation gesture splits the rule in two: the arming click
+    /// closes nothing (the confirm has nowhere to happen otherwise), and the
+    /// confirming click removes the entry AND closes the sheet, like every
+    /// other acted action.
+    func testTheArmingDeleteKeepsTheSheetAndTheConfirmingDeleteClosesItLikeAPickDoes() {
+        let (model, store, entries, closes) = modelWithCloseWitness(entries: 2)
+        let target = entries[1]
+
+        model.perform(.delete, at: 1) // arm
+        XCTAssertEqual(closes.count, 0, "the arming click buttons nothing down: the confirm must happen here")
+        XCTAssertTrue(model.isArmedForDelete(target))
+        XCTAssertEqual(store.entries.count, 2, "the arm removed nothing")
+
+        model.perform(.delete, at: 1) // confirm
+        XCTAssertEqual(closes.count, 1, "the confirming delete closed the sheet like a pick")
+        XCTAssertFalse(model.entries.map(\.id).contains(target.id), "the entry left with the close")
+    }
+
+    /// One action that refused — the stored file is gone, the reveal has
+    /// nothing to reveal — changed nothing, so it closes nothing: the sheet
+    /// closes over an ACTED action, not over a click that did nothing.
+    func testARefusedActionClosesNothing() {
+        let (model, store, entries, closes) = modelWithCloseWitness()
+        try! FileManager.default.removeItem(
+            at: capturesDirectory(of: store.directory).appendingPathComponent(entries[0].fileName)
+        )
+
+        model.perform(.revealInFinder, at: 0)
+
+        XCTAssertEqual(closes.count, 0, "no action, no close")
     }
 
     func testTheMenusFirstItemRoutesThroughTheEditorHandoffSeam() {

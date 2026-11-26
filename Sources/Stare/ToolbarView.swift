@@ -795,8 +795,13 @@ struct ToolbarView: View {
             // S2/S3, S4: the spotlight's own button hosts the shape's context
             // menu, so it takes the AppKit-backed surface a right-click
             // route lives on; every other tool keeps the plain button.
+            // Round-four S4: without a fixed frame the row stretched that
+            // AppKit host into its spare width (~400 pt against the plain
+            // cells' 28) — the frame pins the cell to its neighbours' size;
+            // the right-click menu is the AppKit view's own and unaffected.
             if tool == .spotlight {
                 SpotlightToolButton(state: state, marked: marked, pick: pick)
+                    .frame(width: 28, height: 26)
             } else {
                 Button { if let pick { pick() } else { state.select(tool) } } label: {
                     Image(systemName: tool.symbolName)

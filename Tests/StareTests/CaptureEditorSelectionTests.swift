@@ -287,6 +287,83 @@ final class CaptureEditorSelectionTests: XCTestCase {
             "the knob drag must rotate the mark about its anchor")
     }
 
+    // MARK: - Round four S2: the drag moves the ink live, not only the chrome box
+
+    /// "en el editor 'v' al movel se muevel el marco azul y despues la marca" —
+    /// the defect: the dashed chrome box tracked the preview while the ink
+    /// only dropped in at mouseUp, so the frame travelled alone. One preview
+    /// replaces the committed mark on the drawn set for the whole drag — the
+    /// frame and the ink land together, one movement per drag, and the drop
+    /// journals exactly ONE step.
+    func testADragMovesTheInkLiveUnderTheSelectionChromeDuringTheWholeDrag() throws {
+        let image = try XCTUnwrap(Self.solidImage(width: 100, height: 100))
+        let editor = Self.makeEditor(image: image)
+        try drawPen(editor, from: centreStart, to: centreEnd)
+        let mark = try XCTUnwrap(editor.canvas.marks.first)
+        editor.state.tool = .select
+        let midpoint = CGPoint(x: 155, y: 100)
+        let target = CGPoint(x: 195, y: 140)
+
+        try down(editor, at: midpoint)
+        try dragged(editor, to: target)
+
+        // Mid-drag, the LIVE view: the ink already sits at the dragged spot
+        // and the grabbed spot is vacated — the frame (drawn from the same
+        // preview) and the mark travel together, so just moving the frame is
+        // no longer possible.
+        let live = try XCTUnwrap(renderedLive(editor.canvas))
+        XCTAssertFalse(
+            liveContainsInk(live, canvas: editor.canvas, around: midpoint),
+            "the ink left the grabbed position while the drag still runs")
+        XCTAssertTrue(
+            liveContainsInk(live, canvas: editor.canvas, around: target),
+            "the ink landed at the dragged position while the drag still runs — the frame no longer travels alone")
+        // Nothing has committed yet: one gesture, the drop lands it.
+        XCTAssertEqual(editor.canvas.marks.count, 1, "the drag mints nothing")
+        XCTAssertEqual(editor.canvas.marks.first?.points, mark.points, "the committed mark still stands before the drop")
+
+        try up(editor, at: target)
+        let moved = try XCTUnwrap(editor.canvas.marks.first)
+        XCTAssertNotEqual(moved.points, mark.points, "the drop bakes the dragged geometry in")
+        // ONE journal step per drag: the first ⌘Z hands the drag start back,
+        // the second sees only the stroke's own commit step left.
+        editor.canvas.undo()
+        XCTAssertEqual(try XCTUnwrap(editor.canvas.marks.first).points, mark.points, "one ⌘Z undoes the whole drag")
+        editor.canvas.undo()
+        XCTAssertTrue(editor.canvas.marks.isEmpty, "the drag spent exactly one journal step")
+    }
+
+    /// Renders the canvas the way the editor shows it (the backdrop render
+    /// tests' technique), so the ink probes read the visible picture.
+    private func renderedLive(_ canvas: CaptureEditorCanvas) throws -> NSBitmapImageRep {
+        let rep = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: Int(canvas.bounds.width),
+            pixelsHigh: Int(canvas.bounds.height), bitsPerSample: 8, samplesPerPixel: 4,
+            hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+            bytesPerRow: 0, bitsPerPixel: 0))
+        canvas.cacheDisplay(in: canvas.bounds, to: rep)
+        return rep
+    }
+
+    /// Whether any pixel inside `radius` of `point` (canvas view points) reads
+    /// as ink — the same predicate the composed-image ink scans use.
+    private func liveContainsInk(_ rep: NSBitmapImageRep, canvas: CaptureEditorCanvas, around point: CGPoint) -> Bool {
+        let scaleX = CGFloat(rep.pixelsWide) / canvas.bounds.width
+        let scaleY = CGFloat(rep.pixelsHigh) / canvas.bounds.height
+        let centre = CGPoint(x: point.x * scaleX, y: point.y * scaleY)
+        for y in Int(centre.y - 6)...Int(centre.y + 6) {
+            for x in Int(centre.x - 6)...Int(centre.x + 6) {
+                guard x >= 0, x < rep.pixelsWide, y >= 0, y < rep.pixelsHigh,
+                    let colour = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB)
+                else { continue }
+                if colour.redComponent < 0.92 || colour.greenComponent < 0.92 || colour.blueComponent < 0.92 {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
     // MARK: - Neighbouring behaviours the routing change touches
 
     /// The eraser's and the drawing tools' own routes share the same

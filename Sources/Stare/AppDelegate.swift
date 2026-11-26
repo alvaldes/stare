@@ -213,6 +213,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Diag.log("settings opened from shortcut aboveOverlay=\(overlay.isAnyOverlaySurfaceActive)")
     }
 
+    /// Round four S6: the Finder's "Open With" half. The declared image document
+    /// types (Resources/Info.plist) make the system deliver this open-files
+    /// event when a file is asked to open by Stare; every file lands in the
+    /// editor through the ONE `openFileInEditor` route (the `openCaptureEditor`
+    /// handoff). A file that is not an image changes nothing — the route
+    /// refuses, nothing opens, and the accessory contract stands. It is the
+    /// editor window's existence (the route opens exactly one) that puts Stare
+    /// in the Dock (the runtime flip, `CaptureEditorController`'s rule).
+    func application(_ application: NSApplication, openFiles filenames: [String]) {
+        for filename in filenames {
+            _ = overlay.openFileInEditor(at: URL(fileURLWithPath: filename))
+        }
+    }
+
     /// S7: the app's main menu, built here rather than nib-loaded. One
     /// submenu: the app menu, carrying `Settings…` with ⌘, — the item whose
     /// key equivalent the whole app's keyboard questions the shortcut with.
