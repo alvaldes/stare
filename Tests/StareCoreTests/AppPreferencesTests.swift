@@ -425,12 +425,17 @@ final class AppPreferencesTests: XCTestCase {
 
     // MARK: Redaction style (T6b/S13, B2)
 
-    // Canary: this section was re-derived when the shipped default became the
-    // randomized pixelate (B2/S1). Its former form pinned `.blur` because that
-    // was T6b/S13's shipped default; only what a fresh install gets and what a
-    // missing or unreadable key decodes to changed — no effect parameter, no
-    // migration. An explicitly stored `blur` was a visible Redaction-picker
-    // choice (unlike the filename template's key), so it is never rewritten.
+    // Canary: this section has been re-derived twice. First when the shipped
+    // default became the randomized pixelate (B2/S1). Then in round three,
+    // when S4 REVERSED the never-migrate decision this section once pinned:
+    // a stored `blur` — the owner's pre-B2 document carrying the old shipped
+    // default, not a pick he made on the Redaction picker — now decodes as
+    // the shipped `.randomizedPixelate`, on his own words over his reference
+    // image ("en dibujo no tiene el estilo pixelado que esperaba que ya
+    // tuviera"). The reversal is scoped to the stored preference and nothing
+    // else: the stroke- and session-level restore fallbacks stay `.blur`
+    // (pinned in RedactionStorageTests, and at the foot of the reversal test
+    // here), so a pre-B2 drawing keeps painting exactly what it painted.
 
     /// What a fresh preference document gets: the shipped pixelate (B2), both
     /// from the memberwise default and from a store with no blob at all.
@@ -439,13 +444,36 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertEqual(AppPreferences(store: InMemoryPreferenceStore()).redactionStyle, .randomizedPixelate)
     }
 
-    /// A stored `.blur` stays `.blur`: the Redaction picker offered it
-    /// visibly, so it may be a deliberate choice the app must not override.
-    func testAnExplicitStoredBlurIsNeverMigrated() {
+    /// Round-three S4: the reversal of this pin's former self. A stored
+    /// `blur` — the owner's own pre-B2 document, carrying the old shipped
+    /// default — now decodes as the shipped pixelate, on his words ("en
+    /// dibujo no tiene el estilo pixelado que esperaba que ya tuviera").
+    func testAStoredBlurDecodesAsTheShippedPixelateIntoTheReversal() throws {
         let store = InMemoryPreferenceStore()
         store.set(Data(#"{"redactionStyle":"blur"}"#.utf8), forKey: AppPreferences.storageKey)
 
-        XCTAssertEqual(AppPreferences(store: store).redactionStyle, .blur)
+        XCTAssertEqual(AppPreferences(store: store).redactionStyle, .randomizedPixelate)
+
+        // The reversal stops at the preference: a stored mark without the
+        // redaction field — every mark drawn before the field existed —
+        // still restores as `.blur`, exactly the way it always painted.
+        let legacyMark = """
+        {
+            "id": "DC1EF1AB-19C2-4C9B-B2FB-760345A02AA6",
+            "tool": "blur",
+            "ink": "red",
+            "points": [[1, 1], [9, 9]],
+            "stepNumber": null,
+            "text": null,
+            "textSize": null,
+            "createdAt": null,
+            "badgeSize": null,
+            "rotation": 0
+        }
+        """
+        let stored = try JSONDecoder().decode(PersistedStroke.self, from: Data(legacyMark.utf8))
+        let restored = try XCTUnwrap(Stroke(persisted: stored))
+        XCTAssertEqual(restored.redactionStyle, .blur)
     }
 
     func testRoundTripsRedactionStyleThroughStore() {

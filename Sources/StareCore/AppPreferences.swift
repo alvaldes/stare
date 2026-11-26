@@ -49,12 +49,25 @@ public struct AppPreferences: Codable, Equatable, Sendable {
     /// pixelate beside it. Since B2 the shipped default is the randomized
     /// pixelate. Appended at the END of the versioned blob — an append never
     /// reorders what a document already carried — and decoded leniently: a
-    /// missing or unknown value falls back to the shipped `.randomizedPixelate`,
-    /// but an explicitly stored `blur` decodes as `.blur` because it was
-    /// reachable through the visible Redaction picker and is never migrated.
+    /// missing or unknown value falls back to the shipped `.randomizedPixelate`.
+    ///
+    /// Round-three S4 REVERSES the earlier never-migrate decision on a stored
+    /// `blur`: the owner, presented with the pixelated look against his own
+    /// reference image, asked the app to redact that way again ("no tiene el
+    /// estilo pixelado que esperaba que ya tuviera"), so a stored `.blur` now
+    /// decodes as the shipped `.randomizedPixelate`. The old reason — that a
+    /// `blur` in the blob may be a visible Redaction-picker choice the app
+    /// must not override — is withdrawn on his say-so, with the S4 record in
+    /// odd/tasks/round-three.md: the blur he was seeing was the old shipped
+    /// default his pre-B2 document still carried, not a deliberate pick he
+    /// made there. He asked for the pixelate; the migration gives it to every
+    /// stored blob that still says blur, and the next save persists the
+    /// migrated value.
+    ///
     /// The stroke-level and session-level decode fallbacks (`Stroke(persisted:)`,
     /// the session restore) stay `.blur`: a drawing saved before B2 keeps
-    /// painting exactly what it painted.
+    /// painting exactly what it painted — that pin concerns saved marks, whose
+    /// look the owner did not dispute, never the stored preference.
     public var redactionStyle: RedactionStyle
 
     /// The capture history's own look (B1): how wide a grid cell asks to be,
@@ -133,12 +146,15 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         // Appended last (T6b/S13): like `tool` and `ink`, an unknown raw
         // value — a foreign document — falls back to the shipped default
         // instead of failing the whole blob. Since B2 that shipped default is
-        // the randomized pixelate, while an explicit `blur` — a visible
-        // Redaction-picker choice — decodes as `.blur` and is never migrated;
-        // the stroke- and session-level decode fallbacks stay `.blur`, so a
+        // the randomized pixelate. Round-three S4 (the owner's reversal,
+        // recorded in the field's doc above): a stored `blur` decodes as the
+        // shipped `.randomizedPixelate` now — his own pre-B2 blob still said
+        // blur and he asked the app to redact the pixelated way. The
+        // stroke- and session-level decode fallbacks stay `.blur`, so a
         // pre-B2 drawing keeps painting exactly what it painted.
         self.redactionStyle = (try? container.decode(String.self, forKey: .redactionStyle))
-            .flatMap(RedactionStyle.init(rawValue:)) ?? .randomizedPixelate
+            .flatMap(RedactionStyle.init(rawValue:))
+            .map { $0 == .blur ? .randomizedPixelate : $0 } ?? .randomizedPixelate
         self.history = (try? container.decode(HistoryPreference.self, forKey: .history)) ?? .standard
     }
 

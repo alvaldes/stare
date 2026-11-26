@@ -98,7 +98,28 @@ final class CaptureEditorWindow: NSWindow {
         acceptsMouseMovedEvents = true
         self.onClose = { onClose($0) }
         contentView = content
+        self.editorContent = content
         setContentSize(content.preferredSize)
+    }
+
+    /// The content this window was built around — the seam the key route
+    /// reads the canvas through.
+    private(set) var editorContent: CaptureEditorContent?
+
+    /// S4: the armed-item keys ('b', 'v', the ink digits) belong to the
+    /// editor, not to whichever control happens to hold the focus. When the
+    /// canvas IS the first responder its own keyDown consumes them first and
+    /// this route is never reached; when a chrome control took the focus —
+    /// the background fields, a click on the palette — the responder chain
+    /// declines and the window routes the press to the same resolver the
+    /// canvas uses, so the key works exactly as it does on the drawing
+    /// overlay, where the floating bar never takes the keyboard.
+    override func keyDown(with event: NSEvent) {
+        if case let canvas? = editorContent?.canvas,
+            canvas.handlesArmedItemKey(with: event) {
+            return
+        }
+        super.keyDown(with: event)
     }
 
     private var onClose: ((CaptureEditorWindow) -> Void)?
@@ -1057,6 +1078,13 @@ final class CaptureEditorCanvas: NSView {
     /// without running one.
     var fileNameContext = CaptureEditorIdentity.unknown
 
+    /// The canvas's own marks — the read seam the selection tests judge
+    /// through (the public surface the composed image already is).
+    var marks: [Stroke] { session.strokes }
+
+    /// The selected mark (S3): nil until a select-tool pick arms one.
+    private(set) var selectedMarkID: UUID?
+
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("CaptureEditorCanvas is created in code only")
@@ -1285,7 +1313,75 @@ final class CaptureEditorCanvas: NSView {
                     context.drawPath(using: .fillStroke)
                 }
             }
+            // S3: the mark selection's chrome, the overlay's own vocabulary —
+            // a dashed box, four corner squares and the rotation knob — drawn
+            // in view points so the handles keep their on-screen size at any
+            // zoom, over the mark converted through its own recorded space.
+            drawMarkSelectionChrome(space: space, in: context)
         }
+    }
+
+    /// The mark selection's chrome (S3): the overlay's `drawSelectedMarkChrome`
+    /// vocabulary over the mark as it now looks (preview included), drawn in
+    /// the current view space — the mark is converted from its own recorded
+    /// space first, so the box and the handles sit where the mark really is.
+    private func drawMarkSelectionChrome(space: EditorCropSpace, in context: CGContext) {
+        guard let id = selectedMarkID,
+            let stroke = selectionPreview ?? session.strokes.first(where: { $0.id == id })
+        else { return }
+        let markSpace = spaces[id] ?? space
+        let converted = space.convert(stroke, from: markSpace)
+        let selection = MarkSelection(stroke: converted)
+        let accent = CGColor(srgbRed: 0.25, green: 0.55, blue: 1, alpha: 1)
+
+        context.saveGState()
+        context.concatenate(
+            Stroke.rotationTransform(around: selection.anchor, by: selection.rotation)
+        )
+        context.setStrokeColor(accent)
+        context.setLineWidth(1.5)
+        context.setLineDash(phase: 0, lengths: [5, 4])
+        context.addRect(selection.unrotatedBounds)
+        context.strokePath()
+        context.restoreGState()
+
+        for (handle, point) in selection.handlePoints(
+            rotationHandleOffset: MarkSelection.defaultRotationHandleOffset
+        ) {
+            if handle == .rotation {
+                let radius: CGFloat = 5
+                context.setFillColor(CGColor(gray: 1, alpha: 1))
+                context.fillEllipse(in: CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2))
+                context.setStrokeColor(accent)
+                context.setLineWidth(1.5)
+                context.addEllipse(in: CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2))
+                context.strokePath()
+            } else {
+                let half: CGFloat = 4
+                let square = CGRect(x: point.x - half, y: point.y - half, width: half * 2, height: half * 2)
+                context.setFillColor(CGColor(gray: 1, alpha: 1))
+                context.fill(square)
+                context.setStrokeColor(accent)
+                context.setLineWidth(1.5)
+                context.stroke(square)
+            }
+        }
+    }
+
+    /// ⌫ with a mark selected: the mark leaves through the session's own
+    /// removal — the overlay's own delete route (`session.remove(id:)`),
+    /// so a numbered sequence stays gapless; the journal stays silent like
+    /// the eraser's (removal is not undoable here, the session's redo keeps
+    /// it settable when one exists).
+    @discardableResult
+    func deleteSelectedMark() -> Bool {
+        guard let id = selectedMarkID,
+            session.strokes.contains(where: { $0.id == id }) else { return false }
+        let removed = session.remove(id: id)
+        selectedMarkID = nil
+        needsDisplay = true
+        if removed { Diag.log("editor delete mark \(id)") }
+        return removed
     }
 
     /// The armed view (S1): the region's edges over the dimmed rest of the
@@ -1396,7 +1492,175 @@ final class CaptureEditorCanvas: NSView {
         }
         for id in removed { spaces.removeValue(forKey: id) }
         if !removed.isEmpty { Diag.log("editor erase count=\(removed.count)") }
+        pruneSelection()
         needsDisplay = true
+    }
+
+    // MARK: - Mark selection (S3)
+
+    /// The drawing overlay's edit cursor, working over the marks the editor
+    /// owns. The same flow, the same StareCore rules, the same shape of
+    /// state: a primary selection, an in-flight preview transformed from the
+    /// untouched snapshot, ONE journal step per committed drag. The extra
+    /// input the overlay's version carries — one more layer of mapping —
+    /// is the mark's own recorded space: every reach, handle and delta below
+    /// converts through `spaces[id]`, so a mark selected, moved and adjusted
+    /// at any zoom lands where its pixels live (the eraser's rule above,
+    /// reused verbatim).
+
+    /// The screen-sized reach grabbing a mark takes, the overlay's own
+    /// constant (`selectionHitRadius`): one value, both surfaces.
+    private var selectionReach: CGFloat { OverlayView.selectionHitRadius }
+
+    /// The drag on the selected mark. The handle decides, exactly as the
+    /// overlay's does: the body moves, a corner resizes uniformly, the knob
+    /// rotates.
+    private enum MarkSelectionDrag {
+        case move(start: CGPoint)
+        case scale(handle: MarkHandle)
+        case rotate(startAngle: CGFloat)
+    }
+
+    /// The untouched snapshot the preview transforms from.
+    private var selectionOriginal: Stroke?
+    private var selectionPreview: Stroke?
+    private var selectionDrag: MarkSelectionDrag?
+    /// The mark's own space, captured at drag start.
+    private var selectionSpace: EditorCropSpace?
+
+    /// Drops any dead id out of the selection — a mark the eraser took away
+    /// must not keep handles pointing at nothing.
+    private func pruneSelection() {
+        guard let id = selectedMarkID else { return }
+        guard session.strokes.contains(where: { $0.id == id }) else {
+            selectedMarkID = nil
+            return
+        }
+    }
+
+    /// Gives the selection up: no handles, no drag state left behind.
+    func clearMarkSelection() {
+        guard selectedMarkID != nil || selectionDrag != nil || selectionOriginal != nil else { return }
+        selectedMarkID = nil
+        selectionDrag = nil
+        selectionOriginal = nil
+        selectionPreview = nil
+        selectionSpace = nil
+        needsDisplay = true
+    }
+
+    /// Converts the current view point into the mark's own view space.
+    private func localPoint(in markSpace: EditorCropSpace, view point: CGPoint, current: EditorCropSpace) -> CGPoint {
+        markSpace.viewPoint(fromPixel: current.pixelPoint(fromView: point))
+    }
+
+    /// The screen-constant chrome sizes — handle and knob reach — in a
+    /// mark's own space, the eraser radius's own conversion.
+    private func chromeScale(for markSpace: EditorCropSpace, current: EditorCropSpace) -> CGFloat {
+        guard markSpace.pixelsPerPoint > 0 else { return 1 }
+        return current.pixelsPerPoint / markSpace.pixelsPerPoint
+    }
+
+    private func beginMarkSelection(at point: CGPoint, in current: EditorCropSpace) {
+        // A handle of the already-selected mark wins, exactly as the
+        // overlay's beginSelection does: resize and rotation stay grabbable
+        // without re-picking the mark first.
+        if let id = selectedMarkID,
+            let selected = session.strokes.first(where: { $0.id == id }) {
+            let markSpace = spaces[id] ?? current
+            let local = localPoint(in: markSpace, view: point, current: current)
+            let scale = chromeScale(for: markSpace, current: current)
+            if let handle = MarkSelection(stroke: selected).handle(
+                at: local,
+                handleSize: MarkSelection.defaultHandleSize * scale,
+                rotationHandleOffset: MarkSelection.defaultRotationHandleOffset * scale) {
+                startSelectionDrag(handle, on: selected, at: local, in: markSpace)
+                return
+            }
+        }
+
+        // The topmost mark under the pointer arms its move drag right away —
+        // select-and-move is one gesture, the overlay's own rule.
+        if let hit = session.strokes.last(where: { stroke in
+            let markSpace = spaces[stroke.id] ?? current
+            let local = localPoint(in: markSpace, view: point, current: current)
+            let scale = chromeScale(for: markSpace, current: current)
+            return stroke.isSelectedByCursor(at: local, radius: selectionReach * scale)
+        }) {
+            selectedMarkID = hit.id
+            let markSpace = spaces[hit.id] ?? current
+            let local = localPoint(in: markSpace, view: point, current: current)
+            let scale = chromeScale(for: markSpace, current: current)
+            let handle = MarkSelection(stroke: hit).handle(
+                at: local,
+                handleSize: MarkSelection.defaultHandleSize * scale,
+                rotationHandleOffset: MarkSelection.defaultRotationHandleOffset * scale) ?? .body
+            startSelectionDrag(handle, on: hit, at: local, in: markSpace)
+            needsDisplay = true
+            return
+        }
+
+        // Empty canvas: the plain click gives the selection up, and no mark
+        // is ever minted — DrawingSession refuses the edit cursor already;
+        // the pointer route never reaches `begin` at all.
+        if selectedMarkID != nil {
+            clearMarkSelection()
+            needsDisplay = true
+        }
+        Diag.log("editor select empty click, selection given up")
+    }
+
+    private func startSelectionDrag(_ handle: MarkHandle, on stroke: Stroke, at point: CGPoint, in markSpace: EditorCropSpace) {
+        selectionOriginal = stroke
+        selectionPreview = nil
+        selectionSpace = markSpace
+        switch handle {
+        case .body:
+            selectionDrag = .move(start: point)
+        case .topLeft, .topRight, .bottomLeft, .bottomRight:
+            selectionDrag = .scale(handle: handle)
+        case .rotation:
+            let anchor = stroke.anchor
+            selectionDrag = .rotate(startAngle: atan2(point.y - anchor.y, point.x - anchor.x))
+        }
+    }
+
+    /// One preview frame from the untouched snapshot, evaluated in the
+    /// mark's own space.
+    private func updateSelectionPreview(at viewPoint: CGPoint) {
+        guard let drag = selectionDrag, let original = selectionOriginal,
+            let markSpace = selectionSpace else { return }
+        let current = displaySpace(armed: false)
+        let point = localPoint(in: markSpace, view: viewPoint, current: current)
+        switch drag {
+        case let .move(start):
+            selectionPreview = MarkTransform.translated(
+                original, by: CGPoint(x: point.x - start.x, y: point.y - start.y))
+        case let .scale(handle):
+            selectionPreview = MarkTransform.scaled(original, dragging: handle, to: point)
+        case let .rotate(startAngle):
+            let anchor = original.anchor
+            let angle = atan2(point.y - anchor.y, point.x - anchor.x) - startAngle
+            selectionPreview = MarkTransform.rotated(original, by: angle)
+        }
+        needsDisplay = true
+    }
+
+    /// Ends the drag: the preview replaces the committed mark exactly once,
+    /// journalled as ONE mark step (⌘Z hands the restore to the session,
+    /// which holds the previous geometry itself).
+    private func commitSelectionDrag() {
+        defer {
+            selectionDrag = nil
+            selectionOriginal = nil
+            selectionPreview = nil
+            selectionSpace = nil
+            needsDisplay = true
+        }
+        guard let preview = selectionPreview, let original = selectionOriginal,
+            preview != original, session.replace(preview) else { return }
+        record.noteMark()
+        Diag.log("editor transform \(preview.tool.rawValue) rotation=\(preview.rotation)")
     }
 
     // MARK: - Mouse
@@ -1456,6 +1720,16 @@ final class CaptureEditorCanvas: NSView {
         guard let state else { return }
         let drawingSpace = displaySpace(armed: false)
         guard drawingSpace.display.contains(point) else { return }
+
+        // S3: the select tool edits the marks the canvas owns — select, then
+        // move, resize (corner) or rotate (knob) — the drawing overlay's own
+        // flow, here over the editor's recorded spaces. It picks no mark of
+        // any tool invisible to the pointer and mints nothing.
+        if state.tool.isSelection {
+            beginMarkSelection(at: point, in: drawingSpace)
+            return
+        }
+
         // The eraser removes marks instead of starting one: the gesture
         // routes straight to `session.erase` — the no-op invisible stroke
         // `begin` used to mint for it was the eraser's editor defect.
@@ -1542,6 +1816,13 @@ final class CaptureEditorCanvas: NSView {
             return
         }
 
+        // S3: a selection drag previews the transform through the same
+        // MarkTransform rules the overlay previews with.
+        if selectionDrag != nil, selectionOriginal != nil {
+            updateSelectionPreview(at: point)
+            return
+        }
+
         session.extend(to: point)
         if point != drawingStart {
             drawingMoved = true
@@ -1572,6 +1853,12 @@ final class CaptureEditorCanvas: NSView {
         if isErasing {
             isErasing = false
             needsDisplay = true
+            return
+        }
+        // S3: the selection drag's end commits the preview as ONE step —
+        // one drag, one undoable transform, never one per mouse event.
+        if selectionDrag != nil {
+            commitSelectionDrag()
             return
         }
         let point = convert(event.locationInWindow, from: nil)
@@ -2004,6 +2291,10 @@ final class CaptureEditorCanvas: NSView {
                 gestureSpace = nil
                 state?.endCropSelection()
                 needsDisplay = true
+            } else if selectedMarkID != nil || selectionDrag != nil {
+                // S3: with a mark selected, Escape first gives the selection
+                // up instead of costing the user their editor window.
+                clearMarkSelection()
             } else {
                 window?.close()
             }
@@ -2060,26 +2351,22 @@ final class CaptureEditorCanvas: NSView {
         // selection none of them is a tool key. Nothing selected — the key is
         // not the editor's: it falls through like Return with nothing staged.
         if !isCropping {
+            // S3: a mark selection eats ⌫ first — the mark goes; the canvas
+            // layer's own ⌫ only runs with no mark under the selection.
+            if event.keyCode == 51, selectedMarkID != nil,
+                deleteSelectedMark() { return }
             if event.keyCode == 51, removeSelectedCanvasLayer() { return } // ⌫
             if event.keyCode == 33, restackSelectedCanvasLayer(by: -1) { return } // [
             if event.keyCode == 30, restackSelectedCanvasLayer(by: 1) { return } // ]
         }
 
-        if let character = characters.first, let state {
-            // Only tools the editor offers resolve here: V and T must not arm
-            // a cursor or a text field this surface cannot serve. The editor's
-            // state is detached from the app's preferences (T8/S6), so it
-            // routes over its own in-memory map — the shipped standard one.
-            switch state.shortcutRouter.resolve(character, allowedTools: Tool.captureEditorTools) {
-            case .tool(let tool):
-                state.tool = tool
-                return
-            case .ink(let ink):
-                state.ink = ink
-                return
-            case .none:
-                break
-            }
+        // S4: the one route the canvas already resolves at — the same one
+        // the overlay's canvas performs — with the cursor re-assertion the
+        // overlay's own tool-key route does (a chosen tool's cursor shows
+        // without waiting for the next pointer move).
+        if let character = characters.first,
+            resolvesArmedKey(character) {
+            return
         }
 
         super.keyDown(with: event)
@@ -2094,6 +2381,42 @@ final class CaptureEditorCanvas: NSView {
             return
         }
         super.keyUp(with: event)
+    }
+
+    /// The key resolver for the armed item and the ink (S4): the ONE route
+    /// the canvas's own keyDown performs, exposed so the editor WINDOW can
+    /// run it too when a chrome control holds the focus and the responder
+    /// chain declined — so `b` arms the blur wherever the focus sits, as it
+    /// always did on the drawing overlay, where the floating bar can never
+    /// take the keyboard. Only tools the editor offers resolve here: V and T
+    /// must not arm a cursor or a text field this surface cannot serve, and
+    /// a ⌘-carrying press is never a tool key (⌘V is paste, ⌘Z undo). The
+    /// state is detached from the app's preferences (T8/S6), so it routes
+    /// over its own in-memory map — the shipped standard one.
+    func resolvesArmedKey(_ character: Character) -> Bool {
+        guard let state else { return false }
+        switch state.shortcutRouter.resolve(character, allowedTools: Tool.captureEditorTools) {
+        case .tool(let tool):
+            state.tool = tool
+            reassertCursor()
+            return true
+        case .ink(let ink):
+            state.ink = ink
+            return true
+        case .none:
+            return false
+        }
+    }
+
+    /// The window-facing key route (S4): one character, no ⌘ modifier, and
+    /// the canvas's own resolver decides. All other keys are not the
+    /// editor's armed-item keys.
+    func handlesArmedItemKey(with event: NSEvent) -> Bool {
+        guard !event.modifierFlags.contains(.command),
+            let characters = event.charactersIgnoringModifiers,
+            characters.count == 1,
+            let character = characters.first else { return false }
+        return resolvesArmedKey(character)
     }
 
     /// ⌘+ / ⌘− — one zoom step, anchored at the pointer like the board's

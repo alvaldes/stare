@@ -112,3 +112,119 @@ shipped in the previous rounds.
   1). Focused `swift test --filter 'CaptureHistory'`: exit 0, 61 tests,
   0 failures. Whole suite unpiped `swift test`: exit 0, StareCoreTests
   920/0 failures, StareTests 458/0 failures. Commit cells left `uncommitted`.
+
+- **L4** (T4/S3-S5 worker, 2026-11-26, results): The cancelled run's partial
+  work failed 7 of 10 focused tests; finishing it left both focused filters
+  green and corrected what the partial run got wrong. S3 (the editor's select
+  tool): the drag-move, corner-adjust and rotation-knob tests needed no new
+  editing model — the partial run's flow over `DrawingSession`,
+  `Stroke.isSelectedByCursor`, `MarkSelection` and `MarkTransform` already
+  worked (press on a mark selects it, one gesture is select-and-move, a corner
+  scales uniformly, the knob rotates, one journal step per drag, ⌫ deletes the
+  selection, Escape sheds it) — and the committed implementation is untouched.
+  What the partial run got wrong, fixed: (a) its `mouseDragged` hook for the
+  select preview **deleted** the drawing path's live `session.extend` +
+  `drawingMoved`, so an in-flight mark appeared only after the pointer rose —
+  restored, verbatim the HEAD behaviour, selection branch above it; (b) its
+  selection tests read `mark.points` as capture pixels (`viewPoint(fromPixel:
+  mark.points.first!)` pressed off-canvas at (350, 200)), but the canvas's own
+  architecture records each mark in the space it was drawn in — here the fit
+  display's view space, which is what `spaces[id]` stores — so its own spaces
+  are the fit-view points the tests wanted directly; the recorded-space line
+  ("the mark's own recorded space IS the fit display's view space") is now in
+  the tests, and the asserted empties it could never inspect are real: the
+  move test presses the mark's midpoint (outside any handle's reach, a grab of
+  the body and not a corner), and its ink checks map through
+  `space(of: editor).pixelPoint(fromView:)` into the 100×100 composed capture
+  the rep scans: its ink lands at pixel (75, 75) — the (200, 150) drag end —
+  and pixel (50, 50), the grabbed one, is vacated; (c) all gesture helpers in
+  the file fed **window-space**
+  `locationInWindow` straight into a flipped canvas, so every asymmetric
+  coordinate landed mirrored ((x, y) → local (x, height−y); the symmetric y=100
+  presses hid it, and the adjust drag passed by exercising an unintended
+  pointer); helpers now write canvas-local top-down points, the same mapping
+  the capture-history probe helper uses. Focused run: `swift test --filter
+  "CaptureEditorSelectionTests|CaptureEditorBlurToolTests"`, exit 0, 10 tests
+  (4 blur + 6 selection), 0 failures; 3 of them had failed at the start of this
+  session (rotate knob, drag-move ink, corner adjust) plus storage decode (one
+  assertion block) per the cancelled run's own baseline (7 of 10). Neighbours
+  re-pinned after the record-path change (focused filters,
+  `CaptureEditor(Zoom|Eraser|Backdrop|Delivery|Cursor|StagedCrop|CanvasPaste|Bookmark)|…`:
+  exit 0, 0 failures) — the eraser's distinct-space rule, the 3× zoom save
+  bytes and the crop/journal behaviour all stand.
+- The S4b reversal shipped (AppPreferences): a stored `redactionStyle
+  : "blur"` blob — the owner's own pre-B2 document — now decodes as the
+  shipped `.randomizedPixelate`, so the app he runs presents the pixelated
+  look he asked for after seeing it; the earlier deliberate decision (the
+  stored field says blur because the visible Redaction picker once offered it
+  and could be an explicit choice the app must not override) is REVERSED on
+  his round-three say-so, and the reversal's reason is recorded in the
+  field's doc comment in AppPreferences.swift: the blur he was seeing was the
+  shipped default his stored document still carried, not a pick he made. The
+  model mirror, the state it seeds, and a mark minted from the migrated
+  choice all carry pixelate, and the mark renders as a mosaic, never the
+  blur twin, through the one `MarkRenderer.redactionPatch` dispatch — pinned
+  by `CaptureEditorBlurToolTests
+  .testAStoredBlurPreferenceDecodesToPixelateAndItsMarkRendersAsAMosaic`
+  (green). The stroke- and session-level restore fallbacks stay `.blur`
+  (RedactionStorageTests green): a pre-B2 drawing keeps painting exactly what
+  it painted — that pin concerns saved marks, which the owner did not
+  dispute, never the stored preference.
+- The superseded no-migration pin, `AppPreferencesTests.
+  testAnExplicitStoredBlurIsNeverMigrated` (Tests/StareCoreTests/, a file
+  outside this task's allowed edit surfaces), now disagrees with the
+  migration by design and fails the full suite until its owner re-derives it:
+  the failed run left it as the S4b blocker; the re-derivation is queued at
+  the transaction controller, the only piece of T4 left open.
+- S5, probed to exhaustion, not reproduced in code: two fresh probes this
+  session (every AppKit descendant frame; a layer-rendered chrome bitmap with
+  the spotlight marked) find NO source of the padding in the cell, the
+  AppKit-host wrapper nor the chrome: the editor's tool cells all sit on the
+  same pitch (select x=12, blur x=320, spotlight x=352 = blur+32, eraser
+  x=397 via the family divider, all 28×26; `AppKitPlatformViewHost
+  <SpotlightToolButton>` frame equals its neighbours'), the marked plate
+  spans the full 28 pt (px 352–379 at 1×) and the sun.max glyph is centred
+  (extent 361–374 around cell centre 366), identical to its neighbours' glyph
+  centring; the run-left bitmaps (/tmp/chrome.png, /tmp/drawingbar.png) agree.
+  No speculative edit to ToolbarView — nothing observed would be a fix, and
+  the shape menu must not regress. If the owner reproduces it in a build, a
+  screenshot beside these probe numbers decides whether the source is a
+  Retina-only rendering pass the headless harness cannot show.
+- The superseded no-migration pin re-derived (the one test in
+  Tests/StareCoreTests/AppPreferencesTests.swift this task was authorised to
+  touch): `testAnExplicitStoredBlurIsNeverMigrated` is retired, replaced by
+  `testAStoredBlurDecodesAsTheShippedPixelateIntoTheReversal` — a stored
+  `"blur"` blob now decodes as the shipped `.randomizedPixelate`, and the
+  section's canary (beside the field's own doc comment in AppPreferences.swift)
+  names the round-three S4 reversal and the owner's words ("en dibujo no tiene
+  el estilo pixelado que esperaba que ya tuviera"). The reversal is scoped:
+  the derived test also asserts a stored mark WITHOUT the redaction field —
+  the `PersistedStroke` decode fallback `Stroke(persisted:)` — still restores
+  as `.blur` (the stroke/session-level pins live on in RedactionStorageTests,
+  untouched). RED→GREEN observed: RED was the old pin failing the filter (40
+  tests, 1 failure: `("randomizedPixelate") is not equal to ("blur")` at line
+  448 of the file); GREEN `swift test --filter "AppPreferencesTests"`: exit 0,
+  40 tests, 0 failures. No other test in the file touched.
+- S5 recorded as unexplained, with numbers. This session measured the PAINTED
+  GLYPH inside every tool cell of the editor's chrome (previous round's probes
+  had compared only cell frames and glyph CENTRING): each tool armed in turn,
+  its accent plate pinning the cell's exact geometry, and the white glyph on
+  the plate measured pixel-wise at 2x off a chrome rendered over a solid
+  ground. Cell x positions reproduce the earlier probe exactly (select 12, pen
+  57, highlighter 89, line 134, arrow 166, rectangle 198, ellipse 230, number
+  275, blur 320, spotlight 352, eraser 397; every plate 28 pt wide); the
+  painted glyph widths: select 7.5, pen 8.5, highlighter 13.5, line 10.5,
+  arrow 10.0, rectangle 15.0, ellipse 13.0, number 13.0, blur 11.5,
+  spotlight 14.0, eraser 13.5 pt. The spotlight is the second WIDEST cell in
+  the row — wider than the neighbours' median (13.0, ratio 1.08), inside the
+  neighbours' spread (7.5–15.0). Nothing in these numbers supports a fix "so
+  it reads like its neighbours": it already reads wider than most, and the
+  spread across cells is the symbols' natural widths at the same 13 pt font.
+  No speculative edit to ToolbarView (the verdict of the previous rounds
+  stands); no glyph-width pin was added to the suite (a pixel-measured pin
+  would travel with the OS's symbol metrics); the measuring harness was a
+  temporary test, removed after the numbers were taken — the chrome test file
+  returns to HEAD byte-for-byte. If the owner reproduces the padding in his
+  build, a screenshot beside these numbers decides what remains to be
+  explained (the earlier note about a Retina-only rendering pass the headless
+  harness cannot show already covers the one live hypothesis).
