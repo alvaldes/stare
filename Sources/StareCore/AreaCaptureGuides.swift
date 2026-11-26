@@ -19,13 +19,19 @@ import CoreGraphics
 ///
 /// The view paints all of this; nothing here touches AppKit.
 public enum AreaCaptureGuides {
-    /// The rule's stroke width, in view points (the paint pass uses it).
-    public static let lineWidth: CGFloat = 1
+    /// The rule's stroke width, in view points (the paint pass uses it)
+    /// and, with the round cap, a dot's rendered diameter. S5 asked the
+    /// dots smaller ("bajale un poco el tamanno a estos"): 1 → 0.75, so
+    /// the dot drops from 1.6 to 1.35.
+    public static let lineWidth: CGFloat = 0.75
     /// The dotted pattern's dot, in points: a short dash with a round cap,
-    /// so the rule reads as a line of dots, never a solid stroke.
-    public static let dotLength: CGFloat = 1
-    /// The dotted pattern's gap, in points.
-    public static let gapLength: CGFloat = 3
+    /// so the rule reads as a line of dots, never a solid stroke. S5:
+    /// a bit smaller — 1 → 0.75.
+    public static let dotLength: CGFloat = 0.75
+    /// The dotted pattern's gap, in points. S5 asked more air between
+    /// the dots ("agrega mas espacio"): 3 → 6, so the pitch (dot + gap)
+    /// grows 4 → 6.75.
+    public static let gapLength: CGFloat = 6
 
     /// One dotted rule: a zero-width (vertical) or zero-height (horizontal)
     /// segment — `line` is the span the painter strokes from `min` to `max`.

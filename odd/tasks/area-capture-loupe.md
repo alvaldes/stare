@@ -34,7 +34,7 @@ a crosshair, a magnified patch and dotted rules spanning the screen.
 | --- | --- | --- | --- | --- |
 | T1 | S1-S3 | The loupe and the guides, drawn from the selection's own geometry | worker | d13d7ec |
 | T2 | S2 | Two preferences, on by default, wired to the drawing | worker | d13d7ec |
-| T3 | S4 | The guides follow the pointer from ⇧S, and only the pointer's during a drag | worker | 9ba9d97 |
+| T3 | S4 | The guides follow the pointer from ⇧S, and only the pointer's during a drag | worker | uncommitted |
 | T4 | S1-S2 | Docs: README, CHANGELOG and this log | worker | |
 
 ## Log
@@ -157,3 +157,49 @@ a crosshair, a magnified patch and dotted rules spanning the screen.
   were written. Full suite, final state: `swift test > .build/w15.log 2>&1` EXIT=0 — StareTests 387, 0
   failures; StareCoreTests 902, 0 failures (baseline was 904 + 385: the pure guide file went 9 → 7, the view
   guide file 4 → 6; net −0 across both).
+- **L6** (S5, owner using the build, verbatim in S5): the chrome goes greyer, the dots go airier and
+  smaller, and the armed pointer is ALWAYS the crosshair. Three changes, all pinned:
+  **1. Greyer** — the LIGHT stroke of both painters drops from near-white to a mid grey; the dark
+  under-strokes are untouched. Guides' top stroke: `CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.8)` →
+  `CGColor(gray: 0.75, alpha: 0.9)` (the alpha goes UP so the darker grey keeps its read — the sampled
+  grey dot over the dark green scene reads 0.478–0.506 at 1×; L5's white read 0.655 over the same scene,
+  so the sampled pixel IS the requested step greyer). Loupe's ring+crosshair top stroke:
+  `CGColor(gray: 1, alpha: 0.95)` → `CGColor(gray: 0.75, alpha: 0.95)` (straight ring rows read
+  ≈ 0.757–0.780; the crosshair's half-covered rows ≈ 0.49–0.54). Read thresholds re-derived with the S5
+  canary: the guides' `hasChromeDot` 0.45 → 0.40, the loupe's `hasRingPixel` 0.6 → 0.45, and the
+  loupe-off test's `hasGuideDot` probe widened to radius 4 (the 6.75 pitch keeps a dot inside any ±4
+  window; its best sampled row ≈ 0.48 over content-free canvas) — the greys no longer reach the old
+  white-height thresholds; contents and scenes still separate cleanly (dark scene ≤ 0.16, grey dot
+  ≥ 0.478; light band 0.82, grey dips 0.62–0.77).
+  **2. Airier, smaller dots** — the constants in `AreaCaptureGuides`: `dotLength` 1 → 0.75,
+  `gapLength` 3 → 6 (the pitch, dot + gap, grows 4 → 6.75) and `lineWidth` 1 → 0.75 — with the round
+  cap, that width IS a dot's rendered diameter, so L5's 1.6-pt dot drops to 1.35. The rendered run
+  pattern is asserted off the screen, not off the constants: a 1× bitmap probe along the pointer's
+  vertical rule finds 24 dots of ≤ 3-row runs at pitch 6.75 (measured centres 432, 438.5, 445.5, 452 …)
+  with under half the band bright, over the dark scene each dot's peak 0.478–0.506, and over the light
+  (white) band the same dots read as dips to 0.62–0.73 under the 0.82 bare band.
+  **3. Always the crosshair while armed** — the single cursor decision is now
+  `OverlayView.answeredCursor()`: while `isSelectingArea` the system crosshair answers FOR EVERY tool,
+  outside it the same path answers what it always answered (`gestureCursor ?? cursorForTool`).
+  `reassertCursor()` draws from that one decision, so there is no second ambient `NSCursor.set()`: arming
+  (`beginAreaSelection`) re-asserts, and EVERY disarm restores through the same path — the capture's
+  `mouseUp`, `cancelAreaSelection` (Esc) and `confirmPreloadedArea` (Return) each re-assert, so the
+  tool's own cursor (drawn glyph or system) is back the moment area mode leaves. Switching tools while
+  armed re-asserts too, so the key presses cannot flash a tool cursor back. Asserted for every
+  `Tool.allCase` by identity (`=== NSCursor.crosshair` armed, `=== OverlayView.cursor(for: tool.cursor)`
+  outside) plus the Esc and drag routes back (a drawn-glyph tool, the pen, is the sharp witness).
+  Discipline preserved: computed from the pointer alone, clipped per axis, nothing on a display edge,
+  both preferences still remove exactly their own chrome, never a `Stroke`, never in `committedBounds`.
+  **Verification** — RED: the first focused run failed to compile (`no member 'answeredCursor'` ×8);
+  the intermediate 0.72/α 0.8 grey attempt was then RED in pixels (13 failures: the 1× grey dot peaked
+  0.44, under the 0.45 thresholds) before the alpha compensated to 0.9. Focused (`swift test --filter
+  AreaCapture > .build/w27-focused-green3.log 2>&1`): EXIT=0 — AreaCaptureFreezeTests 17,
+  AreaCaptureGuideTests 7, AreaCaptureFrameTests 11, AreaCaptureMemoryTests 6, AreaCaptureLoupeTests 13,
+  AreaCaptureGuidesViewTests 10 (was 6: + the run pattern, the grey pair and the two cursor tests),
+  AreaCaptureLoupeViewTests 10 (assertions extended in place, threshold re-derived), 0 failures. Full
+  full suite unpiped (`swift test > .build/w27-final.log 2>&1`, the final tree after two comment-only
+  polish passes re-verified — an identical earlier run lives in `.build/w27.log`): EXIT=0 — StareTests 440
+  (baseline 436 + 4),
+  StareCoreTests 919 (baseline 919, the constants pin re-derived in place under the S5 canary), 0 failures
+  — the board's own cursor discipline (its `gestureCursor` override feeds the same answered path) travels
+  in the suite.

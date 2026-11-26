@@ -109,9 +109,16 @@ final class AreaCaptureGuideTests: XCTestCase {
 
     // MARK: The paint constants the view strokes with
 
+    /// CANARY S5 — re-derivation of L5's constants pin after the owner used
+    /// the build: "agrega mas espacio entre los puntos y bajale un poco el
+    /// tamanno a estos". The gap grows 3 → 6 (so the dot pitch, dot + gap,
+    /// grows 4 → 6.75) and the dot shrinks: the dash drops 1 → 0.75 and the
+    /// line width 1 → 0.75 — with the round cap, that cap's width IS a dot's
+    /// rendered diameter, so L5's 1.6-pt dot drops to 1.35. The pixel proof
+    /// of the rendered run pattern lives in AreaCaptureGuidesViewTests.
     func testThePaintConstantsStaySubdued() {
-        XCTAssertEqual(AreaCaptureGuides.lineWidth, 1)
-        XCTAssertEqual(AreaCaptureGuides.dotLength, 1)
-        XCTAssertEqual(AreaCaptureGuides.gapLength, 3)
+        XCTAssertEqual(AreaCaptureGuides.lineWidth, 0.75, "S5 keeps the rule hairline-thin")
+        XCTAssertEqual(AreaCaptureGuides.dotLength, 0.75, "S5: smaller dots (was 1)")
+        XCTAssertEqual(AreaCaptureGuides.gapLength, 6, "S5: more air between dots (was 3)")
     }
 }

@@ -474,10 +474,25 @@ class OverlayView: NSView {
     /// pointer mid-gesture never flashes the tool cursor back.
     var gestureCursor: NSCursor? { nil }
 
-    /// The cursor this layer shows right now: the gesture cursor while a
-    /// gesture runs, the tool cursor otherwise.
+    /// The cursor this canvas answers with right now — the ONE decision
+    /// every reassertion draws from. While an area selection is armed the
+    /// SYSTEM crosshair answers regardless of which tool is selected
+    /// (S5: "el cursor siempre debe ser la cruz" — armed area mode is a
+    /// drafting state whose on-canvas chrome is the crosshair, so the
+    /// pointer must never contradict it); outside area mode the same
+    /// decision answers exactly what it always answered: the gesture
+    /// cursor while one runs, the tool cursor otherwise. There is no
+    /// second ambient `NSCursor` path: arming (`beginAreaSelection`) and
+    /// every disarm (capture, Esc, Return) re-assert through
+    /// `reassertCursor` below, so leaving area mode restores the tool's
+    /// own cursor through this same single decision.
+    func answeredCursor() -> NSCursor {
+        if isSelectingArea { return .crosshair }
+        return gestureCursor ?? cursorForTool
+    }
+
     func reassertCursor() {
-        (gestureCursor ?? cursorForTool).set()
+        answeredCursor().set()
     }
 
     /// Each tool shouts what it does (T2/S2): the pure per-tool choice is
@@ -943,6 +958,9 @@ class OverlayView: NSView {
             selectionRect = nil
             areaPointerPoint = nil
             needsDisplay = true
+            // S5: disarm restores the tool's own cursor through the same
+            // single answered-cursor path.
+            reassertCursor()
             if let rect, AreaSelectionGeometry.isCaptureWorthy(rect) {
                 // The capture runs first, while the frozen base still holds:
                 // it composes over the frame the user framed, not over live
@@ -1022,6 +1040,8 @@ class OverlayView: NSView {
         // From here on every `mouseMoved` lands the point (and a pointer
         // entering this display places it through `mouseEntered`).
         areaPointerPoint = areaPointerFromScreen()
+        // S5: armed → the crosshair answers from the moment the mode arms.
+        reassertCursor()
         // The drag runs on a frame that was stocked ahead of it — the screen
         // as it was when drawing mode was entered, refreshed after each
         // capture. Only when none is on hand does it ask for its own frame.
@@ -1046,6 +1066,9 @@ class OverlayView: NSView {
         areaPointerPoint = nil
         releaseAreaFrame()
         needsDisplay = true
+        // S5: disarm restores the tool's own cursor through the same single
+        // answered-cursor path.
+        reassertCursor()
         Diag.log("area selection cancelled")
     }
 
@@ -1058,6 +1081,9 @@ class OverlayView: NSView {
         selectionRect = nil
         areaPointerPoint = nil
         needsDisplay = true
+        // S5: disarm restores the tool's own cursor through the same single
+        // answered-cursor path (before the capture consumes the frame).
+        reassertCursor()
         onCaptureRequest?(rect)
         if isAreaCaptureCanvas {
             areaMemory.confirm(rect)
@@ -1362,7 +1388,7 @@ class OverlayView: NSView {
     /// still the `selectionRect` alone, which the guides never read — and
     /// the type has already clipped them to `bounds`, so none of them can
     /// imply an edge outside this display. Subdued chrome: a dim dark rule
-    /// under a dim white dotted top stroke, the same
+    /// under a grey (S5) dotted top stroke — the same
     /// dark-under/bright-on-top trick the loupe's ring and the drawn cursors
     /// use — it reads on light and on dark content and never fights the
     /// frame. View chrome only: never a `Stroke`, never in
@@ -1379,7 +1405,12 @@ class OverlayView: NSView {
         for guide in guides {
             for (colour, width) in [
                 (CGColor(gray: 0, alpha: 0.35), AreaCaptureGuides.lineWidth + 1),
-                (CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.8), AreaCaptureGuides.lineWidth + 0.6),
+                // S5: "un color mas gris no tan blanco" — the top stroke is
+                // a mid grey now (L5 had near-white (1, 1, 1)); the alpha
+                // compensates (0.8 → 0.9) so the smaller stroke still reads
+                // at 1×, and the dark under-stroke keeps it legible on light
+                // and dark content.
+                (CGColor(gray: 0.75, alpha: 0.9), AreaCaptureGuides.lineWidth + 0.6),
             ] {
                 context.setStrokeColor(colour)
                 context.setLineWidth(width)
@@ -1439,8 +1470,10 @@ class OverlayView: NSView {
         context.restoreGState()
 
         // Chrome: a bordered ring and the crosshair through the pointer's
-        // pixel, dark-under/bright-on-top so it reads on light and dark
-        // content — the same trick the drawn cursors use.
+        // pixel, dark-under/grey-on-top (S5: the top stroke is a mid grey —
+        // 0.75, no longer the near-white α 0.95 chrome L5 pinned) so it
+        // reads on light and dark content — the same trick the drawn
+        // cursors use.
         let ring = CGPath(
             roundedRect: plan.frame.insetBy(dx: 1.5, dy: 1.5),
             cornerWidth: 7,
@@ -1448,7 +1481,7 @@ class OverlayView: NSView {
             transform: nil
         )
         context.saveGState()
-        for (colour, width) in [(CGColor(gray: 0, alpha: 0.85), CGFloat(3)), (CGColor(gray: 1, alpha: 0.95), CGFloat(1))] {
+        for (colour, width) in [(CGColor(gray: 0, alpha: 0.85), CGFloat(3)), (CGColor(gray: 0.75, alpha: 0.95), CGFloat(1))] {
             context.setStrokeColor(colour)
             context.setLineWidth(width)
             context.addPath(ring)

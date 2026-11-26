@@ -313,18 +313,43 @@ final class AreaCaptureLoupeViewTests: XCTestCase {
         XCTAssertTrue(
             hasRingPixel(rep, near: CGPoint(x: 544, y: 394)),
             "the loupe's crosshair must mark the pixel being chosen")
+
+        // S5 ("un color mas gris no tan blanco en las lineas de la lupa"):
+        // the brightest chrome pixel at both probes reads grey now (≈ 0.68
+        // over the magenta frame), not the near-white 0.95 chrome L5 pinned,
+        // while still clearing the 0.6 visibility threshold above — the dark
+        // under-stroke unchanged.
+        for probe in [CGPoint(x: 544, y: 335), CGPoint(x: 544, y: 394)] {
+            var brightest: CGFloat = 0
+            for x in Int(probe.x - 3)...Int(probe.x + 3) {
+                for y in Int(probe.y - 3)...Int(probe.y + 3) where y >= 0 && x >= 0 {
+                    guard x < rep.pixelsWide, y < rep.pixelsHigh,
+                        let color = rep.colorAt(x: x, y: y)
+                    else { continue }
+                    brightest = max(
+                        brightest,
+                        min(color.redComponent, color.greenComponent, color.blueComponent))
+                }
+            }
+            XCTAssertGreaterThan(brightest, 0.45, "S5: the grey loupe line still reads over the frame")
+            XCTAssertLessThan(
+                brightest, 0.85, "S5: grey, not the near-white chrome L5 pinned (0.95)")
+        }
     }
 
-    /// Whether the bitmap carries a near-white chrome pixel within `radius`
-    /// points of `point`: over a magenta frozen frame nothing but the loupe's
-    /// chrome (and the guides) can be nearly white everywhere.
+    /// Whether the bitmap carries a near-bright chrome pixel within `radius`
+    /// points of `point`: over a magenta frozen frame (min channel 0) nothing
+    /// but the loupe's chrome can reach it. Re-derived under S5: the grey
+    /// top stroke (grey 0.75/α 0.95, once the near-white 1.0 α 0.95 Chrome)
+    /// reads its straight ring rows ≈ 0.76 and its crosshair's half-covered
+    /// rows ≈ 0.49–0.54 in the 1× render, so the threshold is 0.45.
     private func hasRingPixel(_ rep: NSBitmapImageRep, near point: CGPoint, radius: CGFloat = 3) -> Bool {
         for x in Int(point.x - radius)...Int(point.x + radius) {
             for y in Int(point.y - radius)...Int(point.y + radius) {
                 guard x >= 0, y >= 0, x < rep.pixelsWide, y < rep.pixelsHigh,
                     let color = rep.colorAt(x: x, y: y)
                 else { continue }
-                if min(color.redComponent, color.greenComponent, color.blueComponent) > 0.6 { return true }
+                if min(color.redComponent, color.greenComponent, color.blueComponent) > 0.45 { return true }
             }
         }
         return false
@@ -362,15 +387,18 @@ final class AreaCaptureLoupeViewTests: XCTestCase {
             "turning the loupe off must not take the guides down with it")
     }
 
-    /// The guides' dimmer chrome threshold (α 0.55 white tops out ≈0.55 in
-    /// the min channel); the loupe's ring is brighter on purpose.
-    private func hasGuideDot(_ rep: NSBitmapImageRep, near point: CGPoint, radius: CGFloat = 3) -> Bool {
+    /// The guides' dimmer chrome threshold, re-derived under S5: the grey
+    /// dotted top stroke (grey 0.75/α 0.9, once white α 0.8) reads its best
+    /// sampled row ≈ 0.48 over content-free canvas and the wider probe
+    /// (radius 4) always catches a dot of the 6.75 pitch; the bare scene
+    /// stays below. (L5 pinned white at a 0.45 threshold.)
+    private func hasGuideDot(_ rep: NSBitmapImageRep, near point: CGPoint, radius: CGFloat = 4) -> Bool {
         for x in Int(point.x - radius)...Int(point.x + radius) {
             for y in Int(point.y - radius)...Int(point.y + radius) {
                 guard x >= 0, y >= 0, x < rep.pixelsWide, y < rep.pixelsHigh,
                     let color = rep.colorAt(x: x, y: y)
                 else { continue }
-                if min(color.redComponent, color.greenComponent, color.blueComponent) > 0.45 { return true }
+                if min(color.redComponent, color.greenComponent, color.blueComponent) > 0.4 { return true }
             }
         }
         return false

@@ -73,15 +73,19 @@ final class AreaCaptureGuidesViewTests: XCTestCase {
     }
 
     /// Whether the bitmap carries a bright chrome dot within `radius` points
-    /// of `point`: the guides' white dotted top stroke over the frozen scene
-    /// and its shroud must clear everything the scene itself can paint there.
+    /// of `point`: the guides' grey (S5) dotted top stroke — with its dark
+    /// under-stroke — over the frozen scene and its shroud must clear
+    /// everything the scene itself can paint there. Threshold re-derived
+    /// under S5: the grey dot's brightest row reads ≈ 0.48–0.51 in the min
+    /// channel (L5's white peaked at 0.655), while the dark scene and its
+    /// α 0.18/0.32 shroud band read ≤ 0.16, so 0.40 separates them.
     private func hasChromeDot(_ rep: NSBitmapImageRep, near point: CGPoint, radius: CGFloat = 3) -> Bool {
         for x in Int(point.x - radius)...Int(point.x + radius) {
             for y in Int(point.y - radius)...Int(point.y + radius) {
                 guard x >= 0, y >= 0, x < rep.pixelsWide, y < rep.pixelsHigh,
                     let color = rep.colorAt(x: x, y: y)
                 else { continue }
-                if min(color.redComponent, color.greenComponent, color.blueComponent) > 0.45 { return true }
+                if min(color.redComponent, color.greenComponent, color.blueComponent) > 0.4 { return true }
             }
         }
         return false
@@ -91,6 +95,15 @@ final class AreaCaptureGuidesViewTests: XCTestCase {
     /// chrome lives on.
     private func mouseMoved(at viewPoint: CGPoint, window: NSWindow, on view: OverlayView) {
         view.mouseMoved(with: mouseEvent(.mouseMoved, at: viewPoint, window: window))
+    }
+
+    /// The min colour channel at one bitmap pixel, 0 outside the bitmap, so
+    /// run detection needs no guards.
+    private func minChannel(_ rep: NSBitmapImageRep, at x: Int, y: Int) -> CGFloat {
+        guard x >= 0, y >= 0, x < rep.pixelsWide, y < rep.pixelsHigh,
+            let color = rep.colorAt(x: x, y: y)
+        else { return 0 }
+        return min(color.redComponent, color.greenComponent, color.blueComponent)
     }
 
     // MARK: The chrome exists with no click at all
@@ -277,6 +290,181 @@ final class AreaCaptureGuidesViewTests: XCTestCase {
         let state = EditorState()
         XCTAssertEqual(state.showAreaLoupe, true)
         XCTAssertEqual(state.showAreaGuides, true)
+    }
+
+    // MARK: The armed cursor is always the crosshair (S5)
+
+    /// "el cursor siempre debe ser la cruz": the canvas's single answered-
+    /// cursor decision answers the system crosshair while area mode is
+    /// armed, for EVERY tool — the system-crosshair drafting tools and the
+    /// drawn glyphs alike. Outside area mode that same decision answers each
+    /// tool's own cursor again, exactly as before, so nothing outside area
+    /// mode changed.
+    func testWhileArmedEveryToolAnswersTheCrosshairOutsideItEachToolSOwnCursorAnswers() {
+        for tool in Tool.allCases {
+            let state = EditorState()
+            state.tool = tool
+            let view = OverlayView(
+                frame: CGRect(origin: .zero, size: size), state: state, onEscape: {})
+            XCTAssertTrue(
+                view.answeredCursor() === OverlayView.cursor(for: tool.cursor),
+                "\(tool.rawValue), not armed, must answer its own cursor, as before")
+            view.beginAreaSelection()
+            XCTAssertTrue(
+                view.answeredCursor() === NSCursor.crosshair,
+                "\(tool.rawValue) armed must answer the crosshair, never an own cursor")
+        }
+    }
+
+    /// Leaving area mode restores the tool's own cursor through the same
+    /// single answered-cursor path — both ways out: Esc cancels the armed
+    /// mode, and a finished drag disarms. (A drawn glyph tool, the pen, is
+    /// the sharpest witness: its cursor is a glyph, not a system crosshair.)
+    func testLeavingAreaModeRestoresTheToolCursorThroughEscAndThroughADrag() throws {
+        let state = EditorState()
+        state.tool = .pen
+        let view = makeView(state: state)
+        let window = try hostWindow(view)
+        defer { window.orderOut(nil) }
+
+        view.beginAreaSelection()
+        XCTAssertTrue(
+            view.answeredCursor() === NSCursor.crosshair, "armed → the crosshair answers")
+
+        view.keyDown(with: NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: "",
+            charactersIgnoringModifiers: "", isARepeat: false, keyCode: 53)!)
+        XCTAssertTrue(
+            view.answeredCursor() === OverlayView.cursor(for: .penDot),
+            "Esc disarms: the pen's own cursor answers again, same path")
+
+        view.beginAreaSelection()
+        XCTAssertTrue(
+            view.answeredCursor() === NSCursor.crosshair, "armed again → crosshair")
+        view.mouseDown(with: mouseEvent(.leftMouseDown, at: CGPoint(x: 100, y: 100), window: window))
+        view.mouseDragged(with: mouseEvent(.leftMouseDragged, at: CGPoint(x: 300, y: 200), window: window))
+        XCTAssertTrue(
+            view.answeredCursor() === NSCursor.crosshair, "still armed mid-drag")
+        view.mouseUp(with: mouseEvent(.leftMouseUp, at: CGPoint(x: 300, y: 200), window: window))
+        XCTAssertTrue(
+            view.answeredCursor() === OverlayView.cursor(for: .penDot),
+            "the drag's disarm answers the pen's own cursor again, same path")
+    }
+
+    // MARK: S5 — airier, smaller dots, measured off the screen
+
+    /// "agrega mas espacio entre los puntos y bajale un poco el tamanno":
+    /// the RENDERED run pattern along the pointer's vertical rule — not the
+    /// constants — must read dots of the new pitch (`dotLength + gapLength`
+    /// = 6.75, L5's was 4), each a tiny run (a round-capped dot), with the
+    /// air between them dominating the stroke.
+    func testTheRenderedRuleMeasuresTheAirierSmallerDotPattern() throws {
+        let view = makeView()
+        let window = try hostWindow(view)
+        defer { window.orderOut(nil) }
+
+        view.beginAreaSelection()
+        view.landAreaFrame(makeSolidImage(width: 1800, height: 1200, red: 0.1, green: 0.9, blue: 0.2))
+        mouseMoved(at: CGPoint(x: 400, y: 200), window: window, on: view)
+        let rep = try render(view)
+
+        // Contiguous runs above the chrome threshold along the rule's own
+        // column — clear of the horizontal rule at y = 200, the loupe's
+        // frame (which hangs right of x ≥ 424 for the pointer at (400, 200))
+        // and the display's bottom edge.
+        var runs: [(start: Int, end: Int, peak: CGFloat)] = []
+        for y in 430..<596 {
+            let value = minChannel(rep, at: 400, y: y)
+            let bright = value > 0.4
+            if bright {
+                if let last = runs.last, last.end == y - 1 {
+                    runs[runs.count - 1] = (last.start, y, max(last.peak, value))
+                } else {
+                    runs.append((y, y, value))
+                }
+            }
+        }
+        XCTAssertGreaterThanOrEqual(runs.count, 18, "a sizeable sample of dots along the rule")
+        for run in runs {
+            XCTAssertLessThanOrEqual(
+                run.end - run.start + 1, 3, "each run is a dot (a few pixels), never a dash line")
+            // S5: the grey dot's sampled peak — the legibility floor and the
+            // grey ceiling together. (L5's near-white chrome read 0.655 over
+            // this same scene; the grey 0.75/α 0.9 top stroke reads 0.48–0.51.)
+            XCTAssertGreaterThan(run.peak, 0.42, "the grey dot is still visible over the dark scene")
+            XCTAssertLessThanOrEqual(
+                run.peak, 0.55, "S5 grey — L5's near-white chrome read 0.655 over this same scene")
+        }
+        for i in 1..<runs.count {
+            let centreA = CGFloat(runs[i - 1].start + runs[i - 1].end - 1) / 2
+            let centreB = CGFloat(runs[i].start + runs[i].end - 1) / 2
+            XCTAssertEqual(
+                centreB - centreA, 6.75, accuracy: 1.25,
+                "S5: the dots sit at the new pitch \(AreaCaptureGuides.dotLength + AreaCaptureGuides.gapLength) = 6.75, not L5's 4")
+        }
+        // And most of the rule is air: less than half the scanned span is
+        // dot (L5's dense pattern came near half).
+        let brightRows = runs.reduce(0) { $0 + $1.end - $1.start + 1 }
+        XCTAssertLessThan(
+            CGFloat(brightRows) / 166.0, 0.5, "S5: the air between dots dominates the rule now")
+    }
+
+    // MARK: S5 — greyer lines, still reading over both scenes
+
+    /// "un color mas gris no tan blanco": over a LIGHT frozen scene the
+    /// sampled dot reads grey — well under the near-white chrome L5 pinned
+    /// (min ≈ 0.73 of his white stroke over the same white scene) — and the
+    /// dark under-stroke keeps it visible. Visibility over a DARK scene is
+    /// the `hasChromeDot` assertions above, which stay green with the grey.
+    /// "un color mas gris no tan blanco": over a LIGHT frozen scene the dot
+    /// DIPS below the bare band (α 0.18 shroud over the white scene reads
+    /// 0.82 in the min channel) — the sampled dips read grey ≈ 0.69–0.73,
+    /// where the near-white top stroke L5 pinned would read a couple of
+    /// tenths brighter. The measured old-vs-new discriminator lives in the
+    /// dark-scene test above (0.655 → ≤ 0.55); this one pins the light-side
+    /// read: grey, still sampled-visible (its grey dips to ≈ 0.69, over a
+    /// quarter darker than the band), at the same 6.75 pitch.
+    func testTheGuideDotsReadGreyOverALightSceneAndStayVisibleOverADarkOne() throws {
+        let view = makeView()
+        let window = try hostWindow(view)
+        defer { window.orderOut(nil) }
+
+        view.beginAreaSelection()
+        view.landAreaFrame(makeSolidImage(width: 1800, height: 1200, red: 1, green: 1, blue: 1))
+        mouseMoved(at: CGPoint(x: 400, y: 200), window: window, on: view)
+        let rep = try render(view)
+
+        // Contiguous runs BELOW the grey-header threshold along the rule's
+        // own column — a dot reads darker than the bare white band.
+        var dips: [(start: Int, end: Int, deep: CGFloat, bright: CGFloat)] = []
+        for y in 430..<596 {
+            let value = minChannel(rep, at: 400, y: y)
+            let dipped = value < 0.79
+            if dipped {
+                if let last = dips.last, last.end == y - 1 {
+                    dips[dips.count - 1] = (last.start, y, min(last.deep, value), max(last.bright, value))
+                } else {
+                    dips.append((y, y, value, value))
+                }
+            }
+        }
+        XCTAssertGreaterThanOrEqual(dips.count, 18, "a sizeable sample of dots along the rule")
+        for dip in dips {
+            XCTAssertLessThanOrEqual(dip.end - dip.start + 1, 4, "each dip is a dot, not a stripe")
+            XCTAssertGreaterThan(
+                dip.deep, 0.58, "S5: still visible over the light scene — the grey dot dips below the 0.82 band"
+                    + " (measured dips read 0.62–0.73)")
+            XCTAssertLessThanOrEqual(
+                dip.bright, 0.78, "S5: grey — dips stay well under the near-white chrome (the bare band reads 0.82)")
+        }
+        for i in 1..<dips.count {
+            let centreA = CGFloat(dips[i - 1].start + dips[i - 1].end - 1) / 2
+            let centreB = CGFloat(dips[i].start + dips[i].end - 1) / 2
+            XCTAssertEqual(
+                centreB - centreA, 6.75, accuracy: 1.25,
+                "S5: the darker-than-band dots sit at the new pitch 6.75")
+        }
     }
 }
 
