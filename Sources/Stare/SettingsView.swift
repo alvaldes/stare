@@ -1733,20 +1733,24 @@ struct CapturePane: View {
         }
     }
 
-    /// The File name card (T1/S1–S3 of D4): one visible chain from the
-    /// control that governs to the name that gets written, instead of four
-    /// blocks of prose with the rule explained in a sentence. The template
-    /// row keeps the tokens, the safe characters and the extension rule;
-    /// the prefix row keeps its character-set detail for the state where it
-    /// governs; the standing-down rule keeps its caption. The chain names
-    /// the governor and shows the consequence on the same line, so the rule
-    /// is read once and then seen, and the {app}/{display} fallback hint
+    /// The File name card (T1/S1–S3 of D4; S4 removes the prefix row): one
+    /// visible chain from the control that governs to the name that gets
+    /// written, instead of four blocks of prose with the rule explained in a
+    /// sentence. The template row keeps the tokens, the safe characters
+    /// and the extension rule; the Name prefix row is GONE (S4 — the
+    /// template supersedes it, and a control the template always overrides
+    /// has no business here), but the fallback state stays real and the
+    /// card keeps saying what name will be written when the template is
+    /// cleared: the chain's source chip already names the governing stored
+    /// prefix, and the caption tells the same rule without pointing at a
+    /// control that is no longer there. The {app}/{display} fallback hint
     /// lives under the chain, read at the moment a refusal shows.
-    /// Presentation only (S2): both rows keep their exact behaviour — the
-    /// disabled-while-a-template-governs rule, the clipboard disable — and
-    /// the name the chain shows is still the same
+    /// Presentation only: the template row keeps its exact behaviour — the
+    /// clipboard disable — and the name the chain shows is still the same
     /// `CaptureEditorCanvas.savePanelFileName` call at the same fixed
-    /// instant, rendering exactly the name the save path writes.
+    /// instant, rendering exactly the name the save path writes with the
+    /// pane's inputs (a real capture's editor save panel renders through
+    /// the same call with its threaded identity — S5).
     private var fileNameCard: some View {
         SettingsCard(title: "File name", symbol: "doc.text") {
             SettingRow(
@@ -1755,17 +1759,6 @@ struct CapturePane: View {
                 content: TextField("", text: $model.capture.fileNameTemplate)
                     .frame(width: 180)
                     .disabled(isClipboard)
-            )
-            SettingRow(
-                title: "Name prefix",
-                detail: Self.prefixRowDetail,
-                content: TextField("", text: $model.capture.fileNamePrefix)
-                    .frame(width: 180)
-                    // Destination-independent (S4 decision): the template
-                    // naming every file is what retires the prefix, not
-                    // where the capture goes — so an empty template keeps
-                    // the prefix live on the clipboard path too.
-                    .disabled(!model.capture.fileNameTemplate.isEmpty)
             )
             Text(Self.templateRuleCaption)
                 .font(.caption)
@@ -1787,26 +1780,25 @@ struct CapturePane: View {
     /// The template row's detail, cut from the old four-block prose to what a
     /// user needs before typing: the tokens, the safe characters and the
     /// extension rule. The rest moved where it is read at the moment it
-    /// matters — the rule and the destination fact into
-    /// `templateRuleCaption`, the {app}/{display} refusal into
-    /// `tokenFallbackHint`.
+    /// matters — the rule into `templateRuleCaption` (S4), the
+    /// {app}/{display} refusal into `tokenFallbackHint`. The removed prefix
+    /// row's detail went with the row (S4): the template supersedes what it
+    /// governed.
     static let templateRowDetail = """
     Tokens: {date} · {time} · {app} · {display}, plus letters, numbers, \
     hyphen, underscore and dot — anything else isn't kept. The .png or \
     .jpg extension is added automatically.
     """
 
-    /// The prefix row's own character-set detail, kept verbatim: it is
-    /// exactly what the row governs when the template is cleared.
-    static let prefixRowDetail = "Letters, numbers, hyphen, underscore and dot. Anything else falls back to “Stare”."
-
-    /// The standing-down rule, kept — now opened by the destination fact the
-    /// old detail's first block carried, so a user reading a template field
-    /// that is dead on the clipboard learns why from the caption, not from a
-    /// silent grey control.
+    /// The fallback rule, kept from its previous wording once (S4): with
+    /// the Name prefix row gone — the template supersedes it — the caption
+    /// names the stored prefix, the value that keeps working exactly as
+    /// before when the template is cleared, so the wording never refers to
+    /// a control that is no longer in the pane. The chain's source chip
+    /// names the same governor with its row's word.
     static let templateRuleCaption = """
     Templates apply to folder saves. While a template is set it builds the \
-    whole file name; clear it and the prefix names the files again.
+    whole file name; clear it and the stored prefix names the files again.
     """
 
     /// The {app}/{display} refusal, moved out of the old detail to sit under
@@ -1841,7 +1833,10 @@ struct CapturePane: View {
 
     /// `CaptureDestination` is a value with an associated path, not a picker
     /// tag, so the picker speaks in indices and the set branch carries a path.
-    private var destinationSelection: Binding<Int> {
+    /// Internal so the tests drive the very binding the picker writes with
+    /// (S4's leftover): the folder prefill must be the destination a fresh
+    /// install really writes into, never the folder an earlier build baked in.
+    var destinationSelection: Binding<Int> {
         Binding(
             get: {
                 if case .folder = model.capture.destination { return 1 }
@@ -1853,7 +1848,11 @@ struct CapturePane: View {
                     if case .folder(let existing) = model.capture.destination {
                         path = existing
                     } else {
-                        path = "~/Documents"
+                        // A fresh prefill is the folder a fresh install
+                        // really writes into (S6), never the `~/Documents`
+                        // an earlier build shipped — the pane never states
+                        // a folder the app does not use.
+                        path = CapturePreference.defaultDestinationFolder
                     }
                     model.capture.destination = .folder(path: path)
                 } else {
@@ -1865,7 +1864,7 @@ struct CapturePane: View {
 
     private var folderPath: String {
         if case .folder(let path) = model.capture.destination { return path }
-        return "~/Documents"
+        return CapturePreference.defaultDestinationFolder
     }
 
     private func chooseFolder() {

@@ -5,14 +5,15 @@ import XCTest
 @testable import Stare
 import StareCore
 
-/// T1/S1–S3 of D4: the file-name card reads as one chain — the control that
-/// governs, then the name it writes — not four blocks of prose. The chain's
-/// source is pinned as the pane's own decision (`CapturePane.fileNameSource`),
-/// the copy as the pane's constants (the seam `SettingsHiddenSectionTests`
-/// uses for the pool card), and the pane's field count and enabled states by
-/// walking the real render the way `SettingsCapturePaneDisabledStateTests`
-/// does, so nothing here inspects SwiftUI internals. The name the chain
-/// shows keeps its pinned promise: it is the very call the save panel makes
+/// T1/S1–S3 of D4, and S4: the file-name card reads as one chain — the
+/// control that governs, then the name it writes — not four blocks of
+/// prose. The chain's source is pinned as the pane's own decision
+/// (`CapturePane.fileNameSource`), the copy as the pane's constants (the
+/// seam `SettingsHiddenSectionTests` uses for the pool card), and the
+/// pane's field count and enabled states by walking the real render the
+/// way `SettingsCapturePaneDisabledStateTests` does, so nothing here
+/// inspects SwiftUI internals. The name the chain shows keeps its pinned
+/// promise: it is the very call the save panel makes
 /// (`CaptureEditorCanvas.savePanelFileName`) at the pane's fixed sample
 /// instant — the rendered name never changes for the same inputs.
 @MainActor
@@ -62,12 +63,15 @@ final class CaptureFileNameCardTests: XCTestCase {
         )
     }
 
-    // MARK: S3 — the copy, cut to what typing needs
+    // MARK: S3, and S4 — the copy, cut to what typing needs
 
-    /// The template row's detail is the tokens, the safe characters and the
-    /// extension rule — the facts a user needs before typing. The rule and
-    /// destination live in the caption under the rows, and the {app}/{display}
-    /// fallback hint lives under the chain where a refusal is seen; the old
+    /// The template row's detail is the tokens, the safe characters and
+    /// the extension rule — the facts a user needs before typing. The rule
+    /// lives in the caption under the rows, told about the STORED prefix:
+    /// the prefix row itself is gone (S4) because the template supersedes
+    /// it, so the caption names the still-real fallback without referring
+    /// to a control that is no longer there. The {app}/{display} fallback
+    /// hint lives under the chain where a refusal is seen; the old
     /// four-block prose is gone.
     func testTheCardCopyIsCutToWhatTypingNeeds() {
         XCTAssertEqual(CapturePane.templateRowDetail, """
@@ -75,15 +79,10 @@ final class CaptureFileNameCardTests: XCTestCase {
         hyphen, underscore and dot — anything else isn't kept. The .png or \
         .jpg extension is added automatically.
         """)
-        XCTAssertEqual(
-            CapturePane.prefixRowDetail,
-            "Letters, numbers, hyphen, underscore and dot. Anything else falls back to “Stare”.",
-            "the prefix row keeps its character-set detail for the state where it governs"
-        )
         XCTAssertEqual(CapturePane.templateRuleCaption, """
         Templates apply to folder saves. While a template is set it builds the \
-        whole file name; clear it and the prefix names the files again.
-        """)
+        whole file name; clear it and the stored prefix names the files again.
+        """, "S4: the caption talks about the stored prefix, never about a prefix control that is no longer in the pane")
         XCTAssertEqual(CapturePane.tokenFallbackHint, """
         {app} and {display} come from the capture itself; when they aren't \
         known, as in this preview, the name falls back to the prefix.
@@ -116,13 +115,21 @@ final class CaptureFileNameCardTests: XCTestCase {
         XCTAssertEqual(FileNameChain.prefixLabel, "Prefix")
     }
 
-    // MARK: The pinned field count — the chain adds no editable field
+    // MARK: The pinned field count — the prefix row is gone (S4); the chain adds no editable field
 
-    func testThePaneCarriesExactlyItsFourTextFieldsAndTheChainIsNotOneOfThem() throws {
+    func testThePaneCarriesExactlyItsThreeTextFieldsWithNoPrefixRowLeft() throws {
         let pane = try Self.read(destination: .folder(path: "~/Pictures/Stare"))
         XCTAssertEqual(
-            pane.allTextFields.count, 4,
-            "the pane carries exactly the prefix, the template and the two backdrop fields — the chain adds no TextField (the pane's field count is pinned)"
+            pane.allTextFields.count, 3,
+            "S4: the pane carries exactly the template and the two backdrop fields — the Name prefix row is gone, and the chain adds no TextField (the pane's field count is pinned)"
+        )
+        XCTAssertTrue(
+            pane.allTextFields.contains { $0.stringValue == "{date}" },
+            "the template row is the card's only name control, identified by its bound canary, never by tree order"
+        )
+        XCTAssertFalse(
+            pane.allTextFields.contains { $0.stringValue == "Shots" },
+            "S4: the Name prefix row is gone — a control the template always overrides has no business in the pane, and no other field may echo the stored prefix"
         )
         XCTAssertFalse(
             pane.allTextFields.contains { $0.stringValue == "2026-11-21.png" },
@@ -132,12 +139,15 @@ final class CaptureFileNameCardTests: XCTestCase {
 
     // MARK: The chain's name is the save panel's name, for each token
 
-    /// The preview promise keeping its seam (S2): for a template using each
-    /// token, the name the chain shows — the pane's own
-    /// `CaptureEditorCanvas.savePanelFileName` call at its fixed instant — is
-    /// what the save panel would write. {app} and {display} cannot be known
-    /// before a capture is taken, so they preview the prefix-name fallback,
-    /// never a hole or a guess.
+    /// The preview promise keeping its seam (S2, restated for S5): for a
+    /// template using each token, the name the chain shows — the pane's own
+    /// `CaptureEditorCanvas.savePanelFileName` call at its fixed instant —
+    /// is the name that comes from no capture. The Settings pane cannot
+    /// know a FUTURE capture's app or display, so those tokens preview the
+    /// prefix-name fallback here, exactly as the hint under the chain says.
+    /// What a taken capture really names is pinned where its identity
+    /// exists: `CaptureFileNamePreviewTests` drives the handoff threading
+    /// its identity through.
     func testTheChainNameEqualsTheSavePanelNameForEachToken() throws {
         let model = PreferencesModel(store: InMemoryPreferenceStore())
         model.capture = CapturePreference(
@@ -183,7 +193,9 @@ final class CaptureFileNameCardTests: XCTestCase {
             fileNamePrefix: "Stare"
         )
         // The canaries the sibling tests bind: the prefix and the template
-        // field are told apart by content, never by tree order.
+        // field, when there was one, are told apart by content, never by
+        // tree order. Since S4 only the template field exists, and the
+        // prefix canary's ABSENCE is pinned above.
         model.capture.fileNamePrefix = "Shots"
         model.capture.fileNameTemplate = "{date}"
 

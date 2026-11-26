@@ -5,21 +5,21 @@ import XCTest
 @testable import Stare
 import StareCore
 
-/// The prefix rule (S4 follow-up, option A — destination-independent): the
-/// Name prefix field is enabled exactly when the name template is empty.
-/// While a template is set the template builds the WHOLE file name, so the
-/// prefix stands down wherever the capture goes — clipboard or folder — and
-/// no control in the pane is silently dead: the control that governs is the
-/// one that looks alive. Clearing the template brings the prefix back with
-/// the legacy prefix name. Rendered through
-/// `SettingsView.pane(for: .capture, …)` into a real window, the way the
-/// neighbouring Settings render tests do; the prefix is identified by its
-/// bound on-screen string ("Shots"), never by tree order. The name the
-/// pane's own text promises is read through the very call the pane's preview
-/// row makes (`CaptureEditorCanvas.savePanelFileName`) against the same
-/// model capture, at a fixed instant — SwiftUI `Text` is not an
+/// S4 RE-DERIVED from the D4 naming pins: the Name prefix row is gone — the
+/// template supersedes it, and a control the template always overrides has
+/// no business in the pane — but the stored prefix keeps working EXACTLY as
+/// it does today when the template is empty: that is the fallback path, a
+/// user who clears the template still gets a name, and the pane keeps
+/// saying what name will be written in both states through the very call
+/// the save panel makes (`CaptureEditorCanvas.savePanelFileName`) against
+/// the same model capture, at a fixed instant — SwiftUI `Text` is not an
 /// `NSTextField` in the hosting tree, so the displayed string cannot be
-/// walked, but the value is exactly what the pane renders.
+/// walked, but the value is exactly what the pane renders. Rendered into a
+/// real window, the way the neighbouring Settings render tests do; the
+/// prefix's absence is asserted through its bound canary string ("Shots"),
+/// never by tree order. Also S4's leftover from the earlier unit: switching
+/// to the folder destination must prefill the folder a fresh install really
+/// writes into, never the `~/Documents` a previous build shipped.
 @MainActor
 final class CapturePrefixAndTemplateTests: XCTestCase {
 
@@ -55,38 +55,38 @@ final class CapturePrefixAndTemplateTests: XCTestCase {
         ))!
     }()
 
-    // MARK: - The rule
+    // MARK: - The rule, re-derived for the row's removal (S4)
 
-    func testTemplateSetDisablesThePrefixForEachDestinationAndTheTemplateNamesTheFile() throws {
+    func testTemplateSetNamesTheFileForEachDestinationAndThePrefixRowIsGone() throws {
         for destination in [CaptureDestination.clipboard, .folder(path: "~/Pictures/Stare")] {
-            let pane = try Self.read(destination: destination, template: "{date}")
-            XCTAssertFalse(
-                pane.prefix.isEnabled,
-                "\(Self.label(for: destination)): with a template set it builds the whole file name, so the prefix stands down wherever the capture goes"
-            )
+            let pane = try Self.render(model: Self.model(destination: destination), template: "{date}")
             XCTAssertEqual(
                 CaptureEditorCanvas.savePanelFileName(
-                    preference: pane.capture, at: Self.sample, calendar: Self.calendar
+                    preference: pane.model.capture, at: Self.sample, calendar: Self.calendar
                 ),
                 "2026-11-21.png",
-                "\(Self.label(for: destination)): the pane's own text promises the template's name — the prefix never touches it while the template is set"
+                "\(Self.label(for: destination)): the pane's text promises the template's name — the prefix never touches it while the template is set"
+            )
+            XCTAssertFalse(
+                pane.fields.hasPrefixRow,
+                "S4: with a template set nothing may still be the prefix row — a control the template always overrides is gone from the pane"
             )
         }
     }
 
-    func testTemplateEmptyEnablesThePrefixForEachDestinationAndThePrefixNamesTheFile() throws {
+    func testTemplateEmptyHandsTheNameBackToTheStoredPrefixForEachDestination() throws {
         for destination in [CaptureDestination.clipboard, .folder(path: "~/Pictures/Stare")] {
-            let pane = try Self.read(destination: destination, template: "")
-            XCTAssertTrue(
-                pane.prefix.isEnabled,
-                "\(Self.label(for: destination)): with the template cleared the legacy prefix name governs again, so the prefix is editable wherever the capture goes"
-            )
+            let pane = try Self.render(model: Self.model(destination: destination), template: "")
             XCTAssertEqual(
                 CaptureEditorCanvas.savePanelFileName(
-                    preference: pane.capture, at: Self.sample, calendar: Self.calendar
+                    preference: pane.model.capture, at: Self.sample, calendar: Self.calendar
                 ),
                 "Shots-2026-11-21-at-14-05-33.png",
-                "\(Self.label(for: destination)): the pane's own text promises the prefix's name — exactly what the prefix edits while the template is empty"
+                "\(Self.label(for: destination)): the stored prefix keeps working exactly as it does today when the template is empty — that is the fallback path, and a user who clears the template still gets a name the pane states (S4)"
+            )
+            XCTAssertFalse(
+                pane.fields.hasPrefixRow,
+                "S4: the fallback needs no row to be real — the chain's source names the prefix, the stored value keeps naming"
             )
         }
     }
@@ -94,10 +94,20 @@ final class CapturePrefixAndTemplateTests: XCTestCase {
     // MARK: - The render the assertions read
 
     private struct Fields {
-        let prefix: NSTextField
-        /// The capture the rendered pane was built from, so the test computes
-        /// the promised name through the pane's own preview call.
-        let capture: CapturePreference
+        /// Every text field in the hosting tree, in walk order.
+        let allTextFields: [NSTextField]
+        /// The prefix row's canary string is gone from the render (S4);
+        /// read as a property so every state test pin asserts it the same
+        /// way, by content never by tree order.
+        var hasPrefixRow: Bool {
+            allTextFields.contains { $0.stringValue == "Shots" }
+        }
+    }
+
+    private struct Rendered {
+        let pane: CapturePane
+        let model: PreferencesModel
+        let fields: Fields
     }
 
     private static func label(for destination: CaptureDestination) -> String {
@@ -105,25 +115,28 @@ final class CapturePrefixAndTemplateTests: XCTestCase {
         return "clipboard"
     }
 
-    /// The capture pane rendered offscreen at the given destination and
-    /// template, its prefix field located by its on-screen string.
-    private static func read(destination: CaptureDestination, template: String) throws -> Fields {
+    private static func model(destination: CaptureDestination) -> PreferencesModel {
         let model = PreferencesModel(store: InMemoryPreferenceStore())
         model.capture = CapturePreference(
             format: .png,
             destination: destination,
             fileNamePrefix: "Stare"
         )
-        // The prefix is bound to "Shots": the field must be found by content
-        // on screen, not by tree order ("Stare" stays the fallback prefix in
-        // the same blob, so a lookup by "Shots" proves it is the row's field).
+        // The prefix canary ("Shots"): bound into the blob so its ABSENCE
+        // from the render proves the row's removal (the template canary is
+        // whatever `template` the caller binds).
         model.capture.fileNamePrefix = "Shots"
+        return model
+    }
+
+    private static func render(model: PreferencesModel, template: String) throws -> Rendered {
+        // The template canary is bound by content, never by tree order.
         model.capture.fileNameTemplate = template
 
         let permission = PermissionProbe(
             permission: ScreenRecordingPermission(client: StubScreenRecordingClient())
         )
-        let pane = SettingsView.pane(for: .capture, width: 766, model: model, permission: permission)
+        let pane = CapturePane(model: model, cardsWidth: 766)
         let hosting = NSHostingView(rootView: pane)
         let size = CGSize(width: 766 + 2 * SettingsMetrics.panePadding, height: 680)
         hosting.frame = CGRect(origin: .zero, size: size)
@@ -155,8 +168,20 @@ final class CapturePrefixAndTemplateTests: XCTestCase {
         }
         walk(hosting)
 
-        let named = Dictionary(grouping: textFields, by: { $0.stringValue })
-        let prefix = try XCTUnwrap(named["Shots"]?.first, "the prefix field must render its bound string")
-        return Fields(prefix: prefix, capture: model.capture)
+        return Rendered(pane: pane, model: model, fields: Fields(allTextFields: textFields))
+    }
+
+    // MARK: - The folder prefill's own render (S4 leftover)
+
+    func testSwitchingToAFolderPrefillsTheFolderAFreshInstallActuallyWritesInto() throws {
+        let model = Self.model(destination: .clipboard)
+        let rendered = try Self.render(model: model, template: "{date}")
+        let request = rendered.pane.destinationSelection
+        request.wrappedValue = 1
+        XCTAssertEqual(
+            model.capture.destination,
+            .folder(path: CapturePreference.defaultDestinationFolder),
+            "S4 leftover: the folder copy must not contradict the default — a fresh install writes into \(CapturePreference.defaultDestinationFolder)"
+        )
     }
 }

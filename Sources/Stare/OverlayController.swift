@@ -116,6 +116,45 @@ private enum HistoryEntry {
     }
 }
 
+/// The {app}/{display} identity a delivered capture was resolved with (S5),
+/// kept so a later editor handoff — which carries only the image — can name
+/// THAT capture truthfully. Keyed by the image's object identity, and the
+/// RETAINED image sits in the entry: a non-retaining key proved unsound in
+/// the RED run, because a freed CGImage's address gets recycled by a later
+/// allocation and the identity of one capture silently reaches for another
+/// (the worker's own eviction probe caught a count that never grew past
+/// four). Retaining is bounded by the cap and holds nothing the session
+/// history does not already hold for the session; whatever is not here —
+/// an edited variant, a capture from a previous session, an evicted one —
+/// reads back as `.unknown`, and BOTH paths (the save panel's preview and
+/// the file it writes) agree on the same refusal into the prefix fallback.
+final class EditorIdentityLedger {
+    private let limit: Int
+    private var entries: [(image: CGImage, identity: CaptureEditorIdentity)] = []
+
+    init(limit: Int) { self.limit = max(1, limit) }
+
+    /// Registers the capture tail's ONE resolution for an image, replacing
+    /// any older entry for the same image, trimming to the bound.
+    func register(_ image: CGImage, identity: CaptureEditorIdentity) {
+        let key = ObjectIdentifier(image)
+        entries.removeAll { ObjectIdentifier($0.image) == key }
+        entries.append((image, identity))
+        if entries.count > limit {
+            entries.removeFirst(entries.count - limit)
+        }
+    }
+
+    /// The identity a capture was resolved with, or `.unknown` — never a
+    /// stale name for a capture the ledger evicted. The lookup is the
+    /// object's identity: a pixel-equal but distinct capture inherits
+    /// nothing, because an identical capture is a different capture.
+    func identity(for image: CGImage) -> CaptureEditorIdentity {
+        let key = ObjectIdentifier(image)
+        return entries.reversed().first { ObjectIdentifier($0.image) == key }?.identity ?? .unknown
+    }
+}
+
 /// Owns the drawing overlay: one panel per display, the editor state shared
 /// with the toolbar, and the activate/deactivate lifecycle.
 final class OverlayController {
@@ -245,7 +284,23 @@ final class OverlayController {
     /// The editor handoff the capture card's click and the session history's
     /// reopen share (T3): production is `CaptureEditorController.open`; tests
     /// inject a witness so the routing is verifiable without opening a window.
-    private let openEditor: (CGImage, CapturePreference, RedactionStyle) -> Void
+    /// The fourth argument (T5/S5) is the capture's naming identity the
+    /// handoff threads into the editor's save panel; the injected test
+    /// witness is the old (image, capture) contract — its assertions were
+    /// never about which app was captured.
+    private let openEditor: (CGImage, CapturePreference, RedactionStyle, CaptureEditorIdentity) -> Void
+
+    /// The {app}/{display} identity per capture kept for the editor handoff
+    /// (S5): the capture tail resolves them once and registers them here, so
+    /// the card's click or a history reopen names THAT capture truthfully
+    /// even when the destination was the clipboard and nothing was written.
+    /// Bounded and identity-keyed, the images retained — see the ledger's
+    /// own doc above for why the retention is exact and capped.
+    private let editorIdentities: EditorIdentityLedger
+    /// How many captures' identities the editor handoff keeps (S5): recent,
+    /// but a session-history-sized cap on the entries, so an old capture
+    /// reopens with the refused tokens rather than a stale name.
+    static let identityLedgerLimit = 16
     /// The session capture history (T3/S12): every delivered capture is
     /// remembered here in memory only, and the History pane reopens entries
     /// through the same editor handoff the card uses. The shared store is the
@@ -297,16 +352,20 @@ final class OverlayController {
         self.state = editorState
         let editor = CaptureEditorController()
         self.editor = editor
+        self.editorIdentities = EditorIdentityLedger(limit: Self.identityLedgerLimit)
         self.openEditor = editorHandoff.map { handoff in
-            { image, capture, _ in handoff(image, capture) }
-        } ?? { image, capture, redactionStyle in
+            { image, capture, _, _ in handoff(image, capture) }
+        } ?? { image, capture, redactionStyle, identity in
             // S4: the editor's chrome is always the horizontal row at the
             // top — the read-only snapshot T1 once took of the user's bar
             // configuration is withdrawn (L4) — so the handoff carries only
-            // the capture itself. The editor still never receives the
-            // preferences model, so nothing it does can persist into the
-            // saved bar.
-            editor.open(image: image, capture: capture, redactionStyle: redactionStyle)
+            // the capture itself plus its naming identity (S5). The editor
+            // still never receives the preferences model, so nothing it
+            // does can persist into the saved bar.
+            editor.open(
+                image: image, capture: capture, redactionStyle: redactionStyle,
+                app: identity.app, displayName: identity.displayName
+            )
         }
         wireEditor()
         // The panel's hiding hands key focus back to whatever was working
@@ -465,14 +524,43 @@ final class OverlayController {
     /// history's reopen both land here. A mode still on screen gives way first
     /// — an armed layer would sit above the editor eating every click — and
     /// with no mode active both guards no-op. The composed image is opened as
-    /// it arrived: never recomposed over what the session holds now.
+    /// it arrived: never recomposed over what the session holds now. The
+    /// capture's naming identity (S5) is read from the ledger the capture
+    /// tail filled at delivery — the same resolution the folder save wrote
+    /// with, so the save panel this opens previews and writes the very name
+    /// that capture owns; an image the ledger does not hold (a previous
+    /// session's, an edited variant, an evicted one) arrives as none, and
+    /// the {app}/{display} tokens refuse into the prefix fallback exactly
+    /// as the contract says both paths agree on.
     func openCaptureEditor(_ image: CGImage) {
+        openCaptureEditor(image, captureIdentity: editorIdentities.identity(for: image))
+    }
+
+    /// The handoff with the naming identity threaded (S5): the overload the
+    /// image-only one dispatches through, split so a test can pin what the
+    /// ledger resolves without driving a deliver. Internal so the tests
+    /// drive the routing without opening a window.
+    func openCaptureEditor(_ image: CGImage, captureIdentity: CaptureEditorIdentity) {
         if isBoardActive {
             closeBoard(restoringFocus: false)
         } else {
             deactivate(restoringFocus: false)
         }
-        openEditor(image, capturePreference(), state.redactionStyle)
+        openEditor(image, capturePreference(), state.redactionStyle, captureIdentity)
+    }
+
+    /// The capture tail's ONE identity registration (S5), exposed internal so
+    /// the tests pin the ledger's per-image keys and its bound without
+    /// driving a real deliver: the tests register the exact resolution the
+    /// tail makes and read back through the same lookup the handoff makes.
+    func registerCaptureIdentity(_ image: CGImage, _ identity: CaptureEditorIdentity) {
+        editorIdentities.register(image, identity: identity)
+    }
+
+    /// The identity for an image, read the way the handoff reads it (S5) —
+    /// internal for the tests, the same lookup production makes.
+    func editorIdentity(for image: CGImage) -> CaptureEditorIdentity {
+        editorIdentities.identity(for: image)
     }
 
     private func wireEditor() {
@@ -1163,7 +1251,8 @@ final class OverlayController {
     /// on the pasteboard — and a folder destination writes the file named by
     /// `CapturePreference.fileName(at:)` in the chosen format, saying where
     /// it went in the in-overlay pill; if the write fails the capture falls
-    /// back to the clipboard instead of being lost.
+    /// back to the clipboard instead of being lost (S5: the name and the
+    /// editor handoff both take the identity resolved below, one place).
     private func deliver(_ composed: CGImage, area: CGRect?, canvas: DisplayCanvas, displayID: CGDirectDisplayID) {
         let scale = CGFloat(composed.width) / max(canvas.panel.frame.width, 1)
         let result: CGImage
@@ -1177,21 +1266,31 @@ final class OverlayController {
         let preference = capturePreference()
         // One instant for the name and the pill, so they always agree.
         let date = Date()
+        // The naming identity, resolved ONCE for every destination (S5): the
+        // folder save's {app}/{display} tokens and the later editor handoff
+        // (the card's click, a history reopen) must take the same values, so
+        // the save panel previews and writes the name this capture was
+        // resolved with. {app} must name what was captured, never Stare
+        // itself: during a capture from the whiteboard, or straight after
+        // the overlay opens, Stare can be the frontmost application, and a
+        // file named after the tool is a silent lie.
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        let appName = CaptureAppIdentity.appName(
+            frontmostName: frontmost?.localizedName,
+            frontmostProcessIdentifier: frontmost?.processIdentifier
+        )
+        let displayName: String? = screen(for: canvas.displayID)?.localizedName
         // The history holds what the user actually got (T2a): every finished
         // capture funnels through here, whatever destination the preference
         // chose. A store write failure never breaks the capture — the store
-        // keeps it in memory for the session and logs.
+        // keeps it in memory for the session and logs. The identity is
+        // registered for the S5 handoff before anything else, so the editor
+        // opens from this capture with the values the resolution made, not
+        // ones a later frontmost report would say.
+        editorIdentities.register(
+            result, identity: CaptureEditorIdentity(app: appName, displayName: displayName))
         captureHistoryStore.add(result, date: date)
         if case .folder = preference.destination, preference.destination.isUsablePath {
-            // {app} must name what was captured, never Stare itself: during a capture from
-            // the whiteboard or straight after the overlay opens, Stare can be the
-            // frontmost application, and a file named after the tool is a silent lie.
-            let frontmost = NSWorkspace.shared.frontmostApplication
-            let appName = CaptureAppIdentity.appName(
-                frontmostName: frontmost?.localizedName,
-                frontmostProcessIdentifier: frontmost?.processIdentifier
-            )
-            let displayName: String? = screen(for: canvas.displayID)?.localizedName
             if let url = CaptureFile.write(
                 result, preference: preference, date: date, scale: scale,
                 app: appName, displayName: displayName

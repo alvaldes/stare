@@ -4,6 +4,24 @@ import SwiftUI
 import StareCore
 import UniformTypeIdentifiers
 
+/// The capture's {app}/{display} naming identity (S5), one value pair one
+/// capture was resolved with: the capture tail resolves it once at
+/// delivery — exactly where a folder save resolves it — and the editor's
+/// save panel renders and writes through the same pair, so a template can
+/// never be previewed under one name and written under another. The type
+/// lives with the editor because the editor is where the pair is honoured.
+/// `.unknown` is the honest absent case: an identity no capture exists
+/// for — this editor's own composed variant, a capture evicted from the
+/// bounded ledger or reopened from a previous session — and both paths
+/// then agree on the same refusal into the prefix-name fallback the
+/// Settings preview documents.
+struct CaptureEditorIdentity: Equatable {
+    var app: String?
+    var displayName: String?
+
+    static let unknown = CaptureEditorIdentity(app: nil, displayName: nil)
+}
+
 /// Editing a capture: the image with the tools on top, crop, copy and save.
 /// The capture arrives with its marks already composed, so this is a second layer
 /// over a real picture. The save panel's default name and format come from the
@@ -24,12 +42,15 @@ final class CaptureEditorController {
     var windowsForTesting: [CaptureEditorWindow] { windows }
 
     func open(
-        image: CGImage, capture: CapturePreference = .standard, redactionStyle: RedactionStyle = .blur
+        image: CGImage, capture: CapturePreference = .standard, redactionStyle: RedactionStyle = .blur,
+        app: String? = nil, displayName: String? = nil
     ) {
         let window = CaptureEditorWindow(
             image: image,
             capture: capture,
             redactionStyle: redactionStyle,
+            app: app,
+            displayName: displayName,
             onDeliver: onDeliver
         ) { [weak self] closing in
             self?.windows.removeAll { $0 === closing }
@@ -53,11 +74,14 @@ final class CaptureEditorWindow: NSWindow {
         image: CGImage,
         capture: CapturePreference,
         redactionStyle: RedactionStyle = .blur,
+        app: String? = nil,
+        displayName: String? = nil,
         onDeliver: ((CGImage) -> Void)? = nil,
         onClose: @escaping (CaptureEditorWindow) -> Void
     ) {
         let content = CaptureEditorContent(
-            image: image, capture: capture, redactionStyle: redactionStyle)
+            image: image, capture: capture, redactionStyle: redactionStyle,
+            app: app, displayName: displayName)
         content.onDeliver = onDeliver
         super.init(
             contentRect: CGRect(origin: .zero, size: content.preferredSize),
@@ -125,7 +149,8 @@ final class CaptureEditorContent: NSView {
     }
 
     init(
-        image: CGImage, capture: CapturePreference, redactionStyle: RedactionStyle
+        image: CGImage, capture: CapturePreference, redactionStyle: RedactionStyle,
+        app: String? = nil, displayName: String? = nil
     ) {
         self.capture = capture
         // The state is created once, detached (T1/S1's read-only contract):
@@ -135,6 +160,11 @@ final class CaptureEditorContent: NSView {
         seeded.seedBackdrop(from: capture)
         state = seeded
         canvas = CaptureEditorCanvas(image: image)
+        // The capture's naming identity (S5): the {app}/{display} the
+        // overlay resolved for THIS capture, threaded through the handoff.
+        // The save panel renders and writes through it — see the canvas's
+        // `fileNameContext`, the one place both paths keep agreeing on.
+        canvas.fileNameContext = CaptureEditorIdentity(app: app, displayName: displayName)
         chrome = NSHostingView(
             rootView: EditorChrome(
                 state: state,
@@ -1014,6 +1044,18 @@ final class CaptureEditorCanvas: NSView {
         // `receiveCapture(atView:)`, which paste shares.
         registerForDraggedTypes([.fileURL, .png, .tiff])
     }
+
+    /// The capture's {app}/{display} naming identity (S5), threaded through
+    /// the editor handoff from the ONE resolution the capture tail keeps.
+    /// The save panel's default name renders through it and the file the
+    /// panel writes carries it, because both come from the one
+    /// `savePanelFileName` call with these same values — a preview the save
+    /// cannot contradict. `.unknown` is the unknown-identity case: the
+    /// tokens refuse and the name falls back to the prefix, exactly as the
+    /// Settings preview documents for a pane that cannot know a future
+    /// capture. Internal so the tests read what a save panel will show
+    /// without running one.
+    var fileNameContext = CaptureEditorIdentity.unknown
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
@@ -2242,30 +2284,27 @@ final class CaptureEditorCanvas: NSView {
         Diag.log("editor copied \(composed.width)x\(composed.height)")
     }
 
-    /// The name the save panel's field defaults from — one call, and the
-    /// same call with the same inputs the Settings preview makes (S4): no
-    /// app, no display. The editor genuinely cannot know either. The capture
-    /// instant is gone by the time the panel opens: while the editor is up,
-    /// Stare itself is the frontmost application, so even `CaptureAppIdentity`
-    /// — the capture path's own resolver — refuses `{app}` by contract (`{app}`
-    /// must name what was captured, never the tool), and the only screen the
-    /// editor sees is its own window's, never necessarily the captured
-    /// display. Asking nothing is the honest answer: with no value the tokens
-    /// refuse and the template degrades to the prefix name — the same
-    /// fallback the Settings preview shows, never a name the preview does
-    /// not promise.
+    /// The name the save panel's field defaults from — ONE call, used by
+    /// the panel itself and by the Settings chain preview, so a template is
+    /// never previewed under one name and written under another (S4).
+    /// `app` and `displayName` (S5) are the capture's identity when the
+    /// capture tail threaded it through the editor handoff, none when it
+    /// is not; a missing value refuses its token and the template degrades
+    /// to the prefix name, exactly as `fileName(at:)` refuses.
     static func savePanelFileName(
-        preference: CapturePreference, at date: Date, calendar: Calendar = .current
+        preference: CapturePreference, at date: Date, calendar: Calendar = .current,
+        app: String? = nil, displayName: String? = nil
     ) -> String {
-        preference.fileName(at: date, calendar: calendar, app: nil, display: nil)
+        preference.fileName(at: date, calendar: calendar, app: app, display: displayName)
     }
 
     /// The save panel defaults to the persisted capture preference: the file
-    /// name is `CapturePreference.fileName(at:)` — the template's rendered
-    /// shape, the prefix name when the template is empty or refuses — and
-    /// the chosen format sets the panel's type and extension, instead of
-    /// the hardcoded "Stare.png" (T11/S6). The inputs are the preview's
-    /// inputs (S4): `app` and `display` are `nil`, see `savePanelFileName`.
+    /// name is `CapturePreference.fileName(at:)` rendered through the one
+    /// `savePanelFileName` call with the naming identity THIS capture
+    /// arrived with (S5) — the same values the capture tail's folder save
+    /// and preview render from, so the panel's field and the written file
+    /// can never disagree. The chosen format sets the panel's type and
+    /// extension, instead of the hardcoded "Stare.png" (T11/S6).
     func savePanel(preference: CapturePreference, onSaved: (() -> Void)? = nil) {
         // T2/S2: the save encodes the SAME composed pixels the copy path
         // takes, with the one format step `CaptureFile.write` performs
@@ -2274,7 +2313,10 @@ final class CaptureEditorCanvas: NSView {
         let panel = NSSavePanel()
         let isPNG = preference.format == .png
         panel.allowedContentTypes = [isPNG ? UTType.png : UTType.jpeg]
-        panel.nameFieldStringValue = Self.savePanelFileName(preference: preference, at: Date())
+        panel.nameFieldStringValue = Self.savePanelFileName(
+            preference: preference, at: Date(),
+            app: fileNameContext.app, displayName: fileNameContext.displayName
+        )
         panel.begin { response in
             guard response == .OK, let url = panel.url,
                 let data = CaptureFile.data(for: composed, format: preference.format) else {
