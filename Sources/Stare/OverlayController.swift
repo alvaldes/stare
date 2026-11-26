@@ -494,12 +494,46 @@ final class OverlayController {
         cards.onPin = { [weak self] image, screen in
             self?.pinImage(image, on: screen)
         }
+        // The action row's copy (C3/S3): the capture tail's ONE pasteboard
+        // write — the same `copy(_:to:)` the delivery, the history pick and
+        // the write-failure fallback answer. The card carries no writer of
+        // its own, so the row can never produce bytes a delivery would not.
+        cards.onCopy = { [weak self] image in
+            self?.copy(image, to: NSPasteboard.general)
+        }
+        cards.onSave = { [weak self] image in
+            self?.saveFromCard(image)
+        }
     }
 
     /// The card path's pin: floats one capture near the card it came from.
     func pinImage(_ image: CGImage, on screen: NSScreen?) {
         pinnedImages.pin(image, on: screen)
     }
+
+    /// The action row's save (C3/S3): the capture tail's OWN file path —
+    /// `CaptureFile.write` into the persisted capture destination, read at
+    /// action time like the delivery path reads it. Its failure rule is the
+    /// one `deliver` applies: nothing writable, the capture lands on the
+    /// clipboard instead of being lost — which is exactly the clipboard
+    /// destination's own behaviour too. The write is NOT a new capture: the
+    /// card never re-commits (S2), so neither history sees another entry —
+    /// the one this capture earned was written at delivery. Internal so the
+    /// tests drive the real routing.
+    func saveFromCard(_ image: CGImage) {
+        let date = Date()
+        if let url = CaptureFile.write(image, preference: capturePreference(), date: date) {
+            Diag.log("card saved \(url.lastPathComponent)")
+            return
+        }
+        copy(image, to: NSPasteboard.general)
+        Diag.log("card save not writable; copied \(image.width)x\(image.height)")
+    }
+
+    /// The card stack, so the tests can drive the cards the capture tail
+    /// feeds into and reach the action row through the wiring this controller
+    /// installed (C3/S3). Detached tests close what they open.
+    var captureCardsForTesting: CaptureCardController { cards }
 
     /// The global shortcut's pin (⌥⇧I): floats the session's latest capture
     /// where the user is. Nothing captured yet is a logged no-op.

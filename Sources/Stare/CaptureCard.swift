@@ -1,8 +1,11 @@
 import AppKit
+import StareCore
+import UniformTypeIdentifiers
 
 /// A capture, shown as a card in the corner: hover extends its life, click opens
-/// the editor, the pin fixes it in place, the close dismisses it, and it can be
-/// dragged straight into another app (S1).
+/// the editor, an action row underneath the thumbnail carries the copy, save,
+/// annotate, pin and discard commands, and the capture can be dragged out as a
+/// file promise (C3/S3).
 final class CaptureCard: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
@@ -20,7 +23,9 @@ final class CaptureCard: NSPanel {
         image: CGImage,
         onOpen: @escaping (CGImage) -> Void,
         onDismiss: @escaping () -> Void,
-        onPinRequested: @escaping (CGImage, NSScreen?) -> Void
+        onPinRequested: @escaping (CGImage, NSScreen?) -> Void,
+        onCopy: @escaping (CGImage) -> Void,
+        onSave: @escaping (CGImage) -> Void
     ) {
         let size = CaptureCardView.preferredSize(for: image)
         let view = CaptureCardView(
@@ -28,7 +33,9 @@ final class CaptureCard: NSPanel {
             onOpen: { onOpen(image) },
             onClose: {
                 onDismiss()
-            }
+            },
+            onCopy: { onCopy(image) },
+            onSave: { onSave(image) }
         )
         // T4/S6: the pin action carries the image and the card's own screen,
         // resolved where it actually happens — on the card. The same press also
@@ -75,8 +82,9 @@ final class CaptureCard: NSPanel {
 }
 
 /// The card's plate: the thumbnail with the pin and close controls on its top
-/// right corner, all of it one drag source for dragging into another app.
-final class CaptureCardView: NSView, NSDraggingSource {
+/// right corner, an action row on the strip under the picture, and the whole
+/// thing a drag source for dragging into another app as a file promise.
+final class CaptureCardView: NSView, NSDraggingSource, NSFilePromiseProviderDelegate {
     /// S1: the card shrank. It used to cap the thumbnail at 260×170 with an 8 pt
     /// backdrop, which made a small result look like a window; 190×126 keeps the
     /// capture readable and the card a card.
@@ -90,6 +98,23 @@ final class CaptureCardView: NSView, NSDraggingSource {
     /// A tall or small capture never makes the plate narrower than this.
     static let minimumContentWidth: CGFloat = 132
 
+    // The action row (C3/S3): the frame strip under the picture, and the five
+    // commands it carries. Every action routes through a closure the card was
+    // created with — the same one the app's own paths answer — so the card
+    // never grows a second road to the file, the pasteboard or the editor.
+    static let rowButtonSide: CGFloat = 18
+    static let rowSpacing: CGFloat = 4
+    /// The strip's height: the row's buttons plus its own breathing room.
+    static let rowStripHeight: CGFloat = 26
+    static let copyButtonIdentifier = "captureCard.copy"
+    static let saveButtonIdentifier = "captureCard.save"
+    static let annotateButtonIdentifier = "captureCard.annotate"
+    /// The row's own pin and discard carry their OWN identifiers: the corner
+    /// controls (and the tests that pin their place) keep theirs, and a walk
+    /// for "the pin button" still finds the corner one first.
+    static let rowPinButtonIdentifier = "captureCard.rowPin"
+    static let rowDiscardButtonIdentifier = "captureCard.rowDiscard"
+
     static let dismissDelay: TimeInterval = 5
     static let hoverDismissDelay: TimeInterval = 3
 
@@ -97,10 +122,17 @@ final class CaptureCardView: NSView, NSDraggingSource {
     static let closeButtonIdentifier = "captureCard.close"
 
     private let image: CGImage
+    /// The picture the card shows, read by the tests (S3): the promised file,
+    /// the pasteboard write and the saved file all carry THESE pixels, not a
+    /// rendition of them.
+    var shownImage: CGImage { image }
     private let onOpen: () -> Void
     private let onClose: () -> Void
+    private let onCopy: () -> Void
+    private let onSave: () -> Void
     private let pinButton: CaptureCardControlButton
     private let closeButton: CaptureCardControlButton
+    private let rowButtons: [CaptureCardControlButton]
     private var dismissTimer: Timer?
     private var hasBeenHovered = false
     private var isHovered = false
@@ -140,16 +172,26 @@ final class CaptureCardView: NSView, NSDraggingSource {
             width: (imageSize.width * scale).rounded(),
             height: (imageSize.height * scale).rounded()
         )
+        // The row rides under the picture, not over it: the card adds the
+        // strip's height instead of covering capture pixels (C3/S3).
         return CGSize(
             width: max(thumbnail.width, minimumContentWidth) + plateInset * 2,
-            height: thumbnail.height + plateInset * 2
+            height: thumbnail.height + plateInset * 2 + rowStripHeight
         )
     }
 
-    init(image: CGImage, onOpen: @escaping () -> Void, onClose: @escaping () -> Void) {
+    init(
+        image: CGImage,
+        onOpen: @escaping () -> Void,
+        onClose: @escaping () -> Void,
+        onCopy: @escaping () -> Void = {},
+        onSave: @escaping () -> Void = {}
+    ) {
         self.image = image
         self.onOpen = onOpen
         self.onClose = onClose
+        self.onCopy = onCopy
+        self.onSave = onSave
         pinButton = CaptureCardControlButton(
             symbol: "pin",
             accessibilityLabel: "Pin the card open",
@@ -160,6 +202,28 @@ final class CaptureCardView: NSView, NSDraggingSource {
             accessibilityLabel: "Close the card",
             identifier: Self.closeButtonIdentifier
         )
+        // The row's commands, in reading order. Pin and discard reuse the
+        // corner controls' own actions — the card carries ONE pin path and ONE
+        // dismiss path, and the row only hands them a second door.
+        let rowDefinition: [(symbol: String, label: String, identifier: String, action: Selector)] = [
+            ("doc.on.doc", "Copy the capture to the clipboard", Self.copyButtonIdentifier, #selector(copyTapped)),
+            ("square.and.arrow.down", "Save the capture to a file", Self.saveButtonIdentifier, #selector(saveTapped)),
+            ("pencil", "Annotate the capture in the editor", Self.annotateButtonIdentifier, #selector(annotateTapped)),
+            ("pin", "Pin the card open", Self.rowPinButtonIdentifier, #selector(togglePin)),
+            ("xmark", "Discard the capture", Self.rowDiscardButtonIdentifier, #selector(closeTapped))
+        ]
+        var row: [CaptureCardControlButton] = []
+        for definition in rowDefinition {
+            row.append(
+                CaptureCardControlButton(
+                    symbol: definition.symbol,
+                    accessibilityLabel: definition.label,
+                    identifier: definition.identifier,
+                    side: Self.rowButtonSide
+                )
+            )
+        }
+        rowButtons = row
         super.init(frame: CGRect(origin: .zero, size: Self.preferredSize(for: image)))
         wantsLayer = true
         layer?.cornerRadius = 10
@@ -171,6 +235,18 @@ final class CaptureCardView: NSView, NSDraggingSource {
         closeButton.action = #selector(closeTapped)
         addSubview(pinButton)
         addSubview(closeButton)
+        // The row's commands answer through the card, wired after `super.init`
+        // like the corner controls: pin and discard reuse the SAME paths, so
+        // the card carries one pin door and one dismiss door (C3/S3).
+        let rowActions: [Selector] = [
+            #selector(copyTapped), #selector(saveTapped), #selector(annotateTapped),
+            #selector(togglePin), #selector(closeTapped)
+        ]
+        for (button, action) in zip(rowButtons, rowActions) {
+            button.target = self
+            button.action = action
+            addSubview(button)
+        }
 
         rescheduleDismiss()
         Diag.log("card shown \(image.width)x\(image.height)")
@@ -186,7 +262,10 @@ final class CaptureCardView: NSView, NSDraggingSource {
     // MARK: - Controls
 
     /// The controls ride the plate's top-right corner, the close last so the
-    /// destructive one is not the one under a stray click.
+    /// destructive one is not the one under a stray click. The action row rides
+    /// its strip under the picture, centred on the content, in reading order —
+    /// copy, save, annotate, pin, discard — so the destructive action is the
+    /// row's right end, away from where the row's hands usually start.
     override func layout() {
         super.layout()
         let side = CaptureCardControlButton.side
@@ -203,6 +282,14 @@ final class CaptureCardView: NSView, NSDraggingSource {
             width: side,
             height: side
         )
+        let rowWidth = CGFloat(rowButtons.count) * Self.rowButtonSide
+            + CGFloat(rowButtons.count - 1) * Self.rowSpacing
+        var rowX = (bounds.width - rowWidth) / 2
+        let rowY = bounds.height - inset - Self.rowStripHeight + (Self.rowStripHeight - Self.rowButtonSide) / 2
+        for button in rowButtons {
+            button.frame = CGRect(x: rowX, y: rowY, width: Self.rowButtonSide, height: Self.rowButtonSide)
+            rowX += Self.rowButtonSide + Self.rowSpacing
+        }
     }
 
     /// T4/S6: what the pin target does beyond its own state — the owner floats
@@ -218,6 +305,25 @@ final class CaptureCardView: NSView, NSDraggingSource {
         dismissTimer?.invalidate()
         dismissTimer = nil
         onClose()
+    }
+
+    /// The row's commands (C3/S3): each hands the picture to the path the card
+    /// was created with — the controller's pasteboard write, its file write or
+    /// the editor handoff. The card itself commits nothing: the capture was
+    /// already delivered before the card existed.
+    @objc private func copyTapped() {
+        dismissTimer?.invalidate()
+        onCopy()
+    }
+
+    @objc private func saveTapped() {
+        dismissTimer?.invalidate()
+        onSave()
+    }
+
+    @objc private func annotateTapped() {
+        dismissTimer?.invalidate()
+        onOpen()
     }
 
     // MARK: - Hover
@@ -297,11 +403,14 @@ final class CaptureCardView: NSView, NSDraggingSource {
         context.fillPath()
 
         let inset = Self.plateInset
+        // The row takes the strip under the picture: the thumbnail keeps the
+        // plate's top inset and stops above the strip, so the commands never
+        // cover capture pixels (C3/S3).
         let target = CGRect(
             x: inset,
             y: inset,
             width: bounds.width - inset * 2,
-            height: bounds.height - inset * 2
+            height: bounds.height - inset * 2 - Self.rowStripHeight
         )
         context.saveGState()
         // The capture takes the plate's rounding: concentric with it, so the
@@ -317,6 +426,15 @@ final class CaptureCardView: NSView, NSDraggingSource {
         context.draw(image, in: target)
         context.restoreGState()
 
+        // The strip under the picture, separated from it by one hairline so
+        // the row reads as part of the plate, not as a second place on it.
+        let stripTop = target.maxY + 3
+        context.setStrokeColor(CGColor(gray: 1, alpha: 0.10))
+        context.setLineWidth(1)
+        context.move(to: CGPoint(x: inset, y: stripTop))
+        context.addLine(to: CGPoint(x: bounds.width - inset, y: stripTop))
+        context.strokePath()
+
         // A pinned card says so on the plate itself, not only on the pin.
         if isPinned {
             context.setStrokeColor(CGColor(red: 0.36, green: 0.66, blue: 1, alpha: 0.95))
@@ -329,39 +447,98 @@ final class CaptureCardView: NSView, NSDraggingSource {
     // MARK: - Actions
 
     override func mouseDown(with event: NSEvent) {
-        // Clicking opens the editor, like the reference app: the pasteboard
-        // already has the image, so copy is not the interesting action here.
+        // Clicking opens the editor, like the reference app — and the action
+        // row now carries the explicit commands beside it (C3/S3).
         dismissTimer?.invalidate()
         onOpen()
     }
 
+    /// Read by the tests (S3): the drag session the last drag-off began, so
+    /// the payload the card PROMISES can be asserted without a receiver
+    /// taking it, and the receiving app's contract is pinned in test conditions.
+    private(set) var lastDragSession: NSDraggingSession?
+
+    /// Read by the tests (S3), beside `lastDragSession`: the promise provider
+    /// the last drag-out built — the card's own file promise — so the promised
+    /// name and its bytes are asserted without a receiver taking them.
+    private(set) var lastPromiseProvider: NSFilePromiseProvider?
+
     override func mouseDragged(with event: NSEvent) {
-        let provider = NSImage(cgImage: image, size: bounds.size)
-        let item = NSDraggingItem(pasteboardWriter: provider)
-        item.setDraggingFrame(bounds, contents: provider)
-        beginDraggingSession(with: [item], event: event, source: self)
-        Diag.log("card dragged out")
+        let item = self.dragItem()
+        lastDragSession = beginDraggingSession(with: [item], event: event, source: self)
+        Diag.log("card dragged out as a file promise")
     }
+
+    /// The drag item the card drags out (S3): a FILE promise of the capture in
+    /// PNG — the file drag other apps accept, replacing the bare image the
+    /// pasteboard used to carry.
+    /// The bytes stay unwritten until the receiver actually takes the promise:
+    /// `writePromiseTo` encodes them through the capture file path's own
+    /// encoder, `CaptureFile.data(for:format:)`, so the promised file lands
+    /// byte for byte like a saved capture, in the same format the app saves
+    /// everything in. The promise's file name follows the app's own default
+    /// naming idiom ("Stare-<date>-at-<time>.png").
+    func dragItem() -> NSDraggingItem {
+        let provider = NSFilePromiseProvider(
+            fileType: UTType.png.identifier,
+            delegate: self
+        )
+        lastPromiseProvider = provider
+        let visual = NSImage(cgImage: image, size: bounds.size)
+        let item = NSDraggingItem(pasteboardWriter: provider)
+        item.setDraggingFrame(bounds, contents: visual)
+        return item
+    }
+
+    /// The promised file's name, in the app's own naming idiom (the same
+    /// date/at/time shape the default file name template renders).
+    func filePromiseProvider(
+        _ filePromiseProvider: NSFilePromiseProvider,
+        fileNameForType fileType: String
+    ) -> String {
+        let stamp = Self.promiseDateFormatter.string(from: Date())
+        return "Stare-\(stamp).png"
+    }
+
+    func filePromiseProvider(
+        _ filePromiseProvider: NSFilePromiseProvider,
+        writePromiseTo url: URL,
+        completionHandler: @escaping (Error?) -> Void
+    ) {
+        guard let data = CaptureFile.data(for: image, format: .png) else {
+            completionHandler(NSError(domain: NSCocoaErrorDomain, code: CocoaError.Code.coderReadCorrupt.rawValue))
+            return
+        }
+        do {
+            try data.write(to: url)
+            Diag.log("card drag promise wrote \(url.lastPathComponent)")
+            completionHandler(nil)
+        } catch {
+            completionHandler(error)
+        }
+    }
+
+    /// The promise's write runs off the main thread, serially: an image encode
+    /// has no reason to sit under the pointer.
+    func operationQueue(for filePromiseProvider: NSFilePromiseProvider) -> OperationQueue {
+        let queue = OperationQueue()
+        queue.maxConcurrentOperationCount = 1
+        queue.qualityOfService = .userInitiated
+        return queue
+    }
+
+    static let promiseDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd-at-HH-mm-ss"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        return formatter
+    }()
 
     func draggingSession(
         _ session: NSDraggingSession,
         sourceOperationMaskFor context: NSDraggingContext
     ) -> NSDragOperation {
         .copy
-    }
-
-    private func copyToPasteboard() {
-        let representation = NSBitmapImageRep(cgImage: image)
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.declareTypes([.png, .tiff], owner: nil)
-        if let png = representation.representation(using: .png, properties: [:]) {
-            pasteboard.setData(png, forType: .png)
-        }
-        if let tiff = representation.tiffRepresentation {
-            pasteboard.setData(tiff, forType: .tiff)
-        }
-        Diag.log("card copied again")
     }
 }
 
@@ -370,12 +547,23 @@ final class CaptureCardView: NSView, NSDraggingSource {
 final class CaptureCardControlButton: NSButton {
     static let side: CGFloat = 22
 
+    /// The button's own square: the corner controls take the class default,
+    /// the action row's buttons are smaller, so the row of five still fits
+    /// under a small capture (C3/S3).
+    let side: CGFloat
+
     var isPinned = false {
         didSet { image = Self.symbol(isPinned ? "pin.fill" : "pin") }
     }
 
-    init(symbol: String, accessibilityLabel: String, identifier: String) {
-        super.init(frame: CGRect(x: 0, y: 0, width: Self.side, height: Self.side))
+    init(
+        symbol: String,
+        accessibilityLabel: String,
+        identifier: String,
+        side: CGFloat = CaptureCardControlButton.side
+    ) {
+        self.side = side
+        super.init(frame: CGRect(x: 0, y: 0, width: side, height: side))
         image = Self.symbol(symbol)
         imagePosition = .imageOnly
         isBordered = false
@@ -385,7 +573,7 @@ final class CaptureCardControlButton: NSButton {
         setAccessibilityLabel(accessibilityLabel)
         self.identifier = NSUserInterfaceItemIdentifier(identifier)
         wantsLayer = true
-        layer?.cornerRadius = Self.side / 2
+        layer?.cornerRadius = side / 2
         layer?.backgroundColor = NSColor(white: 0, alpha: 0.55).cgColor
     }
 
@@ -434,6 +622,12 @@ final class CaptureCardController {
     /// T4/S6: arrives with the image the card shows and the screen the card
     /// lives on, so the floating window lands near what the user pinned.
     var onPin: ((CGImage, NSScreen?) -> Void)?
+    /// The action row's copy and save (C3/S3), routing through the overlay:
+    /// the pasteboard write and the file write the capture tail itself owns.
+    /// The card never re-commits — these paths never touch the histories,
+    /// whose entries were written when the capture was delivered.
+    var onCopy: ((CGImage) -> Void)?
+    var onSave: ((CGImage) -> Void)?
 
     /// S1: the cap counts the cards that may still go away by themselves. A
     /// pinned card never counts and is never closed, so pinning one is a way to
@@ -455,7 +649,9 @@ final class CaptureCardController {
             image: image,
             onOpen: { [weak self] image in self?.onOpen?(image) },
             onDismiss: { [weak self] in self?.dismiss(card) },
-            onPinRequested: { [weak self] image, screen in self?.onPin?(image, screen) }
+            onPinRequested: { [weak self] image, screen in self?.onPin?(image, screen) },
+            onCopy: { [weak self] image in self?.onCopy?(image) },
+            onSave: { [weak self] image in self?.onSave?(image) }
         )
         cards.append(card)
         evictOverflow()

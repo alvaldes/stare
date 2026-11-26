@@ -54,9 +54,12 @@ final class CaptureCardTests: XCTestCase {
         XCTAssertLessThan(size.width, oldPlate.width, "S1: the card must be smaller than the old plate")
         XCTAssertLessThan(size.height, oldPlate.height, "S1: the card must be smaller than the old plate")
         // The thumbnail keeps the capture's aspect: no crop, no letterbox.
+        // The action row's strip rides under the picture, so the height the
+        // picture fills is the card's minus both plates and the strip (C3/S3).
         let thumbnail = CGSize(
             width: size.width - CaptureCardView.plateInset * 2,
             height: size.height - CaptureCardView.plateInset * 2
+                - CaptureCardView.rowStripHeight
         )
         XCTAssertEqual(thumbnail.width / thumbnail.height, 1512.0 / 982.0, accuracy: 0.02)
     }
