@@ -24,12 +24,14 @@ final class CaptureEditorController {
     var windowsForTesting: [CaptureEditorWindow] { windows }
 
     func open(
-        image: CGImage, capture: CapturePreference = .standard, redactionStyle: RedactionStyle = .blur
+        image: CGImage, capture: CapturePreference = .standard, redactionStyle: RedactionStyle = .blur,
+        toolbar: EditorToolbarSnapshot? = nil
     ) {
         let window = CaptureEditorWindow(
             image: image,
             capture: capture,
             redactionStyle: redactionStyle,
+            toolbar: toolbar,
             onDeliver: onDeliver
         ) { [weak self] closing in
             self?.windows.removeAll { $0 === closing }
@@ -53,10 +55,12 @@ final class CaptureEditorWindow: NSWindow {
         image: CGImage,
         capture: CapturePreference,
         redactionStyle: RedactionStyle = .blur,
+        toolbar: EditorToolbarSnapshot? = nil,
         onDeliver: ((CGImage) -> Void)? = nil,
         onClose: @escaping (CaptureEditorWindow) -> Void
     ) {
-        let content = CaptureEditorContent(image: image, capture: capture, redactionStyle: redactionStyle)
+        let content = CaptureEditorContent(
+            image: image, capture: capture, redactionStyle: redactionStyle, toolbar: toolbar)
         content.onDeliver = onDeliver
         super.init(
             contentRect: CGRect(origin: .zero, size: content.preferredSize),
@@ -88,27 +92,60 @@ final class CaptureEditorWindow: NSWindow {
 /// Toolbar, canvas and the few actions an edit needs.
 final class CaptureEditorContent: NSView {
     let canvas: CaptureEditorCanvas
-    private let chrome: NSHostingView<EditorChrome>
-    private let state = EditorState()
-    /// The preference the save panel defaults from (T11/S6).
+    /// The chrome, exposed (not private) as the test seam the layout pins
+    /// assert chrome geometry through, the same way `canvas` already is.
+    let chrome: NSHostingView<EditorChrome>
+    /// The editor's own state — one instance, seeded here, shared by the
+    /// canvas, the chrome and every handler. Created `.detached` from the
+    /// app's model with `toolbar`, the overlay's read-only snapshot of the
+    /// user's bar configuration (T1/S1), which is what the chrome reads its
+    /// orientation and docked edge from.
+    let state: EditorState
+    /// The preference the save panel defaults from (T11/S6). Its stored
+    /// backdrop values are only seeds: the editor's own background control
+    /// edits per-capture values, never the stored one (T2/S2).
     private let capture: CapturePreference
     /// Where a composed variant goes once the user copies or saves it (L7).
     var onDeliver: ((CGImage) -> Void)?
+    /// The edge the chrome docks at inside this window (T1/S1): the SAME
+    /// coerced edge rule the outside bar applies at placement — a horizontal
+    /// row rides top or bottom, a column left or right, and a mismatched
+    /// stored pair lands on the orientation's own fallback edge.
+    var chromeBorder: ToolbarBorder {
+        state.toolbarBorder.docked(for: state.toolbarOrientation)
+    }
     var preferredSize: CGSize {
         let image = canvas.image
         let width = min(max(CGFloat(image.width) / 2, 480), 1100)
         let scale = width / CGFloat(image.width)
         let height = CGFloat(image.height) * scale
-        // One bar, so the window height follows its real fitting size.
-        return CGSize(width: width, height: min(max(height, 260), 760) + chrome.fittingSize.height)
+        // One bar, so the window follows its real fitting size, on the axis
+        // the bar occupies (T1/S1): a row's height joins the canvas height, a
+        // column's width joins the canvas width. The other axis keeps the
+        // canvas's own bound unless the bar needs more room than that — the
+        // bar's fitting size, never a squeezed bar, wins.
+        let chromeSize = chrome.fittingSize
+        let canvasHeight = min(max(height, 260), 760)
+        return state.toolbarOrientation == .vertical
+            ? CGSize(width: width + chromeSize.width, height: max(canvasHeight, chromeSize.height))
+            : CGSize(width: max(width, chromeSize.width), height: canvasHeight + chromeSize.height)
     }
 
-    init(image: CGImage, capture: CapturePreference, redactionStyle: RedactionStyle) {
+    init(
+        image: CGImage, capture: CapturePreference, redactionStyle: RedactionStyle,
+        toolbar: EditorToolbarSnapshot? = nil
+    ) {
         self.capture = capture
+        // The state is created once, detached (T1/S1): with the snapshot but
+        // never the model, so no editor pick persists. The per-capture
+        // background controls (T2/S2) seed from the stored default.
+        let seeded = EditorState(toolbar: toolbar)
+        seeded.seedBackdrop(from: capture)
+        state = seeded
         canvas = CaptureEditorCanvas(image: image)
         chrome = NSHostingView(
             rootView: EditorChrome(
-                state: EditorState(),
+                state: state,
                 onUndo: {},
                 onRedo: {},
                 onClear: {},
@@ -170,13 +207,41 @@ final class CaptureEditorContent: NSView {
 
     override func layout() {
         super.layout()
-        let chromeHeight = chrome.fittingSize.height
-        chrome.frame = CGRect(x: 0, y: bounds.height - chromeHeight, width: bounds.width, height: chromeHeight)
-        canvas.frame = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height - chromeHeight)
+        // T1/S1: the chrome docks on the edge the user's bar configuration
+        // names (coerced the same way the outside bar coerces), and that is
+        // where the canvas gives way — a row over or under the canvas, a
+        // column beside it. The chrome keeps its real fitting size on the
+        // axis it occupies and spans the rest for the geometry the pill's
+        // own SwiftUI self-lays out inside.
+        let chromeSize = chrome.fittingSize
+        let canvasFrame: CGRect
+        switch chromeBorder {
+        case .top:
+            let height = chromeSize.height
+            chrome.frame = CGRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
+            canvasFrame = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height - height)
+        case .bottom:
+            let height = chromeSize.height
+            chrome.frame = CGRect(x: 0, y: 0, width: bounds.width, height: height)
+            canvasFrame = CGRect(x: 0, y: height, width: bounds.width, height: bounds.height - height)
+        case .left:
+            let width = chromeSize.width
+            chrome.frame = CGRect(x: 0, y: 0, width: width, height: bounds.height)
+            canvasFrame = CGRect(x: width, y: 0, width: bounds.width - width, height: bounds.height)
+        case .right:
+            let width = chromeSize.width
+            chrome.frame = CGRect(x: bounds.width - width, y: 0, width: width, height: bounds.height)
+            canvasFrame = CGRect(x: 0, y: 0, width: bounds.width - width, height: bounds.height)
+        }
+        canvas.frame = canvasFrame
     }
 }
 
-/// One bar: the same palette as the overlay, with crop, copy and save added to it.
+/// One bar: the same palette as the overlay, laid out by the SAME bar
+/// configuration the outside bar follows (T1/S1 — the geometry, the
+/// materials and the placement rules the user configured, not a fixed
+/// strip), with the capture's own actions added to it (S3: the editor's
+/// item list is not the outside bar's list).
 struct EditorChrome: View {
     @ObservedObject var state: EditorState
     let onUndo: () -> Void
@@ -186,6 +251,24 @@ struct EditorChrome: View {
     let onCopy: () -> Void
     let onSave: () -> Void
     let onClose: () -> Void
+
+    /// Whether the background control's popover is open (T2/S2). The editor's
+    /// window IS a normal key window — unlike the overlay's screen bar — so a
+    /// real popover is allowed here: it anchors to this pill and keeps the
+    /// bar itself free of a second panel surface.
+    @State private var showsBackgroundControl = false
+
+    /// Where the background control's popover points (T2/S2): toward the
+    /// canvas, on the side the chrome is docked at — the same coerced edge
+    /// `CaptureEditorContent` lays the chrome out by.
+    private var backgroundArrowEdge: Edge {
+        switch state.toolbarBorder.docked(for: state.toolbarOrientation) {
+        case .top: .bottom
+        case .bottom: .top
+        case .left: .trailing
+        case .right: .leading
+        }
+    }
 
     var body: some View {
         ToolbarView(
@@ -198,8 +281,19 @@ struct EditorChrome: View {
                 // Crop behaves as a tool of the editor's palette (S6): it is
                 // marked from the same single armed-selection state the tools
                 // mark from — picking it unmarks the active tool and picking
-                // any tool unmarks it. Copy and save are plain actions.
+                // any tool unmarks it.
                 ToolbarAction(symbolName: "crop", help: "Crop", isSelected: state.isCropMarked, handler: onCrop),
+                // The capture's background (T2/S2): the per-capture backdrop
+                // control, where the image is. It opens the control beside
+                // this pill; Settings keeps only the stored default, so the
+                // editor edit is per capture and never persists.
+                ToolbarAction(
+                    symbolName: "rectangle.on.rectangle",
+                    help: "Background",
+                    isSelected: showsBackgroundControl,
+                    handler: { showsBackgroundControl = true }
+                ),
+                // Copy and save are plain actions.
                 ToolbarAction(symbolName: "doc.on.doc", help: "Copy", handler: onCopy),
                 ToolbarAction(symbolName: "square.and.arrow.down", help: "Save", handler: onSave),
             ],
@@ -208,6 +302,65 @@ struct EditorChrome: View {
             toolGroups: Tool.captureEditorGroups
         )
         .padding(.vertical, 6)
+        .popover(isPresented: $showsBackgroundControl, arrowEdge: backgroundArrowEdge) {
+            EditorBackgroundControl(state: state)
+        }
+    }
+}
+
+/// The capture's background control (T2/S2): padding, corner radius and the
+/// fixed shadow, the same backdrop knobs Settings' card edits — but they edit
+/// the PER-CAPTURE values here, seeded from the stored default. Nothing here
+/// writes into the stored preference: the choice lives and dies with this
+/// editor window, and Settings keeps only the default (S2).
+private struct EditorBackgroundControl: View {
+    @ObservedObject var state: EditorState
+
+    /// One row in the voice the Settings card speaks: the name, the small
+    /// helper sentence, then the control.
+    private func row(_ title: String, _ detail: String, @ViewBuilder content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Background")
+                .font(.system(size: 13, weight: .semibold))
+            row("Padding", "A transparent margin around the capture, in pixels. 0 keeps it as captured.") {
+                TextField("", value: Binding(
+                    get: { state.backdropPadding },
+                    set: { state.backdropPadding = $0 }
+                ), format: .number)
+                .frame(width: 100)
+            }
+            row("Corner radius", "Rounds the capture's corners. 0 keeps them square.") {
+                TextField("", value: Binding(
+                    get: { state.backdropCornerRadius },
+                    set: { state.backdropCornerRadius = $0 }
+                ), format: .number)
+                .frame(width: 100)
+            }
+            row("Shadow", "Draws a fixed soft shadow behind the capture.") {
+                Toggle("", isOn: Binding(
+                    get: { state.backdropShadow },
+                    set: { state.backdropShadow = $0 }
+                ))
+                .labelsHidden()
+            }
+            Text("Composed onto what this editor copies and saves. Applies to this capture only; Settings keeps the default.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(16)
+        .frame(width: 300)
     }
 }
 
@@ -1905,7 +2058,44 @@ final class CaptureEditorCanvas: NSView {
             coverage: space.coverage
         )
         let marks = session.strokes.map { target.convert($0, from: spaces[$0.id] ?? space) }
-        return MarkCompositor.composite(marks: marks, over: base, scale: target.pixelsPerPoint)
+        guard
+            let marked = MarkCompositor.composite(marks: marks, over: base, scale: target.pixelsPerPoint)
+        else { return nil }
+        // The capture's background (T2/S2), composed at exactly this ONE
+        // point: copy, the save panel and the history delivery all take their
+        // pixels from here, so the three can no longer disagree — and the
+        // stored default the editor seeded from is no longer silently
+        // ignored by a save. With every parameter off the composition is
+        // nothing and the arranged canvas is returned exactly as today,
+        // byte for byte.
+        return CaptureBackdrop.composed(
+            marked,
+            padding: state?.backdropPadding ?? 0,
+            cornerRadius: state?.backdropCornerRadius ?? 0,
+            shadow: state?.backdropShadow ?? false
+        ) ?? marked
+    }
+
+    /// The image the save panel encodes for `format` (T2/S2): the same
+    /// composed pixels `composedImage()` hands the copy and history paths,
+    /// plus the ONE extra step `CaptureFile.write` performs before its own
+    /// encode — a format that cannot carry alpha would encode the backdrop's
+    /// transparent margin as an undefined colour, so it is flattened onto
+    /// the backdrop's opaque base. Only when a backdrop is actually applied
+    /// (the same guard the composition applies), so an uncomposed save keeps
+    /// today's bytes exactly.
+    func composedImageForSave(format: CaptureFormat) -> CGImage? {
+        guard let composed = composedImage() else { return nil }
+        guard format == .jpeg, isActiveBackdrop, let flattened = CaptureBackdrop.flattened(composed) else {
+            return composed
+        }
+        return flattened
+    }
+
+    /// Whether the canvas's per-capture background composes at all (T2/S2) —
+    /// the same guard `CaptureBackdrop.composed` applies to its parameters.
+    private var isActiveBackdrop: Bool {
+        state.map { $0.backdropIsActive } ?? false
     }
 
     // MARK: - Test seam
@@ -1963,7 +2153,10 @@ final class CaptureEditorCanvas: NSView {
     /// the hardcoded "Stare.png" (T11/S6). The inputs are the preview's
     /// inputs (S4): `app` and `display` are `nil`, see `savePanelFileName`.
     func savePanel(preference: CapturePreference, onSaved: (() -> Void)? = nil) {
-        guard let composed = composedImage() else { return }
+        // T2/S2: the save encodes the SAME composed pixels the copy path
+        // takes, with the one format step `CaptureFile.write` performs
+        // (the JPEG flatten — see `composedImageForSave`).
+        guard let composed = composedImageForSave(format: preference.format) else { return }
         let panel = NSSavePanel()
         let isPNG = preference.format == .png
         panel.allowedContentTypes = [isPNG ? UTType.png : UTType.jpeg]

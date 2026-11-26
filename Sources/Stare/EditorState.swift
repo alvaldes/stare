@@ -12,6 +12,19 @@ enum CaptureSelection: Equatable {
     case crop
 }
 
+/// The capture editor's read-only snapshot of the user's bar configuration
+/// (T1/S1). The overlay reads its own mirrors the moment it hands a capture
+/// to the editor and the editor keeps only this copy: the `PreferencesModel`
+/// is NOT injected into the editor's state, so no tool pick or palette move
+/// the editor makes can persist into the user's saved bar. Stored values are
+/// the raw mirrors, the same pair the outside bar holds; consumers coerce a
+/// mismatched pair with `ToolbarBorder.docked(for:)`, the exact rule the
+/// outside bar's placement applies.
+struct EditorToolbarSnapshot: Equatable, Sendable {
+    var orientation: ToolbarOrientation
+    var border: ToolbarBorder
+}
+
 /// Editor state shared by the overlay views and the floating toolbar: the
 /// current tool, the current ink and whether the armed frame is drawn.
 ///
@@ -124,6 +137,46 @@ final class EditorState: ObservableObject {
     /// shortcut-armed everywhere.
     @Published var toolbarTools: ToolbarToolLayout = .standard {
         didSet { writeIfNotSyncing { $0.toolbarTools = toolbarTools } }
+    }
+    /// The capture's per-capture background (T2/S2), one mirrored field per
+    /// backdrop knob: padding, corner radius and the fixed shadow. Seeded by
+    /// the editor content from the stored default in `CapturePreference` and
+    /// edited by the editor's own background control. Deliberately NOT wired
+    /// into `writeIfNotSyncing` like the mirrors above: the choice is per
+    /// capture, so it must never persist — a change made while annotating
+    /// stays in memory only, and Settings keeps the default (S2).
+    @Published var backdropPadding: Int = 0 {
+        didSet {
+            // Reassigning inside a @Published field's own didSet triggers the
+            // observers again, so the clamp must converge: reassign only when
+            // the value actually changed (a plain reassignment recurses
+            // forever — observed in a crash).
+            let clamped = CaptureBackdrop.clampedPadding(backdropPadding)
+            if clamped != backdropPadding { backdropPadding = clamped }
+        }
+    }
+    @Published var backdropCornerRadius: Int = 0 {
+        didSet {
+            let clamped = CaptureBackdrop.clampedCornerRadius(backdropCornerRadius)
+            if clamped != backdropCornerRadius { backdropCornerRadius = clamped }
+        }
+    }
+    @Published var backdropShadow = false
+    /// Whether the per-capture background composes anything at all with the
+    /// current values — the same guard `CaptureBackdrop.composed` applies to
+    /// its own parameters. The save path consults it to know whether the
+    /// JPEG flatten `CaptureFile.write` performs before its encode applies.
+    var backdropIsActive: Bool {
+        backdropPadding > 0 || backdropCornerRadius > 0 || backdropShadow
+    }
+    /// Seeds the per-capture background controls from the stored default the
+    /// overlay hands in at open time (T2/S2). Called once by the capture
+    /// editor's content; everything the user changes afterwards is per
+    /// capture and never follows — or writes back to — the preference.
+    func seedBackdrop(from preference: CapturePreference) {
+        backdropPadding = preference.backdropPadding
+        backdropCornerRadius = preference.backdropCornerRadius
+        backdropShadow = preference.backdropShadow
     }
     /// Mirror of the pointer highlight diameter, in points.
     @Published var pointerSize: CGFloat {
@@ -272,7 +325,13 @@ final class EditorState: ObservableObject {
     /// Creates the state. With `preferences`, every value seeds from the one
     /// blob and every change persists through it; without it (capture
     /// editor, selftest) the state runs on the shipped defaults in memory.
-    init(preferences: PreferencesModel? = nil) {
+    /// A detached editor additionally receives `toolbar` (T1/S1): the
+    /// overlay's read-only snapshot of the user's bar configuration, taken
+    /// when the capture is handed over. The seeds below ride `didSet`s that
+    /// call `writeIfNotSyncing` — with no attached model any write is
+    /// refused, so the snapshot stays read-only exactly as the S1 contract
+    /// demands.
+    init(preferences: PreferencesModel? = nil, toolbar: EditorToolbarSnapshot? = nil) {
         self.preferences = preferences
         if let preferences {
             // The model is main-actor isolated and this state is only ever
@@ -332,8 +391,13 @@ final class EditorState: ObservableObject {
             overlayScope = OverlayScope.all.rawValue
             palettePlacement = PalettePlacement.cursor.rawValue
             laserLifetime = LaserLifetime.twoPointFive.rawValue
-            toolbarOrientation = .horizontal
-            toolbarBorder = .top
+            // T1/S1: the editor seeds the user's own bar configuration from
+            // the overlay's snapshot when one is handed in; without one
+            // (selftest harness) the shipped horizontal/top default stands,
+            // still today's values.
+            let snapshot = toolbar ?? EditorToolbarSnapshot(orientation: .horizontal, border: .top)
+            toolbarOrientation = snapshot.orientation
+            toolbarBorder = snapshot.border
             boardPageBackground = WhiteboardDefaults.standard.background.rawValue
             boardScope = WhiteboardDefaults.standard.scope.rawValue
             boardShowBorder = WhiteboardDefaults.standard.showsBorder
