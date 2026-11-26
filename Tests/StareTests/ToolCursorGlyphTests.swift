@@ -108,7 +108,9 @@ final class ToolCursorGlyphTests: XCTestCase {
     /// S7: "la elipse, el rect y arrow pasan a ser cursor cruz como la
     /// linea" — the three shape tools answer the system crosshair BY
     /// IDENTITY, the way line already does, and no drawn glyph is built for
-    /// them any more (the drawn set drops from eleven to seven).
+    /// them any more (after S7 the drawn set was seven; S1 retires two
+    /// more shapes — the blur's dot grid and the spotlight's beam — and it
+    /// is five).
     func testTheShapeToolsAnswerTheCrosshairByIdentity() throws {
         for role in [ToolCursor.lineCrosshair, .arrowCrosshair, .rectangleCrosshair, .ellipseCrosshair] {
             let cursor = OverlayView.cursor(for: role)
@@ -116,44 +118,119 @@ final class ToolCursorGlyphTests: XCTestCase {
         }
     }
 
-    // MARK: the neighbour roles keep the reads they already had
-
-    /// PRESERVE: the spotlight keeps its ring around a FILLED dot — it may
-    /// not drift into the eraser's empty circle or the number's rings. (The
-    /// rectangle joined the crosshair in S7, so its frame glyph is gone.)
-    func testSpotlightKeepsItsEstablishedRead() throws {
-        let beam = OverlayView.cursor(for: .spotlightBeam)
-        try XCTAssertGreaterThan(alpha(of: beam, at: NSPoint(x: 8, y: 8)), 0.5, "the spotlight keeps its filled source dot")
-        try XCTAssertGreaterThan(alpha(of: beam, at: NSPoint(x: 8 + 4.6, y: 8)), 0.5, "the spotlight keeps its ring")
+    /// S1: "los cursores del blur y el spotlight deben ser la cruz" — the
+    /// blur and the spotlight stop owning drawn glyphs and answer the
+    /// system crosshair BY IDENTITY through their own roles, the way the
+    /// shape tools do. No drawn glyph may claim them either: the retired
+    /// dot grid and beam art must never come back under the crosshair
+    /// roles.
+    func testBlurAndSpotlightAnswerTheCrosshairByIdentity() throws {
+        for tool in [Tool.blur, .spotlight] {
+            let cursor = OverlayView.cursor(for: tool.cursor)
+            XCTAssertTrue(
+                cursor === NSCursor.crosshair,
+                "S1: \(tool.rawValue) must answer the drafting crosshair by identity, not a drawn glyph")
+        }
+        for role in [ToolCursor.blurCrosshair, .spotlightCrosshair] {
+            XCTAssertFalse(
+                OverlayView.isGlyphServed(role),
+                "S1: \(role) must not be served by a drawn glyph — the crosshair answers it")
+        }
     }
 
-    // MARK: the whole drawn set keeps its contract
+    /// S1's contract pin: EVERY cursor role is answered by exactly one of
+    /// the two serving halves, pinned role by role — so the contract cannot
+    /// silently lose one, and the mapping's `?? .crosshair` fallback can
+    /// never dress a lost role as served. No role variable is ever iterated
+    /// or compared with `==`: this suite's runtimes have shown equality on
+    /// `ToolCursor` collapsing the cases, so these pins go through pointer
+    /// identity (`===`) and count checks — literal per-role code neither
+    /// bug can fool. This test absorbs the old per-role shape contract the
+    /// withdrawn `testEveryDrawnRoleBuildsAFullSizeCentredGlyph` pinned.
+    func testTheContractCoversEveryRoleExactlyOnceAndServesEachRightly() throws {
+        // The vocabulary is exactly the tool set: a fourteenth or twelfth
+        // role fails the count, and a new role fails to compile the pins
+        // below until it is pinned to one half.
+        XCTAssertEqual(ToolCursor.allCases.count, Tool.allCases.count, "one role per tool")
+        XCTAssertEqual(ToolCursor.allCases.count, 13, "the vocabulary is exactly the tool set")
 
-    /// The system roles answer the exact AppKit cursor by identity; every
-    /// other role builds a 16-pt glyph with the hotspot at the centre (so the
-    /// mark still lands under the pointer) and never silently falls back to a
-    /// system cursor.
-    func testEveryDrawnRoleBuildsAFullSizeCentredGlyph() throws {
-        let system: [ToolCursor: NSCursor] = [
-            .editArrow: .arrow, .textIBeam: .iBeam,
-            .lineCrosshair: .crosshair, .arrowCrosshair: .crosshair,
-            .rectangleCrosshair: .crosshair, .ellipseCrosshair: .crosshair,
-        ]
-        for role in ToolCursor.allCases {
-            let cursor = OverlayView.cursor(for: role)
-            if let expected = system[role] {
-                XCTAssertTrue(cursor === expected, "\(role) must be the system cursor")
-            } else {
-                XCTAssertEqual(cursor.image.size.width, 16, "\(role) glyph width")
-                XCTAssertEqual(cursor.image.size.height, 16, "\(role) glyph height")
-                XCTAssertEqual(cursor.hotSpot.x, 8, "\(role) hotspot x")
-                XCTAssertEqual(cursor.hotSpot.y, 8, "\(role) hotspot y")
-                for (_, systemCursor) in system {
-                    XCTAssertTrue(cursor !== systemCursor, "\(role) fell back to a system cursor")
-                }
+        // Identity-served (8): the exact system cursor, by pointer identity.
+        XCTAssertTrue(OverlayView.cursor(for: .editArrow) === NSCursor.arrow, "editArrow must be the system arrow")
+        XCTAssertTrue(OverlayView.cursor(for: .textIBeam) === NSCursor.iBeam, "textIBeam must be the system I-beam")
+        XCTAssertTrue(OverlayView.cursor(for: .lineCrosshair) === NSCursor.crosshair, "lineCrosshair must be the system crosshair")
+        XCTAssertTrue(OverlayView.cursor(for: .arrowCrosshair) === NSCursor.crosshair, "arrowCrosshair must be the system crosshair")
+        XCTAssertTrue(OverlayView.cursor(for: .rectangleCrosshair) === NSCursor.crosshair, "rectangleCrosshair must be the system crosshair")
+        XCTAssertTrue(OverlayView.cursor(for: .ellipseCrosshair) === NSCursor.crosshair, "ellipseCrosshair must be the system crosshair")
+        XCTAssertTrue(OverlayView.cursor(for: .blurCrosshair) === NSCursor.crosshair, "S1: blurCrosshair must be the system crosshair")
+        XCTAssertTrue(OverlayView.cursor(for: .spotlightCrosshair) === NSCursor.crosshair, "S1: spotlightCrosshair must be the system crosshair")
+
+        // Drawn-served (5): a 16-pt glyph centred on the hotspot, never a
+        // silent fallback onto a system cursor. The cursors are built from
+        // literal roles and then checked as VALUES, so no equality on the
+        // enum is ever consulted.
+        for (name, cursor) in [("penDot", OverlayView.cursor(for: .penDot)),
+            ("markerBeam", OverlayView.cursor(for: .markerBeam)),
+            ("numberRings", OverlayView.cursor(for: .numberRings)),
+            ("laserSpark", OverlayView.cursor(for: .laserSpark)),
+            ("eraserRing", OverlayView.cursor(for: .eraserRing))] {
+            XCTAssertEqual(cursor.image.size.width, 16, "\(name) glyph width — 16-pt canvas")
+            XCTAssertEqual(cursor.image.size.height, 16, "\(name) glyph height — 16-pt canvas")
+            XCTAssertEqual(cursor.hotSpot.x, 8, "\(name) hotspot centred on x")
+            XCTAssertEqual(cursor.hotSpot.y, 8, "\(name) hotspot centred on y")
+            for (systemName, system) in [("arrow", NSCursor.arrow), ("iBeam", NSCursor.iBeam), ("crosshair", NSCursor.crosshair)] {
+                XCTAssertFalse(cursor === system, "\(name) must never silently fall back onto the \(systemName) cursor")
             }
         }
     }
+
+    /// S9: the armed area-drag crosshair (`answeredCursor()`) must never
+    /// survive past area mode. Every disarm path was traced — the drag's
+    /// mouse up, Esc (`cancelAreaSelection`), Return
+    /// (`confirmPreloadedArea`) — and all three restore the tool's cursor;
+    /// the leak that WAS live is `clear()`: the palette's Clear button and
+    /// the deactivation clear run while the view stays alive, and the armed
+    /// mode survived them, keeping the crosshair and the armed shroud on a
+    /// session that no longer existed. The clear now disarms through the
+    /// same path a cancelled drag uses.
+    func testTheArmedAreaCrosshairDoesNotSurviveAClear() throws {
+        let state = EditorState()
+        state.tool = .pen
+        let view = OverlayView(
+            frame: CGRect(origin: .zero, size: CGSize(width: 300, height: 200)),
+            state: state, onEscape: {})
+        view.onAreaSelectionFrame = {}
+
+        view.beginAreaSelection()
+        XCTAssertTrue(
+            view.answeredCursor() === NSCursor.crosshair,
+            "armed area mode answers the crosshair, as before")
+        // The armed shroud is on screen too: armed with no drag yet, the
+        // whole bounds dim (α 0.18).
+        let whileArmed = try Self.alphaRep(of: view)
+        let armedPixel = try XCTUnwrap(whileArmed.colorAt(x: 150, y: 100))
+        XCTAssertGreaterThan(
+            armedPixel.alphaComponent, 0.1,
+            "while armed, the shroud is on screen")
+
+        // The clear (the palette's Clear button path): the crosshair and
+        // the shroud must both go, and the tool's own cursor must answer
+        // again through the same path a cancelled drag uses.
+        view.clear()
+        XCTAssertTrue(
+            view.answeredCursor() === OverlayView.cursor(for: .penDot),
+            "S9: after a clear of an armed session, the pen's own cursor answers — the crosshair must not stick")
+        let afterClear = try Self.alphaRep(of: view)
+        let clearedPixel = try XCTUnwrap(afterClear.colorAt(x: 150, y: 100))
+        XCTAssertEqual(
+            clearedPixel.alphaComponent, 0, accuracy: 0.01,
+            "S9: the armed shroud must not survive the clear")
+    }
+
+    /// PRESERVE: withdrawn with S1 — the role it pinned (`.spotlightBeam`)
+    /// is retired; the spotlight's cursor read is re-derived by S1 in
+    /// `testBlurAndSpotlightAnswerTheCrosshairByIdentity` above.
+
+    // MARK: the whole drawn set keeps its contract
 
     // MARK: bitmap plumbing
 
@@ -183,6 +260,17 @@ final class ToolCursorGlyphTests: XCTestCase {
         image.draw(in: NSRect(origin: .zero, size: image.size), from: .zero, operation: .copy, fraction: 1)
         NSGraphicsContext.restoreGraphicsState()
         return AlphaTable(bitmap: bitmap, scale: scale)
+    }
+
+    /// S9: renders a view through its own draw path, the way the freeze and
+    /// guides tests read pixels off the real render.
+    private static func alphaRep(of view: NSView) throws -> NSBitmapImageRep {
+        let rep = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: Int(view.bounds.width), pixelsHigh: Int(view.bounds.height),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .calibratedRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        view.cacheDisplay(in: view.bounds, to: rep)
+        return rep
     }
 
     private static func paintedBounds(of image: NSImage) throws -> CGRect {

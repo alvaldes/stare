@@ -237,7 +237,10 @@ final class ToolAndInkTests: XCTestCase {
     // T2/S2: the tool → role choice itself, pinned per tool. System cursors
     // where one genuinely matches the tool's job; drawn glyphs elsewhere —
     // since batch A/S3 the number joins the drawn set with its
-    // circle-inside-a-circle shape.
+    // circle-inside-a-circle shape. S1 re-derives the blur and the
+    // spotlight: "los cursores del blur y el spotlight deben ser la cruz" —
+    // each keeps its OWN crosshair role (the table stays one role per tool)
+    // and the drawn glyph is gone.
     func testCursorRolesNameTheirToolExactly() {
         let expected: [Tool: ToolCursor] = [
             .select: .editArrow,
@@ -251,8 +254,8 @@ final class ToolAndInkTests: XCTestCase {
             .ellipse: .ellipseCrosshair,
             .laser: .laserSpark,
             .eraser: .eraserRing,
-            .blur: .blurDots,
-            .spotlight: .spotlightBeam,
+            .blur: .blurCrosshair,
+            .spotlight: .spotlightCrosshair,
         ]
         XCTAssertEqual(expected.count, Tool.allCases.count, "the pin must name every tool")
         for (tool, role) in expected {

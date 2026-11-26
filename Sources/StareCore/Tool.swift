@@ -73,8 +73,8 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
         case .number: .numberRings
         case .laser: .laserSpark
         case .eraser: .eraserRing
-        case .blur: .blurDots
-        case .spotlight: .spotlightBeam
+        case .blur: .blurCrosshair
+        case .spotlight: .spotlightCrosshair
         }
     }
 
@@ -177,6 +177,8 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
 /// schematic icons (a filled dot, a filled beam), not exact replicas of the
 /// toolbar's SF Symbols — building richer art would need new assets, and
 /// the spec prefers cursor-per-tool over shipped art the app does not have.
+/// Since S1 the blur and the spotlight stopped being drawn glyphs and answer
+/// the system crosshair through their own roles.
 public enum ToolCursor: Equatable, CaseIterable, Sendable {
     /// The edit cursor: the system arrow, which users already read as
     /// "select and transform what is there".
@@ -186,15 +188,18 @@ public enum ToolCursor: Equatable, CaseIterable, Sendable {
     /// A circle inside a circle — two thin concentric rings — for the
     /// numbered badge (the owner's count shape).
     case numberRings
-    /// The system crosshair, the drafting cursor. Line owns it by itself;
-    /// arrow, rectangle and ellipse each own their own role — the table stays
-    /// one role per tool — but all four are served the same system cursor BY
-    /// IDENTITY instead of a drawn glyph (S7: "la elipse, el rect y arrow
-    /// pasan a ser cursor cruz como la linea").
+    /// The system crosshair, the drafting cursor. Every tool that frames a
+    /// region or lays a segment owns its own role here — line, arrow,
+    /// rectangle, ellipse — but the table stays one role per tool, and since
+    /// S7 the shape tools, and since S1 blur and spotlight, answer the same
+    /// system cursor BY IDENTITY instead of a drawn glyph (S1: "los cursores
+    /// del blur y el spotlight deben ser la cruz").
     case lineCrosshair
     case arrowCrosshair
     case rectangleCrosshair
     case ellipseCrosshair
+    case blurCrosshair
+    case spotlightCrosshair
     /// A drawn filled dot at the hotspot, for freehand ink (the owner's pen
     /// shape).
     case penDot
@@ -206,10 +211,6 @@ public enum ToolCursor: Equatable, CaseIterable, Sendable {
     /// A drawn empty circle, border only, no fill, for the eraser (the
     /// owner's eraser shape).
     case eraserRing
-    /// A drawn grid of dots, for the frosted blur patch.
-    case blurDots
-    /// A drawn ring around a beam dot, for the dimming spotlight region.
-    case spotlightBeam
 }
 
 public enum ToolShortcut {

@@ -478,9 +478,9 @@ enum SelfTest {
         // Tool cursors (T2/S2): the drawing-mode mapping through the real
         // view path — every tool owns a cursor role, the roles are all
         // distinct so the pointer tells tools apart, system roles serve the
-        // exact AppKit cursor, and the drawn glyphs build as 16-pt images
-        // centred on the hotspot. One PNG per glyph, for eyeballing in light
-        // and dark.
+        // exact AppKit cursor (since S1 that includes the blur and spotlight
+        // crosshairs), and the drawn glyphs build as 16-pt images centred on
+        // the hotspot. One PNG per glyph, for eyeballing in light and dark.
         report.append(contentsOf: toolCursorsReport())
 
         // Edit cursor (T11/S6): select, move, scale, rotate and delete a mark
@@ -524,7 +524,9 @@ enum SelfTest {
     /// The tool → cursor contract as the canvas serves it: the pure mapping's
     /// distinctness is pinned in unit tests; this exercises the real AppKit
     /// half — the served `NSCursor` per tool — and renders every drawn glyph
-    /// so the shapes can be eyeballed afterwards.
+    /// so the shapes can be eyeballed afterwards. The drawn/identity split it
+    /// reports is read off `OverlayView.isGlyphServed`, the same table the
+    /// contract test pins, so the two can never drift.
     private static func toolCursorsReport() -> [String] {
         var report: [String] = []
         let roles = Tool.allCases.map(\.cursor)
@@ -532,31 +534,35 @@ enum SelfTest {
         let coversVocabulary = Set(roles) == Set(ToolCursor.allCases)
 
         // The roles AppKit answers by identity: arrow, I-beam, and the
-        // crosshair now served to four drafting tools (line, and since S7
-        // arrow, rectangle and ellipse) — every other role — the number's
-        // rings included, since the count tool joined the drawn set — must be
-        // one of the drawn 16-pt glyphs with the hotspot at the centre.
-        let systemIdentities: [ToolCursor: NSCursor] = [
-            .editArrow: .arrow,
-            .textIBeam: .iBeam,
-            .lineCrosshair: .crosshair,
-            .arrowCrosshair: .crosshair,
-            .rectangleCrosshair: .crosshair,
-            .ellipseCrosshair: .crosshair,
-        ]
+        // crosshair now served to six drafting tools (line, since S7 arrow,
+        // rectangle and ellipse, and since S1 blur and spotlight) — every
+        // other role — the number's rings included, since the count tool
+        // joined the drawn set — must be one of the drawn 16-pt glyphs with
+        // the hotspot at the centre. The table is a switch, not a
+        // role-keyed dictionary: a hash-table lookup on `ToolCursor` proved
+        // unreliable in some runtimes (bucket lookups answered nil while
+        // iteration matched), so the split stays compiler-checked.
+        let systemCursor: (ToolCursor) -> NSCursor? = { role in
+            switch role {
+            case .editArrow: .arrow
+            case .textIBeam: .iBeam
+            case .lineCrosshair, .arrowCrosshair, .rectangleCrosshair,
+                .ellipseCrosshair, .blurCrosshair, .spotlightCrosshair: .crosshair
+            case .penDot, .markerBeam, .numberRings, .laserSpark, .eraserRing: nil
+            }
+        }
         var systemOK = true
         var glyphsOK = true
         var pngs = 0
+        var identityServedCount = 0
         for tool in Tool.allCases {
             let role = tool.cursor
             let cursor = OverlayView.cursor(for: role)
-            if let expected = systemIdentities[role] {
-                systemOK = systemOK && cursor === expected
-            } else {
+            if OverlayView.isGlyphServed(role) {
                 // A drawn glyph must never silently fall back to a system
                 // cursor (the defensive `?? .crosshair` in the view), and it
                 // must be the 16-pt image centred on the hotspot.
-                let isFallback = systemIdentities.values.contains { cursor === $0 }
+                let isFallback = [NSCursor.arrow, .iBeam, .crosshair].contains { cursor === $0 }
                 let size = cursor.image.size
                 let hotspot = cursor.hotSpot
                 glyphsOK = glyphsOK && !isFallback && size.width == 16 && size.height == 16
@@ -565,9 +571,17 @@ enum SelfTest {
                    writePNG(cg, to: "/tmp/stare-tool-cursor-\(tool.rawValue).png") {
                     pngs += 1
                 }
+            } else if let expected = systemCursor(role) {
+                // The exact AppKit cursor, by identity: arrow, I-beam and
+                // the crosshair served to the drafting tools (S1 adds the
+                // blur and spotlight crosshairs to that set).
+                systemOK = systemOK && cursor === expected
+                identityServedCount += 1
+            } else {
+                glyphsOK = false
             }
         }
-        let glyphCount = roles.count - systemIdentities.count
+        let glyphCount = roles.count - identityServedCount
         let ok = distinct && coversVocabulary && systemOK && glyphsOK && pngs == glyphCount
         report.append(
             "tool cursors distinct=\(distinct) vocabulary=\(coversVocabulary) "

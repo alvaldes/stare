@@ -505,37 +505,52 @@ class OverlayView: NSView {
     /// the real path the canvas shows. System cursors where one genuinely
     /// does the tool's job: the arrow for the edit cursor, the I-beam for
     /// text, and the crosshair — the drafting cursor — for the drafting
-    /// tools (line, and since S7 arrow, rectangle and ellipse). Every other
-    /// role is a small glyph drawn here, centred on the hotspot: a white core
-    /// over a dark outline reads on light and on dark canvases, and no new
-    /// asset files exist. The glyph for each role is schematic — it says the
-    /// tool's shape, not the toolbar's exact SF Symbol — which is the
-    /// documented "dentro de lo posible" trade (see `ToolCursor`).
+    /// tools (line, and since S7 arrow, rectangle and ellipse, and since
+    /// S1 blur and spotlight). Every other role is a small glyph drawn here,
+    /// centred on the hotspot: a white core over a dark outline reads on
+    /// light and on dark canvases, and no new asset files exist. The glyph
+    /// for each role is schematic — it says the tool's shape, not the
+    /// toolbar's exact SF Symbol — which is the documented "dentro de lo
+    /// posible" trade (see `ToolCursor`). S1 retired the blur's dot grid and
+    /// the spotlight's beam glyph: their roles answer the crosshair, so the
+    /// drawn art was unreachable.
     static func cursor(for role: ToolCursor) -> NSCursor {
         switch role {
         case .editArrow: .arrow
         case .textIBeam: .iBeam
-        case .lineCrosshair, .arrowCrosshair, .rectangleCrosshair, .ellipseCrosshair: .crosshair
-        case .penDot: glyphCursors[role] ?? .crosshair
-        case .markerBeam: glyphCursors[role] ?? .crosshair
-        case .numberRings: glyphCursors[role] ?? .crosshair
-        case .laserSpark: glyphCursors[role] ?? .crosshair
-        case .eraserRing: glyphCursors[role] ?? .crosshair
-        case .blurDots: glyphCursors[role] ?? .crosshair
-        case .spotlightBeam: glyphCursors[role] ?? .crosshair
+        case .lineCrosshair, .arrowCrosshair, .rectangleCrosshair, .ellipseCrosshair,
+            .blurCrosshair, .spotlightCrosshair: .crosshair
+        case .penDot: penDotCursor
+        case .markerBeam: markerBeamCursor
+        case .numberRings: numberRingsCursor
+        case .laserSpark: laserSparkCursor
+        case .eraserRing: eraserRingCursor
         }
     }
 
-    /// The drawn cursors, built once. The fallback is unreachable: the
-    /// dictionary covers every glyph role the switch above asks for.
-    private static let glyphCursors: [ToolCursor: NSCursor] = {
-        var cursors: [ToolCursor: NSCursor] = [:]
-        for role in ToolCursor.allCases {
-            let cursor = ToolGlyphCursor.cursor(for: role)
-            if let cursor { cursors[role] = cursor }
+    /// The five drawn cursors, built once each and served straight off a
+    /// case-of-a-case (T2/S2), never through a role-keyed dictionary: a
+    /// hash-table lookup on this enum proved unreliable in some runtimes
+    /// (iterations matched while bucket lookups answered nil), so the
+    /// mapping stays a switch — the compiler enforces coverage, the runtime
+    /// compares nothing. The `?? .crosshair` guards a builder change only.
+    private static let penDotCursor = ToolGlyphCursor.cursor(for: .penDot) ?? .crosshair
+    private static let markerBeamCursor = ToolGlyphCursor.cursor(for: .markerBeam) ?? .crosshair
+    private static let numberRingsCursor = ToolGlyphCursor.cursor(for: .numberRings) ?? .crosshair
+    private static let laserSparkCursor = ToolGlyphCursor.cursor(for: .laserSpark) ?? .crosshair
+    private static let eraserRingCursor = ToolGlyphCursor.cursor(for: .eraserRing) ?? .crosshair
+
+    /// The roles a drawn 16-pt glyph serves (S1's contract pin): the drawn
+    /// set and the identity-served set must together cover every cursor
+    /// role exactly once, so the contract cannot silently lose one.
+    static func isGlyphServed(_ role: ToolCursor) -> Bool {
+        switch role {
+        case .penDot, .markerBeam, .numberRings, .laserSpark, .eraserRing: true
+        case .editArrow, .textIBeam, .lineCrosshair,
+            .arrowCrosshair, .rectangleCrosshair, .ellipseCrosshair,
+            .blurCrosshair, .spotlightCrosshair: false
         }
-        return cursors
-    }()
+    }
 
     override func mouseEntered(with event: NSEvent) {
         reassertCursor()
@@ -593,6 +608,15 @@ class OverlayView: NSView {
     }
 
     func clear() {
+        // S9: a clear is another way area mode leaves — the palette's Clear
+        // button (`clearAll`) runs while the view stays alive, and the
+        // deactivation clear runs ahead of it. Without the disarm, the armed
+        // crosshair (`answeredCursor`), the armed shroud (`drawSelection`)
+        // and the armed state itself would survive on a session that no
+        // longer exists — a sticky crosshair the next session inherits. The
+        // disarm goes through the same path a cancelled drag uses, so the
+        // single answered-cursor decision restores the tool's own cursor.
+        if isSelectingArea { cancelAreaSelection() }
         session.clear()
         committedBounds.removeAll()
         clearSelection()
@@ -2363,16 +2387,26 @@ extension OverlayView: NSTextFieldDelegate {
 /// here instead of shipped as assets. Every glyph is centred on the hotspot,
 /// so the mark still lands exactly under the pointer regardless of how the
 /// image coordinate system faces, and is stroked dark-first-white-on-top so
-/// it reads on a light and on a dark canvas. System-cursor roles answer nil:
-/// `OverlayView.cursor(for:)` serves those straight from AppKit.
+/// it reads on a light and on a dark canvas. The switch below is the drawn/
+/// system table itself: a system-served role answers nil — really nil, so
+/// no blank image can ever be dressed up as a glyph — and a drawn role is
+/// built here. One exhaustive switch, no default.
 private enum ToolGlyphCursor {
     /// Canvas every glyph is drawn on, and the hotspot at its centre.
     private static let canvasSide: CGFloat = 16
 
     static func cursor(for role: ToolCursor) -> NSCursor? {
-        let image = NSImage(size: NSSize(width: canvasSide, height: canvasSide), flipped: true) { _ in
-            draw(role)
-            return true
+        let image: NSImage
+        switch role {
+        case .penDot, .markerBeam, .numberRings, .laserSpark, .eraserRing:
+            image = NSImage(size: NSSize(width: canvasSide, height: canvasSide), flipped: true) { _ in
+                draw(role)
+                return true
+            }
+        case .editArrow, .textIBeam, .lineCrosshair,
+            .arrowCrosshair, .rectangleCrosshair, .ellipseCrosshair,
+            .blurCrosshair, .spotlightCrosshair:
+            return nil // system roles: AppKit answers, nothing to draw
         }
         let centre = canvasSide / 2
         return NSCursor(image: image, hotSpot: CGPoint(x: centre, y: centre))
@@ -2385,10 +2419,9 @@ private enum ToolGlyphCursor {
         case .numberRings: drawNumberRings()
         case .laserSpark: drawSpark()
         case .eraserRing: drawEraserRing()
-        case .blurDots: drawDotGrid()
-        case .spotlightBeam: drawSpotlightBeam()
         case .editArrow, .textIBeam, .lineCrosshair,
-            .arrowCrosshair, .rectangleCrosshair, .ellipseCrosshair:
+            .arrowCrosshair, .rectangleCrosshair, .ellipseCrosshair,
+            .blurCrosshair, .spotlightCrosshair:
             break // system roles: AppKit answers, nothing to draw
         }
     }
@@ -2476,23 +2509,6 @@ private enum ToolGlyphCursor {
         let ringWidths = (darkWidth: CGFloat(2.2), lightWidth: CGFloat(1.0))
         outline(circle(centre: NSPoint(x: 8, y: 8), radius: 5.9), darkWidth: ringWidths.darkWidth, lightWidth: ringWidths.lightWidth)
         outline(circle(centre: NSPoint(x: 8, y: 8), radius: 2.7), darkWidth: ringWidths.darkWidth, lightWidth: ringWidths.lightWidth)
-    }
-
-    /// The blur: a small grid of soft dots, the frosted patch it paints.
-    private static func drawDotGrid() {
-        let spacing: CGFloat = 3.0
-        for x in stride(from: 5.0, to: 11.5, by: spacing) {
-            for y in stride(from: 5.0, to: 11.5, by: spacing) {
-                dot(centre: NSPoint(x: x, y: y), radius: 1.2)
-            }
-        }
-    }
-
-    /// Spotlight: an outlined ring around a filled beam dot — the window of
-    /// light with its source in it.
-    private static func drawSpotlightBeam() {
-        outline(NSBezierPath(ovalIn: NSRect(x: 3.4, y: 3.4, width: 9.2, height: 9.2)))
-        dot(centre: NSPoint(x: 8, y: 8), radius: 1.4)
     }
 
     // MARK: Path helpers
