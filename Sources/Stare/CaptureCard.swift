@@ -2,10 +2,11 @@ import AppKit
 import StareCore
 import UniformTypeIdentifiers
 
-/// A capture, shown as a card in the corner: hover extends its life, click opens
-/// the editor, an action row underneath the thumbnail carries the copy, save,
-/// annotate, pin and discard commands, and the capture can be dragged out as a
-/// file promise (C3/S3).
+/// A capture, shown as a card in the corner: hover extends its life, the click
+/// on the picture opens the editor, one control per corner carries the copy,
+/// save, pin and discard commands, and the capture can be dragged out as a
+/// file promise (C3/S4). The card is the picture itself — no backdrop plate,
+/// no action row.
 final class CaptureCard: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
@@ -81,45 +82,41 @@ final class CaptureCard: NSPanel {
     }
 }
 
-/// The card's plate: the thumbnail with the pin and close controls on its top
-/// right corner, an action row on the strip under the picture, and the whole
-/// thing a drag source for dragging into another app as a file promise.
+/// The card is the picture itself: one control per corner — copy, save, pin,
+/// discard (C3/S4) — and the whole thing a drag source for dragging into
+/// another app as a file promise. The click on the picture is the annotate
+/// entry: it opens the editor exactly the way the old action row's annotate
+/// button did.
 final class CaptureCardView: NSView, NSDraggingSource, NSFilePromiseProviderDelegate {
     /// S1: the card shrank. It used to cap the thumbnail at 260×170 with an 8 pt
     /// backdrop, which made a small result look like a window; 190×126 keeps the
     /// capture readable and the card a card.
     static let thumbnailMaxSize = CGSize(width: 190, height: 126)
-    /// Backdrop kept around the thumbnail, in points.
+    /// Inset the corner controls keep from the card's edges, in points.
     static let plateInset: CGFloat = 6
-    /// The thumbnail's own rounding: concentric with the plate's 10 pt corner at
-    /// a 6 pt inset, so the picture sits inside the card instead of squaring it
-    /// off.
-    static let thumbnailCornerRadius: CGFloat = 5
-    /// A tall or small capture never makes the plate narrower than this.
+    /// A small capture never makes the card narrower (or shorter) than this:
+    /// one control per corner still has to keep its own click area on it.
     static let minimumContentWidth: CGFloat = 132
+    static let minimumContentHeight: CGFloat = 56
 
-    // The action row (C3/S3): the frame strip under the picture, and the five
-    // commands it carries. Every action routes through a closure the card was
-    // created with — the same one the app's own paths answer — so the card
-    // never grows a second road to the file, the pasteboard or the editor.
-    static let rowButtonSide: CGFloat = 18
-    static let rowSpacing: CGFloat = 4
-    /// The strip's height: the row's buttons plus its own breathing room.
-    static let rowStripHeight: CGFloat = 26
     static let copyButtonIdentifier = "captureCard.copy"
     static let saveButtonIdentifier = "captureCard.save"
-    static let annotateButtonIdentifier = "captureCard.annotate"
-    /// The row's own pin and discard carry their OWN identifiers: the corner
-    /// controls (and the tests that pin their place) keep theirs, and a walk
-    /// for "the pin button" still finds the corner one first.
-    static let rowPinButtonIdentifier = "captureCard.rowPin"
-    static let rowDiscardButtonIdentifier = "captureCard.rowDiscard"
+    static let pinButtonIdentifier = "captureCard.pin"
+    static let closeButtonIdentifier = "captureCard.close"
+
+    // The borders (C3/S4), where they were drawn: both strokes lived in
+    // `draw(_:)` below. The card's un-pinned BLACK border was not a stroke at
+    // all — it was the dark plate itself, `CGColor(gray: 0.08, alpha: 0.92)`
+    // filling the card inset by 1 pt behind a thumbnail inset 6 pt further,
+    // so the card read as a capture inside a black frame; it is gone with the
+    // plate. The PINNED border was a 2 pt stroke of
+    // `CGColor(red: 0.36, green: 0.66, blue: 1, alpha: 0.95)`; the owner asked
+    // it subtler, so it is now 1 pt at alpha 0.45, same hue.
+    static let pinBorderWidth: CGFloat = 1
+    static let pinBorderColor = CGColor(red: 0.36, green: 0.66, blue: 1, alpha: 0.45)
 
     static let dismissDelay: TimeInterval = 5
     static let hoverDismissDelay: TimeInterval = 3
-
-    static let pinButtonIdentifier = "captureCard.pin"
-    static let closeButtonIdentifier = "captureCard.close"
 
     private let image: CGImage
     /// The picture the card shows, read by the tests (S3): the promised file,
@@ -130,9 +127,10 @@ final class CaptureCardView: NSView, NSDraggingSource, NSFilePromiseProviderDele
     private let onClose: () -> Void
     private let onCopy: () -> Void
     private let onSave: () -> Void
+    private let copyButton: CaptureCardControlButton
+    private let saveButton: CaptureCardControlButton
     private let pinButton: CaptureCardControlButton
     private let closeButton: CaptureCardControlButton
-    private let rowButtons: [CaptureCardControlButton]
     private var dismissTimer: Timer?
     private var hasBeenHovered = false
     private var isHovered = false
@@ -172,11 +170,12 @@ final class CaptureCardView: NSView, NSDraggingSource, NSFilePromiseProviderDele
             width: (imageSize.width * scale).rounded(),
             height: (imageSize.height * scale).rounded()
         )
-        // The row rides under the picture, not over it: the card adds the
-        // strip's height instead of covering capture pixels (C3/S3).
+        // The card IS the picture, so nothing is added around the thumbnail
+        // any more: the plate is the thumbnail itself, widened only far enough
+        // for the corner controls to keep their click areas (C3/S4).
         return CGSize(
-            width: max(thumbnail.width, minimumContentWidth) + plateInset * 2,
-            height: thumbnail.height + plateInset * 2 + rowStripHeight
+            width: max(thumbnail.width, minimumContentWidth),
+            height: max(thumbnail.height, minimumContentHeight)
         )
     }
 
@@ -192,6 +191,16 @@ final class CaptureCardView: NSView, NSDraggingSource, NSFilePromiseProviderDele
         self.onClose = onClose
         self.onCopy = onCopy
         self.onSave = onSave
+        copyButton = CaptureCardControlButton(
+            symbol: "doc.on.doc",
+            accessibilityLabel: "Copy the capture to the clipboard",
+            identifier: Self.copyButtonIdentifier
+        )
+        saveButton = CaptureCardControlButton(
+            symbol: "square.and.arrow.down",
+            accessibilityLabel: "Save the capture to a file",
+            identifier: Self.saveButtonIdentifier
+        )
         pinButton = CaptureCardControlButton(
             symbol: "pin",
             accessibilityLabel: "Pin the card open",
@@ -199,50 +208,25 @@ final class CaptureCardView: NSView, NSDraggingSource, NSFilePromiseProviderDele
         )
         closeButton = CaptureCardControlButton(
             symbol: "xmark",
-            accessibilityLabel: "Close the card",
+            accessibilityLabel: "Discard the capture",
             identifier: Self.closeButtonIdentifier
         )
-        // The row's commands, in reading order. Pin and discard reuse the
-        // corner controls' own actions — the card carries ONE pin path and ONE
-        // dismiss path, and the row only hands them a second door.
-        let rowDefinition: [(symbol: String, label: String, identifier: String, action: Selector)] = [
-            ("doc.on.doc", "Copy the capture to the clipboard", Self.copyButtonIdentifier, #selector(copyTapped)),
-            ("square.and.arrow.down", "Save the capture to a file", Self.saveButtonIdentifier, #selector(saveTapped)),
-            ("pencil", "Annotate the capture in the editor", Self.annotateButtonIdentifier, #selector(annotateTapped)),
-            ("pin", "Pin the card open", Self.rowPinButtonIdentifier, #selector(togglePin)),
-            ("xmark", "Discard the capture", Self.rowDiscardButtonIdentifier, #selector(closeTapped))
-        ]
-        var row: [CaptureCardControlButton] = []
-        for definition in rowDefinition {
-            row.append(
-                CaptureCardControlButton(
-                    symbol: definition.symbol,
-                    accessibilityLabel: definition.label,
-                    identifier: definition.identifier,
-                    side: Self.rowButtonSide
-                )
-            )
-        }
-        rowButtons = row
         super.init(frame: CGRect(origin: .zero, size: Self.preferredSize(for: image)))
         wantsLayer = true
         layer?.cornerRadius = 10
         layer?.masksToBounds = true
 
-        pinButton.target = self
-        pinButton.action = #selector(togglePin)
-        closeButton.target = self
-        closeButton.action = #selector(closeTapped)
-        addSubview(pinButton)
-        addSubview(closeButton)
-        // The row's commands answer through the card, wired after `super.init`
-        // like the corner controls: pin and discard reuse the SAME paths, so
-        // the card carries one pin door and one dismiss door (C3/S3).
-        let rowActions: [Selector] = [
-            #selector(copyTapped), #selector(saveTapped), #selector(annotateTapped),
-            #selector(togglePin), #selector(closeTapped)
-        ]
-        for (button, action) in zip(rowButtons, rowActions) {
+        // The four corner commands answer through the card, each routed through
+        // the closure the card was created with — the same path the app's own
+        // delivery answers — so every command still arrives by its existing
+        // road: the pasteboard write, the capture-file write, the shared pin
+        // path and the one dismiss path (C3/S4).
+        for (button, action) in [
+            (copyButton, #selector(copyTapped)),
+            (saveButton, #selector(saveTapped)),
+            (pinButton, #selector(togglePin)),
+            (closeButton, #selector(closeTapped))
+        ] {
             button.target = self
             button.action = action
             addSubview(button)
@@ -261,35 +245,36 @@ final class CaptureCardView: NSView, NSDraggingSource, NSFilePromiseProviderDele
 
     // MARK: - Controls
 
-    /// The controls ride the plate's top-right corner, the close last so the
-    /// destructive one is not the one under a stray click. The action row rides
-    /// its strip under the picture, centred on the content, in reading order —
-    /// copy, save, annotate, pin, discard — so the destructive action is the
-    /// row's right end, away from where the row's hands usually start.
+    /// The controls sit one per corner (C3/S4): copy top-left, save
+    /// bottom-left, pin top-right and discard bottom-right — the owner's four
+    /// commands as mirrored columns, the destructive one down at the right's
+    /// bottom corner away from where the hands start. The pin keeps the
+    /// top-right corner it has always held: a test outside this file pins the
+    /// corner pin's placement and its uncovered click area to this corner, so
+    /// the corner mapping grew around it.
     override func layout() {
         super.layout()
         let side = CaptureCardControlButton.side
         let inset = Self.plateInset
         closeButton.frame = CGRect(
             x: bounds.width - inset - side,
-            y: inset,
+            y: bounds.height - inset - side,
             width: side,
             height: side
         )
         pinButton.frame = CGRect(
-            x: closeButton.frame.minX - 4 - side,
+            x: closeButton.frame.minX,
             y: inset,
             width: side,
             height: side
         )
-        let rowWidth = CGFloat(rowButtons.count) * Self.rowButtonSide
-            + CGFloat(rowButtons.count - 1) * Self.rowSpacing
-        var rowX = (bounds.width - rowWidth) / 2
-        let rowY = bounds.height - inset - Self.rowStripHeight + (Self.rowStripHeight - Self.rowButtonSide) / 2
-        for button in rowButtons {
-            button.frame = CGRect(x: rowX, y: rowY, width: Self.rowButtonSide, height: Self.rowButtonSide)
-            rowX += Self.rowButtonSide + Self.rowSpacing
-        }
+        saveButton.frame = CGRect(
+            x: inset,
+            y: closeButton.frame.minY,
+            width: side,
+            height: side
+        )
+        copyButton.frame = CGRect(x: inset, y: inset, width: side, height: side)
     }
 
     /// T4/S6: what the pin target does beyond its own state — the owner floats
@@ -307,10 +292,11 @@ final class CaptureCardView: NSView, NSDraggingSource, NSFilePromiseProviderDele
         onClose()
     }
 
-    /// The row's commands (C3/S3): each hands the picture to the path the card
-    /// was created with — the controller's pasteboard write, its file write or
-    /// the editor handoff. The card itself commits nothing: the capture was
-    /// already delivered before the card existed.
+    /// The corner commands (C3/S4): each hands the picture to the path the
+    /// card was created with — the controller's pasteboard write, its file
+    /// write or, from the click on the picture, the editor handoff. The card
+    /// itself commits nothing: the capture was already delivered before the
+    /// card existed.
     @objc private func copyTapped() {
         dismissTimer?.invalidate()
         onCopy()
@@ -319,11 +305,6 @@ final class CaptureCardView: NSView, NSDraggingSource, NSFilePromiseProviderDele
     @objc private func saveTapped() {
         dismissTimer?.invalidate()
         onSave()
-    }
-
-    @objc private func annotateTapped() {
-        dismissTimer?.invalidate()
-        onOpen()
     }
 
     // MARK: - Hover
@@ -392,54 +373,42 @@ final class CaptureCardView: NSView, NSDraggingSource, NSFilePromiseProviderDele
     override func draw(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
 
+        // C3/S4: the black border is GONE — the dark plate fill this view
+        // painted behind the 6 pt inset thumbnail was the black border the
+        // owner asked out, so nothing is laid under the picture any more. The
+        // card IS the capture, clipped to the plate's own rounding.
         let plate = CGPath(
-            roundedRect: bounds.insetBy(dx: 1, dy: 1),
+            roundedRect: bounds,
             cornerWidth: 10,
             cornerHeight: 10,
             transform: nil
         )
-        context.setFillColor(CGColor(gray: 0.08, alpha: 0.92))
-        context.addPath(plate)
-        context.fillPath()
-
-        let inset = Self.plateInset
-        // The row takes the strip under the picture: the thumbnail keeps the
-        // plate's top inset and stops above the strip, so the commands never
-        // cover capture pixels (C3/S3).
-        let target = CGRect(
-            x: inset,
-            y: inset,
-            width: bounds.width - inset * 2,
-            height: bounds.height - inset * 2 - Self.rowStripHeight
-        )
         context.saveGState()
-        // The capture takes the plate's rounding: concentric with it, so the
-        // thumbnail never shows a square corner inside a rounded card.
-        context.addPath(
-            CGPath(roundedRect: target, cornerWidth: Self.thumbnailCornerRadius, cornerHeight: Self.thumbnailCornerRadius, transform: nil)
-        )
+        context.addPath(plate)
         context.clip()
         // The image comes top-down; this view is flipped, so flip it back.
-        context.translateBy(x: 0, y: target.midY)
+        context.translateBy(x: 0, y: bounds.midY)
         context.scaleBy(x: 1, y: -1)
-        context.translateBy(x: 0, y: -target.midY)
-        context.draw(image, in: target)
+        context.translateBy(x: 0, y: -bounds.midY)
+        context.draw(image, in: bounds)
         context.restoreGState()
 
-        // The strip under the picture, separated from it by one hairline so
-        // the row reads as part of the plate, not as a second place on it.
-        let stripTop = target.maxY + 3
-        context.setStrokeColor(CGColor(gray: 1, alpha: 0.10))
-        context.setLineWidth(1)
-        context.move(to: CGPoint(x: inset, y: stripTop))
-        context.addLine(to: CGPoint(x: bounds.width - inset, y: stripTop))
-        context.strokePath()
-
-        // A pinned card says so on the plate itself, not only on the pin.
+        // A pinned card says so on the card itself, not only on the pin — and
+        // subtly now (C3/S4): the old 2 pt stroke at alpha 0.95 was described
+        // in the constants above; this is 1 pt at alpha 0.45. The stroke path
+        // is inset half a width so the whole line sits inside the layer's own
+        // rounded clip.
         if isPinned {
-            context.setStrokeColor(CGColor(red: 0.36, green: 0.66, blue: 1, alpha: 0.95))
-            context.setLineWidth(2)
-            context.addPath(plate)
+            let half = Self.pinBorderWidth / 2
+            let border = CGPath(
+                roundedRect: bounds.insetBy(dx: half, dy: half),
+                cornerWidth: 10,
+                cornerHeight: 10,
+                transform: nil
+            )
+            context.setStrokeColor(Self.pinBorderColor)
+            context.setLineWidth(Self.pinBorderWidth)
+            context.addPath(border)
             context.strokePath()
         }
     }
@@ -447,8 +416,11 @@ final class CaptureCardView: NSView, NSDraggingSource, NSFilePromiseProviderDele
     // MARK: - Actions
 
     override func mouseDown(with event: NSEvent) {
-        // Clicking opens the editor, like the reference app — and the action
-        // row now carries the explicit commands beside it (C3/S3).
+        // The click on the picture IS the annotate entry (C3/S4): the press
+        // opens the editor on mouse-down, exactly as the old annotate button
+        // did — the mouse-down rule a test outside this file pins — and the
+        // drag that begins from the same press-and-hold still starts in
+        // `mouseDragged` below, unchanged.
         dismissTimer?.invalidate()
         onOpen()
     }
@@ -544,13 +516,10 @@ final class CaptureCardView: NSView, NSDraggingSource, NSFilePromiseProviderDele
 
 /// One of the card's corner controls: a template symbol on a dark disc, so it
 /// reads over any capture without a bezel that would make the card a window.
+/// The class default's square is the corner controls' only square now (C3/S4:
+/// the row's smaller buttons are gone with the row).
 final class CaptureCardControlButton: NSButton {
     static let side: CGFloat = 22
-
-    /// The button's own square: the corner controls take the class default,
-    /// the action row's buttons are smaller, so the row of five still fits
-    /// under a small capture (C3/S3).
-    let side: CGFloat
 
     var isPinned = false {
         didSet { image = Self.symbol(isPinned ? "pin.fill" : "pin") }
@@ -559,11 +528,9 @@ final class CaptureCardControlButton: NSButton {
     init(
         symbol: String,
         accessibilityLabel: String,
-        identifier: String,
-        side: CGFloat = CaptureCardControlButton.side
+        identifier: String
     ) {
-        self.side = side
-        super.init(frame: CGRect(x: 0, y: 0, width: side, height: side))
+        super.init(frame: CGRect(x: 0, y: 0, width: Self.side, height: Self.side))
         image = Self.symbol(symbol)
         imagePosition = .imageOnly
         isBordered = false
@@ -573,7 +540,7 @@ final class CaptureCardControlButton: NSButton {
         setAccessibilityLabel(accessibilityLabel)
         self.identifier = NSUserInterfaceItemIdentifier(identifier)
         wantsLayer = true
-        layer?.cornerRadius = side / 2
+        layer?.cornerRadius = Self.side / 2
         layer?.backgroundColor = NSColor(white: 0, alpha: 0.55).cgColor
     }
 

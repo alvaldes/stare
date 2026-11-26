@@ -120,3 +120,82 @@
     `testTheRowAnnotateSharesTheClickOpenHandoff` reported 559 s inside the batch
     (2 s standalone; the machine carried leftover xctest processes killed by hand
     at the time) — the repeat runs and the full suite are all fast.
+- **L4** (S4, worker, 2026-11-25): the owner used the card and said the row
+  repeated the top-right controls; the row goes, the four commands become one
+  control per corner, annotate becomes the click on the picture, the drag
+  stays, and the borders quiet down. What changed and what it was drawn where:
+  - **The corner layout** — copy top-left, save bottom-left, pin top-right,
+    discard bottom-right (mirrored columns, the owner's reading order;
+    destructive at the bottom). The pin keeps the top-right corner it has
+    always held *because it must*: `PinnedImageWindowTests`
+    (outside this task's surfaces, not edited) pins the corner pin's
+    placement and its uncovered click area to that corner, so the mapping
+    grew around it. Every control still routes through the path that already
+    existed — `OverlayController.copy(_:to:)`, `saveFromCard` (→
+    `CaptureFile.write`), the shared pin door, `dismiss` — nothing new was
+    built. Save still never writes a second history entry (unchanged rule,
+    unchanged test).
+  - **Annotate on the picture** — the old `annotateTapped` and the row
+    button are gone; `mouseDown` → `onOpen` already WAS the click-open and
+    still fires on mouse-down (the rule a test outside this file pins), and
+    the drag that begins from the same press still starts in `mouseDragged`
+    unchanged (proven by the drag tests, not assumed).
+  - **The card carries no plate any more**: `preferredSize` is now the
+    aspect-held thumbnail widened only to
+    `max(_, minimumContentWidth=132)` / raised only to
+    `max(_, minimumContentHeight=56)` so the corner controls keep their
+    click areas; the picture fills `bounds`, clipped to the plate's 10 pt
+    rounding.
+  - **Where the borders were drawn and what they measure now** — both lived
+    in `CaptureCardView.draw(_:)`. The BLACK border was not a stroke: it was
+    the dark plate itself, a fill of `CGColor(gray: 0.08, alpha: 0.92)` over
+    the card inset 1 pt behind the 6 pt-inset thumbnail — a capture inside a
+    near-black frame, plus the 1 pt hairline separator that drew the row's
+    top edge under the picture. Both are gone. The PINNED border was a 2 pt stroke of
+    `CGColor(red: 0.36, green: 0.66, blue: 1, alpha: 0.95)`; it is now a
+    1 pt stroke of the same hue at alpha 0.45, inset half a width so the
+    line sits inside the layer's rounded clip. Measured by rendering the
+    card's `draw` into a 4× bitmap and sampling: un-pinned, 0.5 pt / 2 pt /
+    5 pt inside both horizontal edges are the capture's own colour (the old
+    render's dark plate sat 1.30–1.47 colour distance away at the same
+    depths); pinned, the rim's red channel reads above 0.5, while the old
+    0.95-weight blend sampled 0.426 red at the same depth, and 1.5 pt inside
+    is bare capture again, where the old 2 pt stroke still painted solid
+    blue (0.537 colour distance from the fixture).
+  - **Pins re-derived** (S4 withdrew every command whose stated meaning
+    was the row): the row's own pins died with it — `captureCard.rowPin`,
+    `captureCard.rowDiscard`, `captureCard.annotate`, `rowButtonSide`,
+    `rowSpacing`, `rowStripHeight`, `annotateTapped` and
+    `CaptureCardControlButton`'s smaller `side` parameter all removed, and
+    the test-side pins on them (`rowVoice`, `rowButtonsMinY`, the strip's
+    aspect math in `CaptureCardTests` — re-derived to the picture-fills-the
+    -card rule) went with the row. Kept: `captureCard.pin` / `captureCard.close`
+    / `copy` / `save` identifiers (the corner controls' originals), the
+    drag canary (L3), the dismiss policy, the cursor ownership, the stack
+    rules. New pixel pins carry no constant dependency: the border tests
+    measure the render, so the constants cannot drift from the pixels.
+  - **Refused to invent:** any hover choreography, per-corner different
+    disc styles, keeping `thumbnailCornerRadius` (dead once the picture
+    takes the plate's rounding).
+  - **Verification (exit 0 everywhere, unpiped for the full suite):**
+    - RED before implementation: `swift test --filter
+      "CaptureCardTests|CaptureCardActionsTests" > .build/w24-red.log
+      2>&1; echo EXIT=$?` → EXIT=1, `Executed 21 tests, with 16 failures`
+      — exactly the intended new-behaviour failures (corner voices);
+      border pixels; pinned subtlety; plate aspect). All prior card tests
+      already green (copy bytes, save bytes + fallback, discard-close path,
+      pin state, click-open, both drag tests, cursor).
+    - GREEN: same filter → EXIT=0, `Executed 21 tests, with 0 failures`;
+      neighbours `--filter "CaptureCard|CardCursor|PinnedImage"` → EXIT=0,
+      `Executed 46 tests, with 0 failures` (includes
+      `PinnedImageWindowTests`, which still holds the corner pin
+      guarantee).
+    - Full suite: `swift test > .build/w24.log 2>&1; echo EXIT=$?` → EXIT=0,
+      `Executed 919 tests, with 0 failures` (StareCoreTests, baseline
+      unchanged) and `Executed 431 tests, with 0 failures` (StareTests;
+      baseline 429 + this task's 2 net new: the two border-render tests).
+  - **Landing's demo port** (`landing/src/demo/card.ts`) mirrors the card's
+    size and dismissal: the strip AND the plate are gone from the app now,
+    so the demo must re-port `preferredSize` and the drawing. NOT this
+    worker's surface — the landing session must re-port it or the demo
+    drifts.

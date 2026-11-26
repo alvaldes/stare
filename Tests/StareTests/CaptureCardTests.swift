@@ -32,6 +32,19 @@ final class CaptureCardTests: XCTestCase {
         return context.makeImage()!
     }
 
+    /// A solid flat capture in the given colour, for the border renders whose
+    /// pixels are sampled.
+    private func flat(_ fill: CGColor) -> CGImage {
+        let context = CGContext(
+            data: nil, width: 200, height: 120, bitsPerComponent: 8,
+            bytesPerRow: 200 * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        context.setFillColor(fill)
+        context.fill(CGRect(x: 0, y: 0, width: 200, height: 120))
+        return context.makeImage()!
+    }
+
     private func view(
         onOpen: @escaping () -> Void = {},
         onClose: @escaping () -> Void = {}
@@ -53,15 +66,69 @@ final class CaptureCardTests: XCTestCase {
         let size = CaptureCardView.preferredSize(for: image())
         XCTAssertLessThan(size.width, oldPlate.width, "S1: the card must be smaller than the old plate")
         XCTAssertLessThan(size.height, oldPlate.height, "S1: the card must be smaller than the old plate")
-        // The thumbnail keeps the capture's aspect: no crop, no letterbox.
-        // The action row's strip rides under the picture, so the height the
-        // picture fills is the card's minus both plates and the strip (C3/S3).
-        let thumbnail = CGSize(
-            width: size.width - CaptureCardView.plateInset * 2,
-            height: size.height - CaptureCardView.plateInset * 2
-                - CaptureCardView.rowStripHeight
+        // C3/S4: the card IS the picture — the dark plate (the black border)
+        // and the action row's strip are gone — so the card's own size holds
+        // the capture's aspect: no crop, no letterbox, no stretch.
+        let aspect = size.width / size.height
+        XCTAssertEqual(aspect, 1512.0 / 982.0, accuracy: 0.02)
+    }
+
+    // MARK: - The borders (C3/S4)
+
+    /// The capture colour the border renders sample against: light, so the
+    /// old dark plate and the old near-opaque blue border both stand out of it.
+    private static let borderFixture = CGColor(srgbRed: 0.9, green: 0.85, blue: 0.8, alpha: 1)
+
+    /// Renders the card's own `draw` into an offscreen bitmap so the border
+    /// tests measure pixels, not constants. The card's own painting is
+    /// symmetric about its horizontal centre, so both horizontal edges are
+    /// sampled and the bitmap's row order cannot matter.
+    private func renderedPixels(of card: CaptureCardView) throws -> NSBitmapImageRep {
+        let scale: CGFloat = 4
+        let rep = try XCTUnwrap(
+            NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: Int(card.bounds.width * scale),
+                pixelsHigh: Int(card.bounds.height * scale),
+                bitsPerSample: 8,
+                samplesPerPixel: 4,
+                hasAlpha: true,
+                isPlanar: false,
+                colorSpaceName: NSColorSpaceName.deviceRGB,
+                bytesPerRow: 0,
+                bitsPerPixel: 0
+            )
         )
-        XCTAssertEqual(thumbnail.width / thumbnail.height, 1512.0 / 982.0, accuracy: 0.02)
+        rep.size = card.bounds.size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        card.draw(card.bounds)
+        NSGraphicsContext.restoreGraphicsState()
+        return rep
+    }
+
+    /// The pixel `depth` points inside from one horizontal edge, mid-width.
+    private func pixel(
+        _ rep: NSBitmapImageRep,
+        depth: CGFloat,
+        fromTop: Bool
+    ) throws -> (r: CGFloat, g: CGFloat, b: CGFloat) {
+        let scale = CGFloat(rep.pixelsWide) / rep.size.width
+        let offset = Int((depth * scale).rounded())
+        let x = rep.pixelsWide / 2
+        let y = fromTop ? offset : rep.pixelsHigh - 1 - offset
+        let color = try XCTUnwrap(rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
+        return (color.redComponent, color.greenComponent, color.blueComponent)
+    }
+
+    private func distance(
+        _ a: (r: CGFloat, g: CGFloat, b: CGFloat),
+        _ b: (CGFloat, CGFloat, CGFloat)
+    ) -> CGFloat {
+        let dr = (a.r - b.0) * (a.r - b.0)
+        let dg = (a.g - b.1) * (a.g - b.1)
+        let db = (a.b - b.2) * (a.b - b.2)
+        return (dr + dg + db).squareRoot()
     }
 
     // MARK: - The two controls
@@ -225,7 +292,7 @@ final class CaptureCardTests: XCTestCase {
         )
     }
 
-    // MARK: - Cursor
+    // MARK: - The cursor
 
     /// S1 (owner's second pass): neither the drawing overlay's crosshair nor
     /// the board's crosshair may leak onto a capture card — it is a result you
@@ -235,5 +302,72 @@ final class CaptureCardTests: XCTestCase {
         NSCursor.crosshair.set()
         card.cursorUpdate(with: NSEvent())
         XCTAssertEqual(NSCursor.current, NSCursor.arrow, "the card answers with the arrow, not the tool's cursor")
+    }
+
+    // MARK: - The borders (C3/S4)
+
+    /// The black border the card used to wear goes, and the picture runs to
+    /// the card's edge. Where the border lived: `CaptureCardView.draw(_:)` —
+    /// the old card painted `CGColor(gray: 0.08, alpha: 0.92)` over the plate
+    /// inset by 1 pt, behind a thumbnail inset 6 pt more, and THAT dark
+    /// backdrop read as the card's black border. Measured, not assumed.
+    func testTheCardsBorderIsGoneAndThePictureRunsToTheEdge() throws {
+        let card = CaptureCardView(image: flat(Self.borderFixture), onOpen: {}, onClose: {})
+        let rep = try renderedPixels(of: card)
+        let expected: (CGFloat, CGFloat, CGFloat) = (0.9, 0.85, 0.8)
+        // Right at the edge the old card showed either the dark plate or the
+        // 1 pt rim where it started; depth 0.5, 2 and 5 pt all sat inside the
+        // dark backdrop (and the picture stopped 6 pt short). Now every one of
+        // them is the capture's own colour, from both edges.
+        for depth in [CGFloat(0.5), 2, 5] {
+            for fromTop in [true, false] {
+                let sampled = try pixel(rep, depth: depth, fromTop: fromTop)
+                XCTAssertLessThan(
+                    distance(sampled, expected), 0.05,
+                    "at \(depth) pt from the \(fromTop ? "top" : "bottom") edge the picture is the capture, not a border"
+                )
+            }
+        }
+        // And nowhere does the old plate's dark colour survive.
+        let deepSample = try pixel(rep, depth: 3, fromTop: false)
+        XCTAssertGreaterThan(
+            distance(deepSample, (0.08, 0.08, 0.08)), 0.25,
+            "no dark plate is drawn anywhere near the edges"
+        )
+    }
+
+    /// A pinned card's border becomes subtle. Where it lived and what it is:
+    /// `CaptureCardView.draw(_:)` again — the old pin stroke was 2 pt wide at
+    /// alpha 0.95 in `CGColor(red: 0.36, green: 0.66, blue: 1, ...)`. The new
+    /// line is 1 pt, and its weight shows at a much lower alpha: measured by
+    /// sampling the pinned card's own pixels, so the constants cannot drift
+    /// away from the render.
+    func testThePinnedBorderIsTheSubtlerOne() throws {
+        let card = CaptureCardView(image: flat(Self.borderFixture), onOpen: {}, onClose: {})
+        card.isPinned = true
+        let rep = try renderedPixels(of: card)
+        let fixture: (CGFloat, CGFloat, CGFloat) = (0.9, 0.85, 0.8)
+        // Subtlety, at the edge: still a border — the fixture does not show
+        // through untouched — but the capture's red shows through far more
+        // than the old 0.95 weight allowed (its blend read red 0.386; a 0.45
+        // weight reads 0.657 against this fixture).
+        for fromTop in [true, false] {
+            let rim = try pixel(rep, depth: 0.5, fromTop: fromTop)
+            XCTAssertGreaterThan(
+                rim.r, 0.5,
+                "the border's weight must let the capture show through; the old 0.95 blend reads 0.386 at this depth"
+            )
+            XCTAssertGreaterThan(
+                distance(rim, fixture), 0.1,
+                "and the border is still there: the rim is not the bare capture either"
+            )
+            // Only 1 pt in, the border has ended: the new weight is 1 pt where
+            // the old was 2 pt, which painted this depth a solid blue.
+            let deeper = try pixel(rep, depth: 1.5, fromTop: fromTop)
+            XCTAssertLessThan(
+                distance(deeper, fixture), 0.05,
+                "the border is 1 pt: at 1.5 pt the capture is unbordered"
+            )
+        }
     }
 }

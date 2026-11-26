@@ -494,7 +494,7 @@ final class OverlayController {
         cards.onPin = { [weak self] image, screen in
             self?.pinImage(image, on: screen)
         }
-        // The action row's copy (C3/S3): the capture tail's ONE pasteboard
+        // The card's copy control (C3/S4): the capture tail's ONE pasteboard
         // write — the same `copy(_:to:)` the delivery, the history pick and
         // the write-failure fallback answer. The card carries no writer of
         // its own, so the row can never produce bytes a delivery would not.
@@ -511,7 +511,7 @@ final class OverlayController {
         pinnedImages.pin(image, on: screen)
     }
 
-    /// The action row's save (C3/S3): the capture tail's OWN file path —
+    /// The card's save control (C3/S4): the capture tail's OWN file path —
     /// `CaptureFile.write` into the persisted capture destination, read at
     /// action time like the delivery path reads it. Its failure rule is the
     /// one `deliver` applies: nothing writable, the capture lands on the
@@ -531,8 +531,8 @@ final class OverlayController {
     }
 
     /// The card stack, so the tests can drive the cards the capture tail
-    /// feeds into and reach the action row through the wiring this controller
-    /// installed (C3/S3). Detached tests close what they open.
+    /// feeds into and reach the card's corner controls through the wiring
+    /// this controller installed (C3/S4). Detached tests close what they open.
     var captureCardsForTesting: CaptureCardController { cards }
 
     /// The global shortcut's pin (⌥⇧I): floats the session's latest capture
