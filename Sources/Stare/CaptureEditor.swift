@@ -24,14 +24,12 @@ final class CaptureEditorController {
     var windowsForTesting: [CaptureEditorWindow] { windows }
 
     func open(
-        image: CGImage, capture: CapturePreference = .standard, redactionStyle: RedactionStyle = .blur,
-        toolbar: EditorToolbarSnapshot? = nil
+        image: CGImage, capture: CapturePreference = .standard, redactionStyle: RedactionStyle = .blur
     ) {
         let window = CaptureEditorWindow(
             image: image,
             capture: capture,
             redactionStyle: redactionStyle,
-            toolbar: toolbar,
             onDeliver: onDeliver
         ) { [weak self] closing in
             self?.windows.removeAll { $0 === closing }
@@ -55,12 +53,11 @@ final class CaptureEditorWindow: NSWindow {
         image: CGImage,
         capture: CapturePreference,
         redactionStyle: RedactionStyle = .blur,
-        toolbar: EditorToolbarSnapshot? = nil,
         onDeliver: ((CGImage) -> Void)? = nil,
         onClose: @escaping (CaptureEditorWindow) -> Void
     ) {
         let content = CaptureEditorContent(
-            image: image, capture: capture, redactionStyle: redactionStyle, toolbar: toolbar)
+            image: image, capture: capture, redactionStyle: redactionStyle)
         content.onDeliver = onDeliver
         super.init(
             contentRect: CGRect(origin: .zero, size: content.preferredSize),
@@ -97,9 +94,10 @@ final class CaptureEditorContent: NSView {
     let chrome: NSHostingView<EditorChrome>
     /// The editor's own state — one instance, seeded here, shared by the
     /// canvas, the chrome and every handler. Created `.detached` from the
-    /// app's model with `toolbar`, the overlay's read-only snapshot of the
-    /// user's bar configuration (T1/S1), which is what the chrome reads its
-    /// orientation and docked edge from.
+    /// app's model (T1/S1's read-only contract stands even though the
+    /// orientation snapshot does not, L4): no model is injected, so nothing
+    /// the editor picks persists, and nothing stored is read — the chrome is
+    /// ALWAYS the horizontal row at the top (S4).
     let state: EditorState
     /// The preference the save panel defaults from (T11/S6). Its stored
     /// backdrop values are only seeds: the editor's own background control
@@ -107,39 +105,33 @@ final class CaptureEditorContent: NSView {
     private let capture: CapturePreference
     /// Where a composed variant goes once the user copies or saves it (L7).
     var onDeliver: ((CGImage) -> Void)?
-    /// The edge the chrome docks at inside this window (T1/S1): the SAME
-    /// coerced edge rule the outside bar applies at placement — a horizontal
-    /// row rides top or bottom, a column left or right, and a mismatched
-    /// stored pair lands on the orientation's own fallback edge.
-    var chromeBorder: ToolbarBorder {
-        state.toolbarBorder.docked(for: state.toolbarOrientation)
-    }
+    /// The edge the chrome docks at inside this window (S4): ALWAYS the top.
+    /// The orientation snapshot is withdrawn and the editor reads nothing
+    /// stored — the palette is one horizontal row at the top of the editor
+    /// in every configuration.
+    var chromeBorder: ToolbarBorder { .top }
     var preferredSize: CGSize {
         let image = canvas.image
         let width = min(max(CGFloat(image.width) / 2, 480), 1100)
         let scale = width / CGFloat(image.width)
         let height = CGFloat(image.height) * scale
-        // One bar, so the window follows its real fitting size, on the axis
-        // the bar occupies (T1/S1): a row's height joins the canvas height, a
-        // column's width joins the canvas width. The other axis keeps the
-        // canvas's own bound unless the bar needs more room than that — the
-        // bar's fitting size, never a squeezed bar, wins.
+        // One bar, one case (S4): a horizontal row on top, so the row's
+        // height joins the canvas height and the width answers to the wider
+        // of the canvas and the bar — the bar's fitting size, never a
+        // squeezed bar, wins.
         let chromeSize = chrome.fittingSize
         let canvasHeight = min(max(height, 260), 760)
-        return state.toolbarOrientation == .vertical
-            ? CGSize(width: width + chromeSize.width, height: max(canvasHeight, chromeSize.height))
-            : CGSize(width: max(width, chromeSize.width), height: canvasHeight + chromeSize.height)
+        return CGSize(width: max(width, chromeSize.width), height: canvasHeight + chromeSize.height)
     }
 
     init(
-        image: CGImage, capture: CapturePreference, redactionStyle: RedactionStyle,
-        toolbar: EditorToolbarSnapshot? = nil
+        image: CGImage, capture: CapturePreference, redactionStyle: RedactionStyle
     ) {
         self.capture = capture
-        // The state is created once, detached (T1/S1): with the snapshot but
+        // The state is created once, detached (T1/S1's read-only contract):
         // never the model, so no editor pick persists. The per-capture
         // background controls (T2/S2) seed from the stored default.
-        let seeded = EditorState(toolbar: toolbar)
+        let seeded = EditorState()
         seeded.seedBackdrop(from: capture)
         state = seeded
         canvas = CaptureEditorCanvas(image: image)
@@ -207,41 +199,24 @@ final class CaptureEditorContent: NSView {
 
     override func layout() {
         super.layout()
-        // T1/S1: the chrome docks on the edge the user's bar configuration
-        // names (coerced the same way the outside bar coerces), and that is
-        // where the canvas gives way — a row over or under the canvas, a
-        // column beside it. The chrome keeps its real fitting size on the
-        // axis it occupies and spans the rest for the geometry the pill's
-        // own SwiftUI self-lays out inside.
+        // S4: the chrome is ALWAYS one horizontal row at the top, whatever
+        // the user's own bar stores — the snapshot is withdrawn, so this is
+        // the single case `preferredSize` and `layout()` both answer to.
+        // The chrome keeps its real fitting height and spans the width; the
+        // canvas takes the rest.
         let chromeSize = chrome.fittingSize
-        let canvasFrame: CGRect
-        switch chromeBorder {
-        case .top:
-            let height = chromeSize.height
-            chrome.frame = CGRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
-            canvasFrame = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height - height)
-        case .bottom:
-            let height = chromeSize.height
-            chrome.frame = CGRect(x: 0, y: 0, width: bounds.width, height: height)
-            canvasFrame = CGRect(x: 0, y: height, width: bounds.width, height: bounds.height - height)
-        case .left:
-            let width = chromeSize.width
-            chrome.frame = CGRect(x: 0, y: 0, width: width, height: bounds.height)
-            canvasFrame = CGRect(x: width, y: 0, width: bounds.width - width, height: bounds.height)
-        case .right:
-            let width = chromeSize.width
-            chrome.frame = CGRect(x: bounds.width - width, y: 0, width: width, height: bounds.height)
-            canvasFrame = CGRect(x: 0, y: 0, width: bounds.width - width, height: bounds.height)
-        }
-        canvas.frame = canvasFrame
+        let height = chromeSize.height
+        chrome.frame = CGRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
+        canvas.frame = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height - height)
     }
 }
 
-/// One bar: the same palette as the overlay, laid out by the SAME bar
-/// configuration the outside bar follows (T1/S1 — the geometry, the
-/// materials and the placement rules the user configured, not a fixed
-/// strip), with the capture's own actions added to it (S3: the editor's
-/// item list is not the outside bar's list).
+/// One bar: the same pill the outside bar draws — the same materials and
+/// geometry rules — always as one horizontal row at the top of the editor
+/// (S4: the orientation snapshot is withdrawn), with the capture's own
+/// actions added to it (S3: the editor's item list is not the outside bar's
+/// list) and without the outside bar's window chrome — no close button, no
+/// gripper; the editor window's own traffic light and Escape close it.
 struct EditorChrome: View {
     @ObservedObject var state: EditorState
     let onUndo: () -> Void
@@ -258,19 +233,11 @@ struct EditorChrome: View {
     /// bar itself free of a second panel surface.
     @State private var showsBackgroundControl = false
 
-    /// Where the background control's popover points (T2/S2): toward the
-    /// canvas, on the side the chrome is docked at — the same coerced edge
-    /// `CaptureEditorContent` lays the chrome out by.
-    private var backgroundArrowEdge: Edge {
-        switch state.toolbarBorder.docked(for: state.toolbarOrientation) {
-        case .top: .bottom
-        case .bottom: .top
-        case .left: .trailing
-        case .right: .leading
-        }
-    }
-
-    var body: some View {
+    /// The bar the chrome draws (S4). Exposed for the tests, which pin the
+    /// editor's own item list — the select tool present, the close button
+    /// and the gripper absent — through the same construction the body
+    /// renders.
+    var chromeToolbar: ToolbarView {
         ToolbarView(
             state: state,
             onUndo: onUndo,
@@ -297,14 +264,20 @@ struct EditorChrome: View {
                 ToolbarAction(symbolName: "doc.on.doc", help: "Copy", handler: onCopy),
                 ToolbarAction(symbolName: "square.and.arrow.down", help: "Save", handler: onSave),
             ],
+            showsWindowChrome: false,
             // The editor draws over a static captured image: tools that need a
-            // live session are not offered here (advisory B).
+            // live session are not offered here (advisory B). The select tool
+            // belongs (S4) — it mints no mark over a still image.
             toolGroups: Tool.captureEditorGroups
         )
-        .padding(.vertical, 6)
-        .popover(isPresented: $showsBackgroundControl, arrowEdge: backgroundArrowEdge) {
-            EditorBackgroundControl(state: state)
-        }
+    }
+
+    var body: some View {
+        chromeToolbar
+            .padding(.vertical, 6)
+            .popover(isPresented: $showsBackgroundControl, arrowEdge: .bottom) {
+                EditorBackgroundControl(state: state)
+            }
     }
 }
 
@@ -897,8 +870,13 @@ final class CaptureEditorCanvas: NSView {
     /// Observes the single selection state: picking any tool drops the
     /// staged rectangle together with the crop's marking (T4/S6).
     private var selectionObservation: AnyCancellable?
+    /// Observes the per-capture background knobs (T5/S5): a change to any
+    /// of the three must invalidate the canvas, or the control is dead —
+    /// the defect the owner reported ("cambio las propiedades del bg en el
+    /// editor pero no hace nada", L4).
+    private var backdropObservations: [AnyCancellable] = []
     var state: EditorState? {
-        didSet { observeSelection() }
+        didSet { observeSelection(); observeBackdrop() }
     }
     private var session = DrawingSession()
     /// The space each mark was recorded in — the display mapping of the
@@ -934,13 +912,66 @@ final class CaptureEditorCanvas: NSView {
 
     /// Adapts to a new state: sink onto the one selection (S6) so a tool
     /// pick — routed through `EditorState` — also ungates the staged
-    /// rectangle. One selection state owns both the marking and the
-    /// rectangle; the canvas never keeps a second flag of its own.
+    /// rectangle, and sink onto the background knobs (S5) so a slider move
+    /// repaints the picture the next display pass brings. One selection
+    /// state owns the marking; the three knobs own the composed ground.
     private func observeSelection() {
         selectionObservation = state?.$captureSelection.sink { [weak self] selection in
             guard case .tool = selection else { return }
             self?.dropStagedRectangle()
         }
+    }
+
+    private func observeBackdrop() {
+        guard let state else { return }
+        func observe<T>(_ publisher: Published<T>.Publisher) -> AnyCancellable {
+            publisher.sink { [weak self] _ in self?.needsDisplay = true }
+        }
+        backdropObservations = [
+            observe(state.$backdropPadding),
+            observe(state.$backdropCornerRadius),
+            observe(state.$backdropShadow),
+        ]
+    }
+
+    // MARK: - The composed ground (T5/S5)
+
+    /// The capture composed into its backdrop — the exact pixels the copy,
+    /// save and history paths take — or nil when the per-capture background
+    /// composes nothing. Memoized on the image and the three values, so the
+    /// composition is rebuilt only when a knob moves or the picture changes.
+    private var composedGround: (surface: CGImage, margin: Int)? {
+        guard let state, state.backdropIsActive else { return nil }
+        let padding = CaptureBackdrop.clampedPadding(state.backdropPadding)
+        let radius = CaptureBackdrop.clampedCornerRadius(state.backdropCornerRadius)
+        if let cached = groundCache,
+            cached.source === image,
+            cached.padding == padding, cached.radius == radius, cached.shadow == state.backdropShadow {
+            return cached.ground
+        }
+        guard let surface = CaptureBackdrop.composed(
+            image,
+            padding: padding,
+            cornerRadius: radius,
+            shadow: state.backdropShadow
+        ) else { return nil }
+        // The composition pads the capture symmetrically, so the picture's
+        // pixel frame inside the surface sits at the uniform margin.
+        let margin = (surface.width - image.width) / 2
+        let ground = (surface: surface, margin: margin)
+        groundCache = (source: image, padding: padding, radius: radius, shadow: state.backdropShadow, ground: ground)
+        return ground
+    }
+    private var groundCache: (source: CGImage, padding: Int, radius: Int, shadow: Bool, ground: (surface: CGImage, margin: Int))?
+
+    /// Grows a pixel coverage to the composed ground's surface: the frame
+    /// the editor fits into the canvas when the background composes anything
+    /// (S5), so the padded, rounded, shadowed ground is what fits — the
+    /// control applies live and the arranged pixels are the delivered ones.
+    private func surfaceCoverage(_ coverage: CGRect) -> CGRect {
+        guard let ground = composedGround else { return coverage }
+        let margin = CGFloat(ground.margin)
+        return coverage.insetBy(dx: -margin, dy: -margin)
     }
 
     /// The drag on the crop. The gesture remembers nothing else: the display
@@ -1004,6 +1035,11 @@ final class CaptureEditorCanvas: NSView {
         let full = CGRect(x: 0, y: 0, width: image.width, height: image.height)
         var coverage = full
         if !armed, let region = record.region { coverage = region }
+        // S5: the surface the editor fits is the composed ground when the
+        // background composes anything — the picture's pixel frame grown by
+        // the backdrop's uniform margin — so the control applies live and
+        // the view shows the pixels the copy, save and history take.
+        coverage = surfaceCoverage(coverage)
         let base = EditorCropSpace.fitted(coverage: coverage, viewport: .identity, inCanvas: bounds)
         reconcileViewport(against: base)
         guard viewport != .identity else { return base }
@@ -1040,7 +1076,10 @@ final class CaptureEditorCanvas: NSView {
     private var currentFitCoverage: CGRect {
         var coverage = fullBounds
         if !isCropping, let region = record.region { coverage = region }
-        return coverage
+        // The same ground the display fits (S5): zoom and pan clamp against
+        // the composed surface's frame, never against a frame the view does
+        // not show.
+        return surfaceCoverage(coverage)
     }
 
     /// The fitted display for a coverage, with the viewport reconciled
@@ -1130,32 +1169,49 @@ final class CaptureEditorCanvas: NSView {
         let space = activeSpace
         // The pixels the view covers, drawn upright in the flipped view: the
         // full bitmap is placed so `coverage` lands in `display`, and the
-        // parts outside the crop are clipped away.
+        // parts outside the crop are clipped away. When the per-capture
+        // background composes anything, the bitmap is the composed GROUND
+        // (S5): the exact surface the copy, save and history paths take —
+        // the capture inside its padded, rounded, shadowed frame — so the
+        // control applies live and the arranged pixels are the delivered
+        // ones. The frame math is unchanged: `coverage` already grows to the
+        // surface, and the composition pads the capture symmetrically, so
+        // the surface is placed at the same margin inside the display.
         let pointsPerPixel = space.pixelsPerPoint > 0 ? 1 / space.pixelsPerPoint : 0
+        let ground = composedGround
+        let base = ground?.surface ?? image
         let frame = CGRect(
             x: space.display.minX - CGFloat(space.coverage.minX) * pointsPerPixel,
             y: space.display.minY - CGFloat(space.coverage.minY) * pointsPerPixel,
-            width: CGFloat(image.width) * pointsPerPixel,
-            height: CGFloat(image.height) * pointsPerPixel
+            width: CGFloat(base.width) * pointsPerPixel,
+            height: CGFloat(base.height) * pointsPerPixel
         )
         context.saveGState()
         context.clip(to: space.display)
         context.translateBy(x: 0, y: space.display.midY)
         context.scaleBy(x: 1, y: -1)
         context.translateBy(x: 0, y: -space.display.midY)
-        context.draw(image, in: frame)
+        context.draw(base, in: frame)
         // The layers ride the same flip and the same mapping (S19 slice 2):
         // z-order bottom to top, each drawn into the view rect its placement
         // maps to through the space — what the save flattens is what shows.
+        // They never reach the backdrop's padding: the compositor composes
+        // them over the CAPTURE before the backdrop wraps it, so the clip
+        // is the picture's own rect (the display's when the background is
+        // off — today's exact behaviour).
+        let pictureRect = space.display.intersection(space.viewRect(fromPixel: fullBounds))
+        context.clip(to: pictureRect)
         for layer in composition.layers {
             context.draw(layer.image, in: space.viewRect(fromPixel: layer.placement))
         }
         context.restoreGState()
 
         // Every mark is placed through the space it was recorded in, so the
-        // crop refitting or the window moving never dislocates it (S7).
+        // crop refitting or the window moving never dislocates it (S7). The
+        // marks never reach the backdrop's padding either: the compositor
+        // draws them over the capture before the backdrop wraps it (S5).
         context.saveGState()
-        context.clip(to: space.display)
+        context.clip(to: space.display.intersection(space.viewRect(fromPixel: fullBounds)))
         MarkRenderer.draw(
             strokes: session.visibleStrokes.map { space.convert($0, from: spaces[$0.id] ?? space) },
             in: context
@@ -2102,10 +2158,18 @@ final class CaptureEditorCanvas: NSView {
         // the file. Applied over that mapping, the crop only cuts the base:
         // it never shifts the marks a second time, because the converted
         // coordinates are already region-relative.
-        let fitted = EditorCropSpace.fitted(coverage: space.coverage, inCanvas: bounds)
+        // The zoomed-out letterboxing note above still holds, but the target's
+        // coverage stays anchored to the BASE's own frame — the crop region
+        // or the whole capture (S5): the compositor places marks from the
+        // base's top-left corner, so the composed ground's backdrop margin
+        // must not shift them. This is exactly the coverage `displaySpace`
+        // names when the background composes nothing, so an inactive
+        // backdrop keeps today's bytes exactly.
+        let baseCoverage = record.region ?? fullBounds
+        let fitted = EditorCropSpace.fitted(coverage: baseCoverage, inCanvas: bounds)
         let target = EditorCropSpace(
             display: CGRect(origin: .zero, size: fitted.display.size),
-            coverage: space.coverage
+            coverage: baseCoverage
         )
         let marks = session.strokes.map { target.convert($0, from: spaces[$0.id] ?? space) }
         guard

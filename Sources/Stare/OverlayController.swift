@@ -289,8 +289,10 @@ final class OverlayController {
         self.preferences = preferences
         self.sessionStore = sessionStore
         self.history = history
-        // The state is created before the editor handoff is wired: its
-        // mirrors are what the handoff reads at open time (T1/S1).
+        // The state is created before the editor handoff is wired: the
+        // overlay's mirrors no longer seed the editor (S4 withdrew the
+        // snapshot, L4), but the state must still exist for the overlay
+        // itself.
         let editorState = EditorState(preferences: preferences)
         self.state = editorState
         let editor = CaptureEditorController()
@@ -298,15 +300,13 @@ final class OverlayController {
         self.openEditor = editorHandoff.map { handoff in
             { image, capture, _ in handoff(image, capture) }
         } ?? { image, capture, redactionStyle in
-            // T1/S1: the editor's chrome seeds from a READ-ONLY snapshot of
-            // the user's bar configuration, taken at open time from the
-            // overlay's own state — the editor never receives the
+            // S4: the editor's chrome is always the horizontal row at the
+            // top — the read-only snapshot T1 once took of the user's bar
+            // configuration is withdrawn (L4) — so the handoff carries only
+            // the capture itself. The editor still never receives the
             // preferences model, so nothing it does can persist into the
             // saved bar.
-            let toolbar = EditorToolbarSnapshot(
-                orientation: editorState.toolbarOrientation,
-                border: editorState.toolbarBorder)
-            editor.open(image: image, capture: capture, redactionStyle: redactionStyle, toolbar: toolbar)
+            editor.open(image: image, capture: capture, redactionStyle: redactionStyle)
         }
         wireEditor()
         // The panel's hiding hands key focus back to whatever was working

@@ -191,4 +191,95 @@ final class CaptureEditorBackdropTests: XCTestCase {
         state.backdropCornerRadius = 9_999
         XCTAssertEqual(state.backdropCornerRadius, CaptureBackdrop.maxCornerRadius)
     }
+
+    // MARK: - The background applies live (T5/S5)
+
+    /// Renders the canvas the way the editor shows it, so the test reads the
+    /// visible picture instead of only the composed output.
+    private func renderedCanvas(_ canvas: CaptureEditorCanvas) throws -> CGImage? {
+        guard canvas.bounds.width > 0, canvas.bounds.height > 0 else { return nil }
+        let rep = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: Int(canvas.bounds.width), pixelsHigh: Int(canvas.bounds.height),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        canvas.cacheDisplay(in: canvas.bounds, to: rep)
+        return rep.cgImage
+    }
+
+    /// S5: changing each of the three background values must change what the
+    /// editor SHOWS — the dead control's defect (L4) was that the canvas
+    /// never composed or invalidated the backdrop — and the composed pixels
+    /// the copy, save and history paths take must still move with the knobs
+    /// and stay one set of pixels.
+    func testChangingEachBackgroundValueChangesWhatTheEditorShows() throws {
+        let content = CaptureEditorContent(image: solid(120, 90), capture: .standard, redactionStyle: .blur)
+        // A real, visible window: the dirty-flag assertion below reads the
+        // same invalidation the live editor relies on, and an unhosted view
+        // does not track it at all.
+        let window = NSWindow(
+            contentRect: CGRect(origin: .zero, size: CGSize(width: 480, height: 400)),
+            styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        window.contentView = content
+        window.confineToPrimaryScreen()
+        window.orderFrontRegardless()
+        content.layoutSubtreeIfNeeded()
+        defer { window.orderOut(nil) }
+        let canvas = content.canvas
+        let state = try XCTUnwrap(canvas.state)
+        let before = pngData(try XCTUnwrap(renderedCanvas(canvas), "the canvas renders"))
+        let beforeComposed = pngData(try XCTUnwrap(canvas.composedImage()))
+
+        // Padding: the capture sits inside a margin.
+        state.backdropPadding = 24
+        XCTAssertTrue(canvas.needsDisplay, "a knob change must invalidate the canvas")
+        XCTAssertNotEqual(
+            pngData(try XCTUnwrap(renderedCanvas(canvas))), before,
+            "padding must change what the editor shows")
+        XCTAssertNotEqual(
+            pngData(try XCTUnwrap(canvas.composedImage())), beforeComposed,
+            "padding must change the composed pixels")
+
+        // Corner radius: the capture's corners round.
+        state.backdropPadding = 0
+        state.backdropCornerRadius = 16
+        XCTAssertTrue(canvas.needsDisplay)
+        XCTAssertNotEqual(
+            pngData(try XCTUnwrap(renderedCanvas(canvas))), before,
+            "the corner radius must change what the editor shows")
+        XCTAssertNotEqual(
+            pngData(try XCTUnwrap(canvas.composedImage())), beforeComposed,
+            "the corner radius must change the composed pixels")
+
+        // Shadow: the fixed shadow shows around the capture.
+        state.backdropCornerRadius = 0
+        state.backdropShadow = true
+        XCTAssertTrue(canvas.needsDisplay)
+        XCTAssertNotEqual(
+            pngData(try XCTUnwrap(renderedCanvas(canvas))), before,
+            "the shadow must change what the editor shows")
+        XCTAssertNotEqual(
+            pngData(try XCTUnwrap(canvas.composedImage())), beforeComposed,
+            "the shadow must change the composed pixels")
+    }
+
+    /// The liveness must not fork the pixels: with the knobs live in the
+    /// view, the copy, the save and the history delivery still take the same
+    /// composed pixels (L3's property).
+    func testTheLiveBackgroundStillLeavesCopySaveAndHistoryOnOneSetOfPixels() throws {
+        let content = CaptureEditorContent(image: solid(120, 90), capture: .standard, redactionStyle: .blur)
+        let state = try XCTUnwrap(content.canvas.state)
+        state.backdropPadding = 18
+        state.backdropCornerRadius = 10
+        state.backdropShadow = true
+
+        let copyPixels = try XCTUnwrap(content.canvas.composedImage())
+        let savePixels = try XCTUnwrap(content.canvas.composedImageForSave(format: .png))
+        XCTAssertEqual(pngData(savePixels), pngData(copyPixels), "copy and save must take the same pixels")
+
+        var delivered: [CGImage] = []
+        content.onDeliver = { delivered.append($0) }
+        content.deliverComposed()
+        let deliveredPixels = try XCTUnwrap(delivered.first)
+        XCTAssertEqual(pngData(deliveredPixels), pngData(copyPixels), "the history delivery takes the same pixels")
+    }
 }

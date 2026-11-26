@@ -396,6 +396,14 @@ struct ToolbarView: View {
     /// and the editor bar never show it). Disabled while one page remains,
     /// since the board can never go empty.
     var onDeletePage: (() -> Void)? = nil
+    /// Whether the bar draws the window chrome's tail (S4): the close button
+    /// and the gripper. The overlay's bar and the whiteboard keep both — the
+    /// floating bar needs the grab handle and its Done button — while the
+    /// capture editor's chrome lives inside its own titled window, whose
+    /// close traffic light already closes it (Escape does too), so neither
+    /// item belongs there. The outside bar's default keeps the tail exactly
+    /// as it always was; `ToolbarGripperTests` pins that tail on the static.
+    var showsWindowChrome: Bool = true
     /// The tools the bar offers. Nil (the default) means the drawing toolbar:
     /// the section follows the persisted tool layout (T8/S10) mirrored in the
     /// state, so a Settings change re-lays the bar live. A non-nil value is a
@@ -485,6 +493,15 @@ struct ToolbarView: View {
 
     static let trailingItems: [TrailingItem] = TrailingItem.allCases
 
+    /// The trailing items THIS surface draws: the full static list, or —
+    /// where `showsWindowChrome` is off (S4, the capture editor's chrome) —
+    /// the same list without the close button and the gripper. The static
+    /// stays the single source the outside bar's tests pin.
+    var drawnTrailingItems: [TrailingItem] {
+        guard !showsWindowChrome else { return Self.trailingItems }
+        return Self.trailingItems.filter { $0 != .close && $0 != .gripper }
+    }
+
     /// The stacking direction the bar draws in (T9/S12), read from the
     /// state's mirror of the persisted preference so a Settings change re-lays
     /// out the bar live.
@@ -554,7 +571,9 @@ struct ToolbarView: View {
     /// Everything the bar offers, in the same order both orientations draw:
     /// the configured tools (T6/S5: the stored item list, or the capture
     /// editor's fixed grouped palette), inks, crop/extra actions, page
-    /// controls, then undo, redo, clear, close and the gripper tail (T3/S4).
+    /// controls, then the trailing tail (T3/S4) — undo, redo, clear, and
+    /// the close button and the gripper only where the surface keeps its
+    /// window chrome (S4: the editor's chrome draws neither).
     @ViewBuilder
     private var barItems: some View {
         if let toolGroups {
@@ -663,7 +682,7 @@ struct ToolbarView: View {
 
             divider
 
-            ForEach(ToolbarView.trailingItems, id: \.self) { item in
+            ForEach(drawnTrailingItems, id: \.self) { item in
                 switch item {
                 case .undo:
                     iconButton("arrow.uturn.backward", help: "Undo (⌘Z)", action: onUndo)

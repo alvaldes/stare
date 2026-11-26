@@ -145,7 +145,9 @@ final class ToolShortcutMapTests: XCTestCase {
         XCTAssertEqual(ShortcutRouter.resolve("3"), .ink(.yellow))
         XCTAssertEqual(ShortcutRouter.resolve("z"), .none)
         XCTAssertEqual(ShortcutRouter.resolve("v", allowedTools: [.select]), .tool(.select))
-        XCTAssertEqual(ShortcutRouter.resolve("v", allowedTools: Tool.captureEditorTools), .none)
+        // S4/L4: the capture editor now offers the select tool, so 'v' resolves
+        // to `.tool(.select)` there too.
+        XCTAssertEqual(ShortcutRouter.resolve("v", allowedTools: Tool.captureEditorTools), .tool(.select))
     }
 
     // MARK: Router over an edited map (T8/S6)

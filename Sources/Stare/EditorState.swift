@@ -12,19 +12,6 @@ enum CaptureSelection: Equatable {
     case crop
 }
 
-/// The capture editor's read-only snapshot of the user's bar configuration
-/// (T1/S1). The overlay reads its own mirrors the moment it hands a capture
-/// to the editor and the editor keeps only this copy: the `PreferencesModel`
-/// is NOT injected into the editor's state, so no tool pick or palette move
-/// the editor makes can persist into the user's saved bar. Stored values are
-/// the raw mirrors, the same pair the outside bar holds; consumers coerce a
-/// mismatched pair with `ToolbarBorder.docked(for:)`, the exact rule the
-/// outside bar's placement applies.
-struct EditorToolbarSnapshot: Equatable, Sendable {
-    var orientation: ToolbarOrientation
-    var border: ToolbarBorder
-}
-
 /// Editor state shared by the overlay views and the floating toolbar: the
 /// current tool, the current ink and whether the armed frame is drawn.
 ///
@@ -334,13 +321,11 @@ final class EditorState: ObservableObject {
     /// Creates the state. With `preferences`, every value seeds from the one
     /// blob and every change persists through it; without it (capture
     /// editor, selftest) the state runs on the shipped defaults in memory.
-    /// A detached editor additionally receives `toolbar` (T1/S1): the
-    /// overlay's read-only snapshot of the user's bar configuration, taken
-    /// when the capture is handed over. The seeds below ride `didSet`s that
-    /// call `writeIfNotSyncing` — with no attached model any write is
-    /// refused, so the snapshot stays read-only exactly as the S1 contract
-    /// demands.
-    init(preferences: PreferencesModel? = nil, toolbar: EditorToolbarSnapshot? = nil) {
+    /// The editor's chrome is ALWAYS a horizontal row at the top (S4), so a
+    /// detached state keeps exactly that: the shipped horizontal/top
+    /// defaults, in memory only, whatever the user's own bar stores. The
+    /// orientation snapshot T1 once took is withdrawn (L4).
+    init(preferences: PreferencesModel? = nil) {
         self.preferences = preferences
         if let preferences {
             // The model is main-actor isolated and this state is only ever
@@ -400,13 +385,11 @@ final class EditorState: ObservableObject {
             overlayScope = OverlayScope.all.rawValue
             palettePlacement = PalettePlacement.cursor.rawValue
             laserLifetime = LaserLifetime.twoPointFive.rawValue
-            // T1/S1: the editor seeds the user's own bar configuration from
-            // the overlay's snapshot when one is handed in; without one
-            // (selftest harness) the shipped horizontal/top default stands,
-            // still today's values.
-            let snapshot = toolbar ?? EditorToolbarSnapshot(orientation: .horizontal, border: .top)
-            toolbarOrientation = snapshot.orientation
-            toolbarBorder = snapshot.border
+            // S4: the editor's chrome is always the horizontal row at the
+            // top, so the detached state keeps the shipped horizontal/top
+            // defaults — nothing stored is read, no snapshot is taken.
+            toolbarOrientation = .horizontal
+            toolbarBorder = .top
             boardPageBackground = WhiteboardDefaults.standard.background.rawValue
             boardScope = WhiteboardDefaults.standard.scope.rawValue
             boardShowBorder = WhiteboardDefaults.standard.showsBorder

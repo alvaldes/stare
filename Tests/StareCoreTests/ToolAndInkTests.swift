@@ -195,12 +195,14 @@ final class ToolAndInkTests: XCTestCase {
 
     // T11/S6 advisory B: the capture editor draws over a static captured image
     // with no live session, so tools that need one must not be offered there —
-    // the edit cursor has no selection UI, text has no field editor, and the
-    // laser's lifetime is meaningless over a still image. Every tool the
-    // editor does offer keeps its place in the groups.
+    // text has no field editor and the laser's lifetime is meaningless over a
+    // still image. Select joins the editor's palette per S4/L4 (owner: "le falta
+    // el tool 'v'"): it mints no mark over a still image, so it is the
+    // palette's empty-handed pointer route. Every tool the editor does offer
+    // keeps its place in the groups.
     func testCaptureEditorOffersOnlyToolsThatWorkThere() {
         let offered = Tool.captureEditorTools
-        XCTAssertFalse(offered.contains(.select), "the cursor is dead in the capture editor")
+        XCTAssertTrue(offered.contains(.select), "S4/L4: the cursor is offered in the capture editor — it mints no mark over a still image")
         XCTAssertFalse(offered.contains(.text), "text has no field editor in the capture editor")
         XCTAssertFalse(offered.contains(.laser), "the laser fades with the session, not over a still image")
         for tool in [.pen, .highlighter, .arrow, .line, .rectangle, .ellipse, .number, .eraser, .blur, .spotlight] as [Tool] {
@@ -258,12 +260,16 @@ final class ToolAndInkTests: XCTestCase {
         }
     }
 
-    // Advisory B: in the capture editor the shortcut router must not resolve a
-    // key to a tool the editor does not show — V lands on nothing instead of
-    // silently arming a cursor that can do nothing.
-    func testSelectShortcutDoesNotResolveInTheCaptureEditor() {
+    // Advisory B, re-derived per S4/L4: V resolves to the select tool in the
+    // capture editor as it does in the overlay — the editor offers the cursor —
+    // while a tool the editor hides still lands on nothing.
+    func testSelectShortcutResolvesInTheCaptureEditor() {
         XCTAssertEqual(ShortcutRouter.resolve("v"), .tool(.select), "the overlay offers the cursor")
-        XCTAssertEqual(ShortcutRouter.resolve("v", allowedTools: Tool.captureEditorTools), .none)
+        XCTAssertEqual(
+            ShortcutRouter.resolve("v", allowedTools: Tool.captureEditorTools),
+            .tool(.select),
+            "S4/L4: the editor offers the cursor too"
+        )
 
         // Every tool the editor shows stays reachable by its shortcut, and no
         // offered shortcut resolves to a tool the editor hides.

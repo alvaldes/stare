@@ -113,8 +113,7 @@ final class CaptureSpotlightShapeTests: XCTestCase {
         let content = CaptureEditorContent(
             image: try XCTUnwrap(Self.solidImage()),
             capture: .standard,
-            redactionStyle: .blur,
-            toolbar: EditorToolbarSnapshot(orientation: .horizontal, border: .top))
+            redactionStyle: .blur)
         let window = NSWindow(
             contentRect: CGRect(origin: .zero, size: content.preferredSize),
             styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)

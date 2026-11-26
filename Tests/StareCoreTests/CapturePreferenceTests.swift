@@ -37,11 +37,31 @@ final class CapturePreferenceTests: XCTestCase {
 
     // MARK: Defaults reproduce today's behaviour (S6/S7)
 
-    func testStandardIsPngToClipboardWithStarePrefix() {
+    /// S6 canary — re-derived once in S6 (L4): the fresh install's capture
+    /// destination used to be the clipboard ("PNG written to the clipboard",
+    /// the file header's old reading); the owner moved the fresh default to
+    /// the Downloads folder with "nota default folder de las capturas
+    /// ~/Downloads". The rest of the fresh document is unchanged, and a
+    /// stored document keeps whatever destination it holds (the no-migration
+    /// rule — see the missing-destination canary below).
+    func testStandardIsPngToTheFreshInstallFolderWithStarePrefix() {
         XCTAssertEqual(CapturePreference.standard.format, .png)
-        XCTAssertEqual(CapturePreference.standard.destination, .clipboard)
+        XCTAssertEqual(
+            CapturePreference.standard.destination,
+            .folder(path: CapturePreference.defaultDestinationFolder))
+        XCTAssertEqual(CapturePreference.defaultDestinationFolder, "~/Downloads")
         XCTAssertEqual(CapturePreference.standard.fileNamePrefix, "Stare")
         XCTAssertEqual(CapturePreference.standard, CapturePreference())
+    }
+
+    /// "A fresh CapturePreference resolves to ~/Downloads": the stored tilde
+    /// path is what `CaptureFile.write` expands before it writes, so the
+    /// resolution must name the home Downloads folder.
+    func testTheFreshDestinationResolvesToTheHomeDownloadsFolder() {
+        let resolved = (CapturePreference.defaultDestinationFolder as NSString).expandingTildeInPath
+        XCTAssertEqual(
+            resolved,
+            (NSHomeDirectory() as NSString).appendingPathComponent("Downloads"))
     }
 
     func testFreshInstallTemplateIsTheDocumentedTemplate() {
@@ -165,15 +185,40 @@ final class CapturePreferenceTests: XCTestCase {
     }
 
     func testMissingFieldsTakeStandard() throws {
-        // S8 canary — re-aimed once in S4 (L6), again in S8: without a
-        // `version` key the document predates version stamping, so `{}` is a
-        // pre-change document whose missing template field is the old shipped
-        // default `""`. The migration moves it to the shipped template, which
-        // makes the whole decode the standard document. A document that this
-        // build already versioned keeps the template-less state as stored:
-        // empty, the cleared choice, the legacy prefix name.
-        XCTAssertEqual(try decode(#"{}"#), CapturePreference.standard)
+        // S8 canary — re-aimed once in S4 (L6), again in S8, now in S6 (L4):
+        // without a `version` key the document predates version stamping, so
+        // `{}` is a pre-change document whose missing template field is the
+        // old shipped default `""`. The migration moves it to the shipped
+        // template. And the S6 no-migration rule holds here too: the missing
+        // `destination` key keeps the era's clipboard default — a document
+        // predating the destination field is not a fresh install, and the
+        // fresh default must not reach back and move it — so the decode no
+        // longer equals the fresh standard document, whose destination is
+        // the Downloads folder.
+        let stored = CapturePreference(format: .png, destination: .clipboard, fileNamePrefix: "Stare")
+        XCTAssertEqual(try decode(#"{}"#), stored)
+        XCTAssertNotEqual(
+            try decode(#"{}"#), CapturePreference.standard,
+            "a stored document without a destination is not migrated to the fresh default")
         XCTAssertEqual(try decode(#"{"version":2}"#).fileNameTemplate, "")
+        XCTAssertEqual(try decode(#"{"version":2}"#).destination, .clipboard)
+    }
+
+    // MARK: Stored destinations are never migrated (S6)
+
+    /// Stored preferences keep whatever folder they hold: a stored folder
+    /// path decodes untouched, and a stored clipboard choice stays on the
+    /// clipboard — the fresh-install default never reaches back into them.
+    func testAStoredDestinationIsKeptExactlyAsItHolds() throws {
+        let stored = try decode(
+            #"{"format":"png","destination":{"folder":"/Users/al/Pictures/Stare"},"fileNamePrefix":"Stare"}"#)
+        XCTAssertEqual(stored.destination, .folder(path: "/Users/al/Pictures/Stare"))
+        XCTAssertEqual(try decode(Self.oldStoredCapture).destination, .clipboard)
+        XCTAssertEqual(
+            try decode(#"{"format":"png","destination":{"folder":"~/Pictures/Stare"},"fileNamePrefix":"Stare"}"#)
+                .destination,
+            .folder(path: "~/Pictures/Stare"),
+            "even a home-anchored path identical in meaning is kept as stored, never rewritten")
     }
 
     // MARK: The default reaches a preference stored before it (S8)

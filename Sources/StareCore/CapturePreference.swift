@@ -36,6 +36,12 @@ public enum CaptureDestination: Codable, Equatable, Sendable {
     /// Write the capture into this directory.
     case folder(path: String)
 
+    /// The destination a stored document without a destination key decodes
+    /// to: the clipboard, the default of every era that could store one.
+    /// A stored preference keeps what it holds; the fresh-install default
+    /// (`~/Downloads`, S6) never reaches back into a stored document.
+    static let storedFallback = CaptureDestination.clipboard
+
     private enum CodingKeys: String, CodingKey {
         case clipboard, folder
     }
@@ -222,15 +228,24 @@ public struct CapturePreference: Codable, Equatable, Sendable {
     /// edges out to the display's edges (S1). Default ON (S2).
     public var showAreaGuides: Bool
 
+    /// Where captures land on a fresh install (S6): the folder destination's
+    /// fresh path, stored as the home shortcut and expanded at write time —
+    /// Settings offers it when the user first switches to a folder, and a
+    /// fresh `CapturePreference` starts there. A stored preference keeps
+    /// whatever destination it holds; nothing migrates.
+    public static let defaultDestinationFolder = "~/Downloads"
+
     /// The capture preferences a fresh install gets, matching today's
     /// clipboard behaviour.
     public static let standard = CapturePreference()
 
     /// Creates capture preferences, sanitising the prefix and the template
-    /// and degrading an unusable folder destination to the clipboard.
+    /// and degrading an unusable folder destination to the clipboard. The
+    /// fresh destination is the Downloads folder (S6); a stored document's
+    /// destination decodes from the blob and is never migrated.
     public init(
         format: CaptureFormat = .png,
-        destination: CaptureDestination = .clipboard,
+        destination: CaptureDestination = .folder(path: defaultDestinationFolder),
         fileNamePrefix: String = defaultPrefix,
         downscaleMode: CaptureDownscale.Mode = .off,
         maxSaveWidth: Int = defaultMaxSaveWidth,
@@ -310,7 +325,7 @@ public struct CapturePreference: Codable, Equatable, Sendable {
         let migrates = Self.mayMigrate(container)
         let rawFormat = try? container.decode(String.self, forKey: .format)
         self.format = rawFormat.flatMap(CaptureFormat.init(rawValue:)) ?? .png
-        self.destination = (try? container.decode(CaptureDestination.self, forKey: .destination)) ?? .clipboard
+        self.destination = (try? container.decode(CaptureDestination.self, forKey: .destination)) ?? CaptureDestination.storedFallback
         let rawPrefix = try? container.decode(String.self, forKey: .fileNamePrefix)
         self.fileNamePrefix = Self.sanitisedPrefix(rawPrefix)
         self.downscaleMode =

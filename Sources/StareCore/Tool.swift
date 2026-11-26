@@ -138,18 +138,24 @@ public enum Tool: String, CaseIterable, Identifiable, Sendable {
     public var isSelection: Bool { self == .select }
 
     /// Whether the tool can work in the capture editor, which draws over a
-    /// static captured image with no live session: the edit cursor has no
-    /// selection UI there, text has no field editor, and the laser fades with
-    /// session time instead of annotating a still image.
+    /// static captured image with no live session: text has no field editor
+    /// there and the laser fades with session time instead of annotating a
+    /// still image. The select tool joins the editor's palette (S4 — it was
+    /// never there and the owner missed it): over a still image it mints no
+    /// mark at all (`DrawingSession.begin` refuses the edit cursor), so it
+    /// serves as the palette's empty-handed pointer route, and its marking
+    /// rides the same single armed-item state every other tool marks from.
     public var worksInCaptureEditor: Bool {
         switch self {
-        case .select, .text, .laser: false
+        case .text, .laser: false
         default: true
         }
     }
 
-    /// The palette groups as the capture editor may offer them: the main bar's
-    /// groups minus the tools that cannot work over a still image.
+    /// The palette groups as the capture editor offers them: the main bar's
+    /// groups minus the tools that cannot work over a still image. The select
+    /// tool keeps its own leading family group, exactly as the outside bar
+    /// draws it (S4).
     public static var captureEditorGroups: [[Tool]] {
         toolbarGroups.map { $0.filter(\.worksInCaptureEditor) }.filter { !$0.isEmpty }
     }

@@ -4,11 +4,13 @@ import XCTest
 @testable import Stare
 import StareCore
 
-/// T1/S1: the editor's chrome follows the user's own bar configuration, not
-/// a fixed horizontal strip pinned to the top. For each of the four stored
-/// orientation + docked-edge pairs, the real chrome lays out on the edge the
-/// configuration names and the canvas takes the rest. The frames below are
-/// the measured pins nothing had before.
+/// T4/S4: the editor's chrome is ALWAYS a horizontal row at the top of the
+/// editor, whatever the user's own bar is configured as — the orientation
+/// snapshot is withdrawn, so the editor consults nothing stored and builds
+/// its own detached state, whose mirrors stay on the shipped horizontal/top
+/// defaults the one layout needs. The palette carries the select tool, and
+/// the close button and the gripper — the outside bar's window chrome — are
+/// not editor items.
 @MainActor
 final class CaptureEditorChromeTests: XCTestCase {
     private func solid(_ width: Int, _ height: Int) -> CGImage {
@@ -22,15 +24,23 @@ final class CaptureEditorChromeTests: XCTestCase {
         return context.makeImage()!
     }
 
-    /// A real editor content seeded with the given snapshot, laid out in a
-    /// real window the way the app opens one, with the measured layout
-    /// printed for the record.
-    private func layout(toolbar: EditorToolbarSnapshot) throws -> CaptureEditorContent {
+    /// An in-memory `PreferenceStore` double, so the stored-configuration
+    /// probe never touches the user's real preferences — the same isolation
+    /// the preference tests use.
+    private final class InMemoryPreferenceStore: PreferenceStore {
+        private var storage: [String: Any] = [:]
+        func object(forKey key: String) -> Any? { storage[key] }
+        func set(_ value: Any?, forKey key: String) { storage[key] = value }
+    }
+
+    /// A real editor content built the way the app builds it — with nothing
+    /// handed in about the user's bar — laid out in a real window, with the
+    /// measured layout printed for the record.
+    private func layout() throws -> CaptureEditorContent {
         let content = CaptureEditorContent(
             image: solid(300, 200),
             capture: .standard,
-            redactionStyle: .blur,
-            toolbar: toolbar
+            redactionStyle: .blur
         )
         let window = NSWindow(
             contentRect: CGRect(origin: .zero, size: content.preferredSize),
@@ -40,103 +50,102 @@ final class CaptureEditorChromeTests: XCTestCase {
         content.layoutSubtreeIfNeeded()
 
         let chrome = try XCTUnwrap(content.chrome, "the content builds the chrome")
-        let label = "\(toolbar.orientation.rawValue)-\(toolbar.border.rawValue)"
-        print("CHROME \(label): bounds=\(content.bounds) chrome=\(chrome.frame) canvas=\(content.canvas.frame) preferred=\(content.preferredSize) fitting=\(chrome.fittingSize)")
+        print("CHROME: bounds=\(content.bounds) chrome=\(chrome.frame) canvas=\(content.canvas.frame) preferred=\(content.preferredSize) fitting=\(chrome.fittingSize)")
         return content
     }
 
+    /// The chrome is one horizontal row docked at the top edge: it spans the
+    /// content's width at its own fitting height, the canvas takes the rest,
+    /// and the two account for the whole content with no gap or overlap.
     private func assertChromeEdge(
-        _ content: CaptureEditorContent, border: ToolbarBorder,
+        _ content: CaptureEditorContent,
         file: StaticString = #filePath, line: UInt = #line
     ) throws {
         let chrome = try XCTUnwrap(content.chrome, file: file, line: line)
         let canvas = content.canvas
         let bounds = content.bounds
         let fit = chrome.fittingSize
-        switch border {
-        case .top:
-            XCTAssertEqual(chrome.frame.minY, canvas.frame.maxY, "the bar rides the canvas, no gap, no overlap", file: file, line: line)
-            XCTAssertEqual(chrome.frame.height, fit.height, "the row keeps its fitting height", file: file, line: line)
-            XCTAssertEqual(chrome.frame.width, bounds.width, "the row spans the content's width", file: file, line: line)
-            XCTAssertEqual(chrome.frame.maxY, bounds.height, "docked at the top edge", file: file, line: line)
-        case .bottom:
-            XCTAssertEqual(chrome.frame.maxY, canvas.frame.minY, "the bar rides the canvas, no gap, no overlap", file: file, line: line)
-            XCTAssertEqual(chrome.frame.height, fit.height, "the row keeps its fitting height", file: file, line: line)
-            XCTAssertEqual(chrome.frame.width, bounds.width, "the row spans the content's width", file: file, line: line)
-            XCTAssertEqual(chrome.frame.minY, bounds.minY, "docked at the bottom edge", file: file, line: line)
-        case .left:
-            XCTAssertEqual(chrome.frame.maxX, canvas.frame.minX, "the bar rides the canvas, no gap, no overlap", file: file, line: line)
-            XCTAssertEqual(chrome.frame.width, fit.width, "the column keeps its fitting width", file: file, line: line)
-            XCTAssertEqual(chrome.frame.height, bounds.height, "the column spans the content's height", file: file, line: line)
-            XCTAssertEqual(chrome.frame.minX, bounds.minX, "docked at the left edge", file: file, line: line)
-        case .right:
-            XCTAssertEqual(chrome.frame.minX, canvas.frame.maxX, "the bar rides the canvas, no gap, no overlap", file: file, line: line)
-            XCTAssertEqual(chrome.frame.width, fit.width, "the column keeps its fitting width", file: file, line: line)
-            XCTAssertEqual(chrome.frame.height, bounds.height, "the column spans the content's height", file: file, line: line)
-            XCTAssertEqual(chrome.frame.maxX, bounds.maxX, "docked at the right edge", file: file, line: line)
-        }
-        // The bar never covers the canvas, and together they account for the
-        // whole content view with no empty band between them.
-        let gap = border == .top || border == .bottom
-            ? abs(canvas.frame.height + chrome.frame.height - bounds.height)
-            : abs(canvas.frame.width + chrome.frame.width - bounds.width)
-        XCTAssertLessThanOrEqual(gap, 1, "chrome + canvas account for the full content height/width", file: file, line: line)
-        // Touching frames share an edge; anything deeper is a real overlap.
+        XCTAssertEqual(chrome.frame.minY, canvas.frame.maxY, "the bar rides the canvas, no gap, no overlap", file: file, line: line)
+        XCTAssertEqual(chrome.frame.height, fit.height, "the row keeps its fitting height", file: file, line: line)
+        XCTAssertEqual(chrome.frame.width, bounds.width, "the row spans the content's width", file: file, line: line)
+        XCTAssertEqual(chrome.frame.maxY, bounds.height, "docked at the top edge", file: file, line: line)
+        let gap = abs(canvas.frame.height + chrome.frame.height - bounds.height)
+        XCTAssertLessThanOrEqual(gap, 1, "chrome + canvas account for the full content height", file: file, line: line)
         XCTAssertTrue(chrome.frame.intersection(canvas.frame).isEmpty, "the bar never covers the canvas", file: file, line: line)
     }
 
-    // MARK: - The four configurations (S1)
+    // MARK: - Always horizontal, always on top (S4)
 
-    func testHorizontalRowDocksOnTopWhenTheUserStoredTop() throws {
-        // Also today's shipped pair, laid out honestly.
-        let content = try layout(toolbar: EditorToolbarSnapshot(orientation: .horizontal, border: .top))
-        try assertChromeEdge(content, border: .top)
-    }
-
-    func testHorizontalRowDocksOnBottomWhenTheUserStoredBottom() throws {
-        let content = try layout(toolbar: EditorToolbarSnapshot(orientation: .horizontal, border: .bottom))
-        try assertChromeEdge(content, border: .bottom)
-    }
-
-    func testVerticalColumnDocksOnTheLeftWhenTheUserStoredLeft() throws {
-        let content = try layout(toolbar: EditorToolbarSnapshot(orientation: .vertical, border: .left))
-        try assertChromeEdge(content, border: .left)
-        // Honest arithmetic: the column's width joins the canvas width.
-        let chrome = try XCTUnwrap(content.chrome)
+    func testTheChromeIsAHorizontalRowAtTheTop() throws {
+        let content = try layout()
+        try assertChromeEdge(content)
+        // The detached state carries the shipped horizontal/top defaults the
+        // one layout needs — there is no stored configuration in it at all.
+        XCTAssertEqual(content.state.toolbarOrientation, .horizontal)
+        XCTAssertEqual(content.state.toolbarBorder, .top)
+        // Honest arithmetic for the one case that exists: the row's height
+        // joins the canvas height, the width answers to the wider of the
+        // canvas and the bar.
         XCTAssertEqual(
-            content.preferredSize.width, content.canvas.frame.width + chrome.fittingSize.width, accuracy: 2)
-    }
-
-    func testVerticalColumnDocksOnTheRightWhenTheUserStoredRight() throws {
-        let content = try layout(toolbar: EditorToolbarSnapshot(orientation: .vertical, border: .right))
-        try assertChromeEdge(content, border: .right)
-    }
-
-    // MARK: - The snapshot is read-only
-
-    /// The editor seeds a copy of the user's configuration into its own
-    /// detached state — no preferences model is involved, so nothing the
-    /// editor picks can persist into the user's saved bar.
-    func testTheSnapshotSeedsTheStateWithoutAPreferencesModel() {
-        let content = CaptureEditorContent(
-            image: solid(300, 200), capture: .standard, redactionStyle: .blur,
-            toolbar: EditorToolbarSnapshot(orientation: .vertical, border: .right))
-        XCTAssertEqual(content.state.toolbarOrientation, .vertical)
-        XCTAssertEqual(content.state.toolbarBorder, .right)
-        // Detached state still runs its other values on the shipped
-        // defaults, exactly as before.
-        XCTAssertEqual(content.state.redactionStyle, .blur)
-    }
-
-    /// A stored pair the orientation cannot honour coerces the same way the
-    /// outside bar's placement rule does: the chrome lands on a valid edge,
-    /// never a mixed-up one.
-    func testAMismatchedStoredPairCoercesLikeTheOutsideBar() {
-        let content = CaptureEditorContent(
-            image: solid(300, 200), capture: .standard, redactionStyle: .blur,
-            toolbar: EditorToolbarSnapshot(orientation: .vertical, border: .top))
+            content.preferredSize.height,
+            content.canvas.frame.height + content.chrome.fittingSize.height, accuracy: 2)
         XCTAssertEqual(
-            content.state.toolbarBorder.docked(for: content.state.toolbarOrientation), .left,
-            "the same coercion ToolbarPanel applies at placement")
+            content.preferredSize.width,
+            max(content.canvas.frame.width, content.chrome.fittingSize.width), accuracy: 2)
+    }
+
+    /// The orientation snapshot is withdrawn (S4): the editor reads nothing
+    /// stored. A stored configuration that says vertical/left is real — the
+    /// outside bar's own state mirrors it — and the editor still lays out
+    /// the same horizontal row at the top.
+    func testTheChromeIgnoresAStoredVerticalConfiguration() throws {
+        let model = PreferencesModel(store: InMemoryPreferenceStore())
+        model.toolbarOrientation = .vertical
+        model.toolbarBorder = .left
+        let outside = EditorState(preferences: model)
+        XCTAssertEqual(outside.toolbarOrientation, .vertical, "the stored configuration is real")
+        XCTAssertEqual(outside.toolbarBorder.docked(for: outside.toolbarOrientation), .left)
+
+        let content = try layout()
+        XCTAssertEqual(content.state.toolbarOrientation, .horizontal, "the editor consults nothing stored")
+        XCTAssertEqual(content.state.toolbarBorder, .top)
+        try assertChromeEdge(content)
+    }
+
+    // MARK: - The editor's own items (S4)
+
+    func testTheEditorPaletteCarriesTheSelectTool() throws {
+        // The editor's item list never had the select tool ('v') — S4 says it
+        // belongs there, and the item list is the rule the palette renders.
+        XCTAssertTrue(Tool.captureEditorTools.contains(.select))
+        XCTAssertTrue(
+            Tool.captureEditorGroups.flatMap(\.self).contains(.select),
+            "the select tool leads its own family group in the outside bar's palette; the editor's list keeps it")
+        // Through the real chrome: the bar the editor renders offers it.
+        let content = CaptureEditorContent(
+            image: solid(300, 200), capture: .standard, redactionStyle: .blur)
+        let groups = try XCTUnwrap(
+            content.chrome.rootView.chromeToolbar.fixedToolGroups,
+            "the editor's chrome passes its fixed grouped palette")
+        XCTAssertTrue(groups.flatMap(\.self).contains(.select))
+    }
+
+    // MARK: - Not the outside bar's window chrome (S4)
+
+    func testTheEditorChromeHasNoCloseButtonAndNoGripper() throws {
+        let content = try layout()
+        let toolbar = content.chrome.rootView.chromeToolbar
+        XCTAssertFalse(toolbar.showsWindowChrome, "the editor's chrome builds without the window chrome tail")
+        XCTAssertFalse(toolbar.drawnTrailingItems.contains(.close), "the close 'X' is not an editor item (S4)")
+        XCTAssertFalse(toolbar.drawnTrailingItems.contains(.gripper), "the gripper is not an editor item (S4)")
+        // The outside bar's own tail is untouched — the pin
+        // `ToolbarGripperTests` keeps, restated here as the boundary: a
+        // default ToolbarView draws every trailing item, close and gripper
+        // included, in the same order.
+        XCTAssertEqual(ToolbarView.trailingItems.suffix(2), [.close, .gripper])
+        XCTAssertEqual(
+            ToolbarView(state: EditorState(), onUndo: {}, onRedo: {}, onClear: {}, onDone: {})
+                .drawnTrailingItems,
+            ToolbarView.trailingItems)
     }
 }
