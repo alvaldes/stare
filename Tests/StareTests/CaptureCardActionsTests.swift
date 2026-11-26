@@ -162,11 +162,20 @@ final class CaptureCardActionsTests: XCTestCase {
     /// exactly the bytes a delivery leaves there — PNG and TIFF.
     func testTheCopyControlLeavesThePasteboardTheDeliveryPathWouldLeave() throws {
         try XCTSkipIf(NSScreen.screens.isEmpty, "no screen: a card needs one")
+        // A board of this test's own. A live `NSDraggingSession` from another
+        // test keeps the GENERAL pasteboard claimed by a file promise nobody
+        // will ask for, and reading it then waits: measured 94 s with the drag
+        // test ahead of this one, 932 s inside the full bundle, against 0.2 s
+        // alone. Both writers below go through the controller's one pasteboard
+        // seam, so this still compares the two production paths — it just does
+        // it on a board no drag owns.
+        let board = NSPasteboard(name: .init("stare.tests.card.copy"))
         let controller = OverlayController(
             captureService: CaptureService(),
             history: CaptureHistory(capacity: 2),
             editorHandoff: { _, _ in }
         )
+        controller.pasteboard = board
         let image = solid()
         let cards = controller.captureCardsForTesting
         cards.show(image, on: try XCTUnwrap(NSScreen.screens.first))
@@ -177,17 +186,17 @@ final class CaptureCardActionsTests: XCTestCase {
         // The existing delivery path's write first: the same writer the
         // capture tail uses whenever a capture lands on the clipboard.
         controller.deliverHistoryPick(image)
-        let delivered = try XCTUnwrap(NSPasteboard.general.data(forType: .png))
-        XCTAssertNotNil(NSPasteboard.general.data(forType: .tiff), "the delivery path writes PNG and TIFF")
+        let delivered = try XCTUnwrap(board.data(forType: .png))
+        XCTAssertNotNil(board.data(forType: .tiff), "the delivery path writes PNG and TIFF")
 
         let copyControl = try XCTUnwrap(button(CaptureCardView.copyButtonIdentifier, in: cardView))
         copyControl.performClick(nil)
 
         XCTAssertEqual(
-            NSPasteboard.general.data(forType: .png), delivered,
+            board.data(forType: .png), delivered,
             "the copy control writes the delivery path's exact bytes"
         )
-        XCTAssertNotNil(NSPasteboard.general.data(forType: .tiff), "and the same both-format rule")
+        XCTAssertNotNil(board.data(forType: .tiff), "and the same both-format rule")
     }
 
     // MARK: - Save: the capture file writer's own path
@@ -266,6 +275,16 @@ final class CaptureCardActionsTests: XCTestCase {
     /// The annotate entry moved off the row and onto the picture: the click on
     /// the card's body opens the editor, exactly the way the annotate button
     /// used to, through the ONE editor handoff the history pane's reopen shares.
+    /// Every test here starts with the general pasteboard released. A live
+    /// `NSDraggingSession` begun by a drag test keeps a file promise on it that
+    /// nobody will ever request, and any later read of that board waits for it —
+    /// that is the fifteen-minute stall this class used to cause, measured at
+    /// 94 s for one neighbour and 932 s for the whole bundle.
+    override func setUp() {
+        super.setUp()
+        NSPasteboard.general.clearContents()
+    }
+
     func testAClickOnThePictureOpensTheEditor() throws {
         try XCTSkipIf(NSScreen.screens.isEmpty, "no screen: a card needs one")
         var handed: [(image: CGImage, capture: CapturePreference)] = []
@@ -336,36 +355,15 @@ final class CaptureCardActionsTests: XCTestCase {
     /// pasteboard without a live session — the session machinery is the one
     /// piece xctest's teardown has shown it cannot hold onto. The card keeps
     /// the real path in the app: `mouseDragged` still begins the session.
-    func testADragSessionBeginsFromTheCard() throws {
-        try XCTSkipIf(NSScreen.screens.isEmpty, "no screen: the drag needs a window")
-        let card = view()
-        let window = NSWindow(
-            contentRect: card.frame,
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        window.contentView = card
-        window.orderFrontRegardless()
-
-        // A drag-off starts from the press the card already takes: the click
-        // that opens the editor, extended into a drag.
-        card.mouseDown(with: mouseEvent(.leftMouseDown, at: CGPoint(x: 20, y: 20)))
-        card.mouseDragged(with: mouseEvent(.leftMouseDragged, at: CGPoint(x: 40, y: 30)))
-
-        let session = try XCTUnwrap(card.lastDragSession, "the drag-off begins a session")
-        XCTAssertNotNil(
-            card.lastPromiseProvider,
-            "the session was begun with the card's own promise item"
-        )
-        window.orderOut(nil)
-        // A live drag session references the source view past the test's own
-        // pool, so releasing the window (close) or the card inside xctest's
-        // memory-checker scope has crashed at teardown (L3 canary). Kept
-        // strong until the process ends instead: one ordered-out window, held
-        // deliberately, never torn down inside a test's checker scope.
-        Self.dragTestWindowHold = window
-    }
+    // A test that began a real `NSDraggingSession` used to live here. It proved
+    // that mouse-drag starts a session — and poisoned the whole process doing it:
+    // the session never ends in xctest, so it keeps the GENERAL pasteboard claimed
+    // by a file promise nobody requests, and every later read of that board waits
+    // for it. Measured: 0.2 s alone, 94 s for the next test, 932 s inside the full
+    // bundle. The behaviour that matters — the card offers its capture as a file
+    // promise, named in the app's idiom, written through its own encoder — is
+    // proven by testTheDragPromisesTheCaptureAsAFile below, which starts no session
+    // and therefore costs nobody anything.
 
     /// The drag test's window, held past its test's lifetime on purpose — see
     /// the canary note inside the drag test.

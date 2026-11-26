@@ -199,3 +199,17 @@
     so the demo must re-port `preferredSize` and the drawing. NOT this
     worker's surface — the landing session must re-port it or the demo
     drifts.
+- **L6** (test-suite health, owner: "optimiza los test puede que haya cosas obsoletas o que se estan
+  haciendo dobles ... haz que este proceso este optimizado"): the suite took **977 s** and the stall was not
+  slowness but a poisoned process. One test began a real `NSDraggingSession`, which never ends in xctest: it
+  keeps the GENERAL pasteboard claimed by a file promise nobody requests, and every later read of that board
+  waits for it. Measured in that order — the copy test alone **0.2 s**, after the drag test **94 s**, inside
+  the whole bundle **932 s**. The fix is three things: the controller owns ONE pasteboard seam (`var pasteboard:
+  NSPasteboard = .general`) so a test can point both production writers at a board no drag owns and still
+  compare them; the drag test that started a session is retired with the reason written in its place, since the
+  behaviour that matters — the card offers its capture as a file promise, named in the app's idiom and written
+  through its own encoder — is proven by the test that starts no session; and `setUp` releases the general
+  board so nothing is inherited. **Also removed: instrumentation two cancelled workers left behind** —
+  `COPYSTAMP` prints inside the production copy path, `CLICKSTAMP` inside the card's copy control, and a test
+  that stamped every line it ran. After: whole suite **99.6 s**, 920 StareCoreTests + 439 StareTests, 0
+  failures, slowest single test 5.7 s.

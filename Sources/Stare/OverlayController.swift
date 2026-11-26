@@ -587,7 +587,8 @@ final class OverlayController {
         // the write-failure fallback answer. The card carries no writer of
         // its own, so the row can never produce bytes a delivery would not.
         cards.onCopy = { [weak self] image in
-            self?.copy(image, to: NSPasteboard.general)
+            guard let self else { return }
+            self.copy(image, to: self.pasteboard)
         }
         cards.onSave = { [weak self] image in
             self?.saveFromCard(image)
@@ -614,7 +615,7 @@ final class OverlayController {
             Diag.log("card saved \(url.lastPathComponent)")
             return
         }
-        copy(image, to: NSPasteboard.general)
+        copy(image, to: pasteboard)
         Diag.log("card save not writable; copied \(image.width)x\(image.height)")
     }
 
@@ -697,7 +698,7 @@ final class OverlayController {
         case .whiteboardPage:
             boardView?.pasteImage(image)
         case .clipboard:
-            copy(image, to: NSPasteboard.general)
+            copy(image, to: pasteboard)
         }
     }
 
@@ -1298,12 +1299,12 @@ final class OverlayController {
                 canvas.view.showHint("Capture saved to \(url.lastPathComponent)", seconds: 3)
                 Diag.log("capture saved \(result.width)x\(result.height) marks=\(canvas.view.session.strokes.count) file=\(url.lastPathComponent)")
             } else {
-                copy(result, to: NSPasteboard.general)
+                copy(result, to: pasteboard)
                 canvas.view.showHint("Capture couldn't be saved; copied it to the clipboard", seconds: 3.5)
                 Diag.log("capture file write failed; pasted \(result.width)x\(result.height) marks=\(canvas.view.session.strokes.count)")
             }
         } else {
-            copy(result, to: NSPasteboard.general)
+            copy(result, to: pasteboard)
             canvas.view.showHint("Capture copied to the clipboard", seconds: 2.2)
             Diag.log("capture copied \(result.width)x\(result.height) marks=\(canvas.view.session.strokes.count)")
         }
@@ -1340,6 +1341,13 @@ final class OverlayController {
     /// The persisted capture preference, read at capture time so a change in
     /// Settings applies to the very next capture. The controller runs on the
     /// main thread only, like every capture-path caller.
+    /// The pasteboard every capture write goes through. The real one in the
+    /// app; a test points it at a board of its own so the comparison it makes
+    /// cannot be parked behind a drag session's unfulfilled file promise — a
+    /// live `NSDraggingSession` keeps the general pasteboard claimed, and a
+    /// later read of it waits for a promise nobody will ever request.
+    var pasteboard: NSPasteboard = .general
+
     private func capturePreference() -> CapturePreference {
         guard let preferences else { return .standard }
         return MainActor.assumeIsolated { preferences.capture }
