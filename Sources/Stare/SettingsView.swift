@@ -1558,7 +1558,10 @@ private struct MarkerPane: View {
 /// exactly as before (PNG+TIFF on the pasteboard), a folder writes the file
 /// named by `CapturePreference.fileName(at:)` in the chosen format and the
 /// in-overlay pill says where it went.
-private struct CapturePane: View {
+/// Internal, not private, so the tests can pin the file-name card's copy and
+/// chain through the pane's own constants (T1 of D4), the way `BarPane` is
+/// pinned for the pool card.
+struct CapturePane: View {
     @ObservedObject var model: PreferencesModel
     let cardsWidth: CGFloat
 
@@ -1730,21 +1733,32 @@ private struct CapturePane: View {
         }
     }
 
-    /// The File name card (S4 follow-up, option A — destination-
-    /// independent): with a template set it builds the WHOLE file name, so
-    /// the prefix field that governed the legacy name stands down — on the
-    /// clipboard and on folder saves alike — and comes back the moment the
-    /// template is cleared. The caption under the rows says so, instead of
-    /// a control being silently dead: the control that governs is the one
-    /// that looks alive. The prefix row keeps its character-set detail for
-    /// the state where it governs, and the two rows keep the pane's whole
-    /// behaviour: no naming rule, sanitising or legacy empty-template path
-    /// changed.
+    /// The File name card (T1/S1–S3 of D4): one visible chain from the
+    /// control that governs to the name that gets written, instead of four
+    /// blocks of prose with the rule explained in a sentence. The template
+    /// row keeps the tokens, the safe characters and the extension rule;
+    /// the prefix row keeps its character-set detail for the state where it
+    /// governs; the standing-down rule keeps its caption. The chain names
+    /// the governor and shows the consequence on the same line, so the rule
+    /// is read once and then seen, and the {app}/{display} fallback hint
+    /// lives under the chain, read at the moment a refusal shows.
+    /// Presentation only (S2): both rows keep their exact behaviour — the
+    /// disabled-while-a-template-governs rule, the clipboard disable — and
+    /// the name the chain shows is still the same
+    /// `CaptureEditorCanvas.savePanelFileName` call at the same fixed
+    /// instant, rendering exactly the name the save path writes.
     private var fileNameCard: some View {
         SettingsCard(title: "File name", symbol: "doc.text") {
             SettingRow(
+                title: "Name template",
+                detail: Self.templateRowDetail,
+                content: TextField("", text: $model.capture.fileNameTemplate)
+                    .frame(width: 180)
+                    .disabled(isClipboard)
+            )
+            SettingRow(
                 title: "Name prefix",
-                detail: "Letters, numbers, hyphen, underscore and dot. Anything else falls back to “Stare”.",
+                detail: Self.prefixRowDetail,
                 content: TextField("", text: $model.capture.fileNamePrefix)
                     .frame(width: 180)
                     // Destination-independent (S4 decision): the template
@@ -1753,24 +1767,71 @@ private struct CapturePane: View {
                     // the prefix live on the clipboard path too.
                     .disabled(!model.capture.fileNameTemplate.isEmpty)
             )
-            SettingRow(
-                title: "Name template",
-                detail: "Folder saves: build the name from tokens — {date} · {time} · {app} · {display} — plus letters, numbers, hyphen, underscore and dot. {app} and {display} come from the capture itself; when they aren't known — as in this preview, and on an editor save — they fall back to the prefix name, exactly what the preview shows. An unknown token or an unsafe character falls back too, and .png or .jpg is added automatically.",
-                content: TextField("", text: $model.capture.fileNameTemplate)
-                    .frame(width: 180)
-                    .disabled(isClipboard)
-            )
-            Text("While a template is set it builds the whole file name; clear it and the prefix names the files again.")
+            Text(Self.templateRuleCaption)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            HStack(spacing: 6) {
-                Text("Files are named like")
+            FileNameChain(
+                source: FileNameSource.source(fileNameTemplate: model.capture.fileNameTemplate),
+                name: exampleName
+            )
+            if Self.templateCanBeRefused(model.capture.fileNameTemplate) {
+                Text(Self.tokenFallbackHint)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text(exampleName)
-                    .font(.caption.monospaced())
             }
         }
+    }
+
+    // MARK: The file-name card's copy (T1/S3, pinned by CaptureFileNameCardTests)
+
+    /// The template row's detail, cut from the old four-block prose to what a
+    /// user needs before typing: the tokens, the safe characters and the
+    /// extension rule. The rest moved where it is read at the moment it
+    /// matters — the rule and the destination fact into
+    /// `templateRuleCaption`, the {app}/{display} refusal into
+    /// `tokenFallbackHint`.
+    static let templateRowDetail = """
+    Tokens: {date} · {time} · {app} · {display}, plus letters, numbers, \
+    hyphen, underscore and dot — anything else isn't kept. The .png or \
+    .jpg extension is added automatically.
+    """
+
+    /// The prefix row's own character-set detail, kept verbatim: it is
+    /// exactly what the row governs when the template is cleared.
+    static let prefixRowDetail = "Letters, numbers, hyphen, underscore and dot. Anything else falls back to “Stare”."
+
+    /// The standing-down rule, kept — now opened by the destination fact the
+    /// old detail's first block carried, so a user reading a template field
+    /// that is dead on the clipboard learns why from the caption, not from a
+    /// silent grey control.
+    static let templateRuleCaption = """
+    Templates apply to folder saves. While a template is set it builds the \
+    whole file name; clear it and the prefix names the files again.
+    """
+
+    /// The {app}/{display} refusal, moved out of the old detail to sit under
+    /// the chain, on the line where the user sees the name fall back — the
+    /// moment it matters, shown only when the typed template actually uses
+    /// one of the two tokens.
+    static let tokenFallbackHint = """
+    {app} and {display} come from the capture itself; when they aren't \
+    known, as in this preview, the name falls back to the prefix.
+    """
+
+    /// Which control governs the name for the given template state.
+    static func fileNameSource(fileNameTemplate: String) -> FileNameSource {
+        FileNameSource.source(fileNameTemplate: fileNameTemplate)
+    }
+
+    /// Whether the template can be refused at save time: only `{app}` and
+    /// `{display}` can — their values need a capture taken, which neither the
+    /// preview nor an editor save has — so the fallback hint shows exactly
+    /// when the typed template uses one of them. An unknown token or an
+    /// unsafe character cannot be stored at all (the field keeps only what
+    /// it can honour — `sanitisedTemplate`), so “anything else isn't kept”
+    /// in the detail is the whole of that fact; it needs no hint of its own.
+    static func templateCanBeRefused(_ template: String) -> Bool {
+        template.contains("{app}") || template.contains("{display}")
     }
 
     private var isClipboard: Bool {
@@ -1819,7 +1880,7 @@ private struct CapturePane: View {
         }
     }
 
-    /// One sample name at a fixed instant, so the row does not tick every
+    /// One sample name at a fixed instant, so the chain does not tick every
     /// second with the clock — produced by the same call with the same
     /// inputs the editor's save panel uses
     /// (`CaptureEditorCanvas.savePanelFileName`): no app, no display,
@@ -1836,6 +1897,73 @@ private struct CapturePane: View {
         components.second = 33
         let sample = Calendar.current.date(from: components) ?? Date()
         return CaptureEditorCanvas.savePanelFileName(preference: model.capture, at: sample)
+    }
+}
+
+/// Which control governs the file name right now (T1/S3 of D4): a non-empty
+/// template builds the whole name and the prefix stands down; an empty one
+/// hands the name back to the prefix. A pure decision on the template
+/// string, so the chain's source is testable without SwiftUI internals.
+enum FileNameSource: Equatable {
+    case template
+    case prefix
+
+    /// The source for a given template state.
+    static func source(fileNameTemplate: String) -> Self {
+        fileNameTemplate.isEmpty ? .prefix : .template
+    }
+
+    /// The word the chain names the governor with — its own row's word.
+    var label: String {
+        switch self {
+        case .template: FileNameChain.templateLabel
+        case .prefix: FileNameChain.prefixLabel
+        }
+    }
+}
+
+/// One visible line of the file-name card (T1/S3 of D4): the control that
+/// governs, then the name it writes — the consequence on the same line as
+/// the name, so the rule the caption explains is also seen. The chain runs
+/// from the template while a template governs and from the prefix while it
+/// does not. Presentation only: the name is whatever the pane hands in —
+/// the same `CaptureEditorCanvas.savePanelFileName` value the save path
+/// writes — and nothing here names anything differently.
+struct FileNameChain: View {
+    /// The labels, constants so a test pins the exact reading instead of
+    /// inspecting SwiftUI internals (the pool card's seam).
+    static let templateLabel = "Template"
+    static let prefixLabel = "Prefix"
+
+    /// The control the chain runs from.
+    let source: FileNameSource
+    /// The name it writes, rendered verbatim.
+    let name: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            // The governor, accent-marked: the one control the chain runs
+            // from. The control that stands down reads grey in its row.
+            Text(source.label)
+                .font(.system(size: 11, weight: .semibold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(Color(nsColor: .controlAccentColor).opacity(0.15))
+                )
+                .foregroundStyle(Color(nsColor: .controlAccentColor))
+            Image(systemName: "arrow.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.tertiary)
+            Text(name)
+                .font(.caption.monospaced())
+                .lineLimit(1)
+        }
+        // A handover between controls should read as a transition, not a
+        // jump (D4's motion note): the repo's one short idiom.
+        .animation(.easeOut(duration: 0.12), value: source)
+        .accessibilityElement(children: .combine)
     }
 }
 
