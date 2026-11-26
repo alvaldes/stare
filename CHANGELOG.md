@@ -44,6 +44,21 @@ user gets.
 - Board: `⌘` + scroll zooms in one smooth gesture — no contrary kicks, no momentum overshoot — and the pointer turns into a hand while you pan and a magnifier while you zoom
 - Editor: the copy you save puts your marks exactly where you drew them, letterboxed windows included
 
+- Bar: the inks fold into two columns when the bar stands vertical, so the column loses 170 pt of height — and the fold is paid for with the dot, never with width, so the bar keeps exactly the width it always had; the dots shrank to 10 pt with the same air around them in both directions
+- Bar: the more button is a real toggle — one press opens the hidden tools, the next closes them
+- Bar: the extras panel opens where there is room instead of where the bar is docked, so a bar dragged to the far edge still opens its panel toward the middle of the screen
+- Menu bar: the app's glyph now reads at the weight of the system items beside it, and leans the same way as the app icon
+- Settings: the app mark shows the real artwork in colour, with no shadow padding around it
+- Drawing: every tool has its own cursor — a filled dot for the pen, a filled beam for the highlighter, an empty ring for the eraser, two rings for the numbered step, and the crosshair for line, arrow, rectangle and ellipse — and the capture editor finally shows the armed tool's cursor instead of always an arrow
+- Capture: the file name is built by a template you can see, and the field shows exactly the name it will write — the shipped default renders `Stare-2026-11-21-at-14-05-33.png`, a preference stored before this build is upgraded to it, and the prefix stands down while a template governs, with one line saying so
+- Capture: area capture shows dotted guides that follow the pointer from the moment you arm it, and a magnifier beside it, so you can follow a line to the edge before committing; both can be turned off in Settings → Capture → Area drag, and both are on by default
+- History: the capture history is a full-width shelf that rises from the bottom edge at a fixed height, instead of a floating window you had to place
+- Capture: a new blur mark redacts by pixelation — a randomized mosaic with a floor on the block size — and the blur is still there as a choice in Settings → Tools
+- Editor: the capture editor's palette is your own bar — your orientation, your docked side, your materials — instead of a strip pinned to the top, and every save, copy and history delivery from it now carries the background; the background itself moved into the editor, where the image is, with Settings keeping only the default
+- Editor: the crop draws a frame you can grab — corner brackets and edge handles, dimmed outside, edge or corner to resize, inside to move, Shift to keep the shape
+- Editor: the spotlight is no longer only round — rectangle, ellipse and rounded rectangle, cycled by holding option while clicking the spotlight's button, and the shape rides the mark so a saved drawing restores the one it was drawn with
+- Capture card: the card after a capture is a small command surface — copy, save, annotate, pin and discard in one row — and the image can be dragged straight out of it into another app
+
 ## 0.3.0
 
 - First run: the Setup Guide is redesigned — one card per state with a single primary action, the app's real logo, Return to continue and Escape to leave
