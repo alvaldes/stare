@@ -74,6 +74,8 @@ public enum UpdateCheckSchedule: String, Codable, CaseIterable, Sendable {
     case daily
     /// Check at most once per calendar week.
     case weekly
+    /// Check at most once per calendar month.
+    case monthly
 
     /// English label shown in Settings.
     public var title: String {
@@ -81,13 +83,14 @@ public enum UpdateCheckSchedule: String, Codable, CaseIterable, Sendable {
         case .never: "Never"
         case .daily: "Daily"
         case .weekly: "Weekly"
+        case .monthly: "Monthly"
         }
     }
 
     /// Whether a check is due now: `.never` is never due; without a previous
     /// check every real schedule is due immediately; otherwise a check is due
-    /// once the previous one falls in an earlier calendar day (daily) or week
-    /// (weekly), both computed in the passed calendar.
+    /// once the previous one falls in an earlier calendar day (daily), week
+    /// (weekly) or month (monthly), all computed in the passed calendar.
     public func isDue(lastCheck: Date?, now: Date, calendar: Calendar = .current) -> Bool {
         switch self {
         case .never:
@@ -98,6 +101,9 @@ public enum UpdateCheckSchedule: String, Codable, CaseIterable, Sendable {
         case .weekly:
             guard let lastCheck else { return true }
             return calendar.dateInterval(of: .weekOfYear, for: now) != calendar.dateInterval(of: .weekOfYear, for: lastCheck)
+        case .monthly:
+            guard let lastCheck else { return true }
+            return calendar.dateInterval(of: .month, for: now) != calendar.dateInterval(of: .month, for: lastCheck)
         }
     }
 }

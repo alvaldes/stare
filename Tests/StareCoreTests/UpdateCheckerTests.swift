@@ -114,11 +114,22 @@ final class UpdateCheckerTests: XCTestCase {
         XCTAssertTrue(UpdateCheckSchedule.weekly.isDue(lastCheck: last, now: date(2026, 11, 23), calendar: calendar)) // next Monday
     }
 
+    func testMonthlyIsDueWithoutAPreviousCheckAndAfterACalendarMonth() {
+        // S7: the owner asked for a monthly option beside daily and weekly.
+        let last = date(2026, 11, 21, 12)
+        XCTAssertTrue(UpdateCheckSchedule.monthly.isDue(lastCheck: nil, now: date(2026, 11, 21), calendar: calendar))
+        XCTAssertFalse(UpdateCheckSchedule.monthly.isDue(lastCheck: last, now: date(2026, 11, 30, 23, 59), calendar: calendar)) // same month
+        XCTAssertTrue(UpdateCheckSchedule.monthly.isDue(lastCheck: last, now: date(2026, 12, 1), calendar: calendar)) // next month
+        // A year boundary is a month boundary too.
+        XCTAssertTrue(UpdateCheckSchedule.monthly.isDue(lastCheck: date(2026, 12, 31), now: date(2027, 1, 1), calendar: calendar))
+    }
+
     func testScheduleCasesAndTitles() {
-        XCTAssertEqual(UpdateCheckSchedule.allCases, [.never, .daily, .weekly])
+        XCTAssertEqual(UpdateCheckSchedule.allCases, [.never, .daily, .weekly, .monthly])
         XCTAssertEqual(UpdateCheckSchedule.never.title, "Never")
         XCTAssertEqual(UpdateCheckSchedule.daily.title, "Daily")
         XCTAssertEqual(UpdateCheckSchedule.weekly.title, "Weekly")
+        XCTAssertEqual(UpdateCheckSchedule.monthly.title, "Monthly")
     }
 
     // MARK: Status message wording (pinned)

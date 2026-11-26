@@ -6,15 +6,6 @@ sees, why it happens, and where it lives. Add at the top; newest first.
 Everything from the owner's 2026-11-25 list is shipped except the one item nobody
 could specify, plus the follow-ups that need something only he can hand over.
 
-## A5. "update monthly option" — still needs the owner to say what it is
-
-- **The ask, verbatim**: "update monthly option".
-- **Why it is still not an entry**: nothing in the app mentions a monthly option.
-  It could be an update check, a paid plan, a reminder, or a typo for something in
-  `odd/tasks/release-0.3.0.md`. Guessing would be worse than asking. One line makes
-  it a task.
-- **Reported**: 2026-11-25, never answered.
-
 ## The references, as local files — so the work can be measured instead of guessed
 
 - **What the owner sees**: four items were built from his words plus the app's own
