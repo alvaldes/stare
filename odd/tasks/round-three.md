@@ -49,11 +49,11 @@ shipped in the previous rounds.
 
 | ID | Specs | Task | Route | Commit |
 | --- | --- | --- | --- | --- |
-| T1 | S1, S9 | Blur and spotlight answer the crosshair; the area-mode cursor stops leaking | worker | |
-| T2 | S2 | Right-click a history capture for its actions | worker | |
-| T3 | S6, S7 | The About card's symbol, and command-comma from any mode | worker | |
-| T4 | S3, S4, S5 | The editor's select and blur tools, and the spotlight's cell | worker | |
-| T5 | S8 | A capture includes Stare's own windows | worker | |
+| T1 | S1, S9 | Blur and spotlight answer the crosshair; the area-mode cursor stops leaking | worker | pending |
+| T2 | S2 | Right-click a history capture for its actions | worker | pending |
+| T3 | S6, S7 | The About card's symbol, and command-comma from any mode | worker | pending |
+| T4 | S3, S4, S5 | The editor's select and blur tools, and the spotlight's cell | worker | pending |
+| T5 | S8 | A capture includes Stare's own windows | worker | pending |
 
 ## Log
 
@@ -228,3 +228,116 @@ shipped in the previous rounds.
   build, a screenshot beside these numbers decides what remains to be
   explained (the earlier note about a Retina-only rendering pass the headless
   harness cannot show already covers the one live hypothesis).
+- **L5** (S6–S8 worker, 2026-11-26): Both remaining units closed in one pass.
+
+  **S6 (the About card's blank symbol).** Cause, re-derived on this machine's
+  system list (`CoreGlyphs.bundle/symbol_order.plist`, the file every SF Symbol
+  name-check runs against): "app" IS a valid SF Symbol — `NSImage
+  (systemSymbolName:)` answers a real image, and the suspected cause carried
+  with the task ("app" is not an SF Symbol name) is WRONG here. The glyph named "app"
+  is ITSELF an empty rounded app-icon tile: its ink is only the tile's
+  outline, nothing inside (verified by rendering it: ~765 ink pixels across a 64 pt
+  canvas, all forming the hollow squircle; an ASCII map of the drawn pixels
+  shows an outline shape with an empty middle). Drawn inside the card's own
+  24×24 control-background tile under its own separator stroke, it reads as a
+  blank rounded square — the owner's screenshot. Fix at the source that owns
+  it: the About card now carries `SettingsArea.about.symbol` ("info.circle") —
+  the pane object's OWN symbol, the one its sidebar row already shows — so
+  card and sidebar are one decision (SettingsView.swift, the About card call
+  site, with the cause in a comment there too). Pinned in
+  `SettingsAboutSymbolTests`, two tests: (1) the walking pin the round asked
+  for — every `symbol:` argument in the three Settings sources
+  (SettingsView/SettingsComponents/SettingsHistoryPane: 28 card call sites as
+  of this pass) resolves to a real SF Symbol at the card's own rendering
+  configuration (12 pt semibold, non-zero glyph size); a call site whose
+  symbol the walk cannot read FAILS the test rather than slipping past, and a
+  refactor that drops the count below the call count fails too; (2) the derived
+  pin — the About card's symbol equals `SettingsArea.about.symbol`, so the
+  empty tile ("app") cannot come back as the About header. The walking pin
+  reads GREEN at HEAD ("app" resolves: honest finding — it cannot catch THIS
+  defect by itself), the derived pin went RED first (`SettingsView.swift:2098, canary names S6,
+  "app" not equal to "info.circle") then GREEN. Additionally `SettingsCard`
+  now fails LOUDLY in tests when any card is built with a symbol no SF Symbol answers (debug
+  assert in its init, release builds compile it out).
+
+  **S7 (⌘, from every mode).** Cause: Stare is an `.accessory` app, so it
+  ships without a standard AppKit main menu at all — and ⌘, is delivered
+  through the main menu's key equivalents. With no menu, the keystroke died in
+  every mode that held the keyboard. The app menu now carries `Settings…`
+  with ⌘, (`AppDelegate.makeMainMenu`, built in
+  `applicationDidFinishLaunching`), routed through a retained
+  `SettingsShortcutMenuTarget` into the ONE open path (`AppDelegate
+  .openSettings`) the status bar and the setup guide already share — opening
+  Settings does NOT cancel a mode (session stays active/boards keep pages/
+  sheet stays up, the convention everywhere else). Because a `.normal`-level
+  Settings window would open BEHIND the `.screenSaver` drawing panels and
+  still look dead, the open reads
+  `OverlayController.isAnyOverlaySurfaceActive` (new, the one mode question)
+  and lifts the window into the overlay band (`SettingsWindowController
+  .level(aboveOverlay:)` / `.overlaySurfaceLevel`, the same band the history
+  sheet and the guide sit on; `show(aboveOverlay:)` defaults false, so the
+  status bar's and the guide's opens are unchanged and every later open
+  re-decides the level). Logged as the honest limit NOT hidden: a GLOBAL
+  registration of ⌘, (Carbon/CGEvent hotkey, the GlobalHotkeyManager path)
+  would intercept the keystroke for every OTHER app in the system — refused,
+  so ⌘, reaches Settings exactly when Stare is the active app, which every
+  screen-holding mode makes true; when NOTHING is open Stare is background and
+  the reachable route into Settings is the status-bar menu (which already
+  carried `Settings…`). Tests, `SettingsShortcutTests`, seven: the item's
+  structure + the real menu dispatch (`NSMenu.performKeyEquivalent` — the
+  dispatch NSApplication itself runs for key equivalents) into the open path,
+  then that same dispatch from a live drawing session, from the open board,
+  from the open history sheet, and with nothing open, each asserting the mode
+  SURVIVES the dispatch (no silent cancel), plus the lift-under-a-mode test
+  and the normal-level-when-nothing-open test. RED was the behaviour itself at
+  the run where target retention was missing (NSMenuItem holds its target
+  WEAKLY — the test retains it exactly as the AppDelegate does; second RED
+  xctest missing the initialized app instance, NSApp IUO). One honest
+  trade-off recorded: while the Shortcuts pane is RECORDING a binding, ⌘, is
+  now answered by the app menu first (key equivalents dispatch before the
+  responder chain), so ⌘, can no longer be RECORDED as a custom global-hotkey
+  binding inside Settings — exactly as it works in every macOS app that has a
+  Settings menu item.
+
+  **S8 (Settings in the capture).** Cause: `ScreenContent.prepare` (CaptureService.swift)
+  excluded EVERY window of Stare's own process — the exclusion that
+  legitimately keeps the drawing panels, the palette, the capture cards, the
+  history sheet and the pointer highlight out of the pixels also took the
+  Settings window down on screen. The rule is now explicit and pure
+  (`ScreenContent.excludesOwnWindow`): every own window is excluded EXCEPT the
+  one keyed on `ScreenContent.settingsWindowTitle` ("Stare Settings"), the
+  same constant `SettingsWindowController.makeWindow` names its window with —
+  filter and window cannot drift. The Settings window is only ever IN the
+  enumeration when it is on screen (the shareable-content probe runs
+  `onScreenWindowsOnly`), so a closed Settings never paints. Kinds, stated
+  plainly: COVERED — the whole-display capture, the frozen area-capture base
+  and the live-blur refresh all ride the same `prepare` (a drawn area crop
+  keeps whatever of Settings falls inside the framed region); LEFT OUT — the
+  ⌥S window capture: it resolves the front-most window of ANOTHER app and
+  crops that window out of the display image; "Stare's windows are never that
+  capture's target" is the documented `WindowCaptureTarget` contract, and a
+  window capture of the Settings window itself would be a new feature, not
+  this fix. The overlay and the bar still never appear while a capture runs:
+  they are own windows with other (or no) titles, still excluded. When
+  Settings overlaps the region being captured its pixels enter the image
+  wherever it covers — a screen capture records what the screen shows, as it
+  already does for a window of any other app (there is no per-window
+  subtraction a screen capture can do). Tests, `CaptureIncludesOwnWindowsTests`,
+  three: the rule matrix (Settings kept; untitled own panel and other-title
+  own window excluded; foreign-pid and ownerless windows never excluded, and
+  the exact "Stare Settings" string pinned), the window-title identity pin
+  (the real controller window carries the constant's title) and the REAL
+  capture proof — skipped only when the runner lacks Screen Recording, but
+  this run HELD the permission and observed it live: a Settings-named window
+  on screen was in the captured image (its ~distinct colour well past 4,000
+  pixels) while Stare's own overlay-window colour counted 0.
+
+  Verification, the parent's exact commands (unpiped, blocks, foreground):
+  - `swift test --filter "SettingsAboutSymbolTests|SettingsShortcutTests"`:
+    exit 0 — 9 tests (2 S6 + 7 S7), 0 failures.
+  - `swift test --filter "Settings|Capture"`: exit 0 — 197 tests, 0 failures
+    (the whole Settings/Capture neighbouring sweep, including
+    `WindowSizing`/`PaneLayout`/`BarPreview`/`CaptureCard*`/histories: the
+    changed `show()` signature, the lift, the window-title constant and the
+    new own-window rule broke nothing).
+  Commit cells left `uncommitted`.

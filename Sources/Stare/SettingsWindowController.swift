@@ -10,6 +10,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let model: PreferencesModel
     private let permissionProbe: PermissionProbe
 
+    /// The title the window carries. Owned by the capture filter (`ScreenContent`,
+    /// S8), whose exclusion keys on the title the window server reports for the
+    /// one Stare window it keeps visible in the pixels; the controller names its
+    /// window with the same constant, so the two cannot drift apart.
+
     /// Default open size, taken from the size the owner actually works at:
     /// a 1000x812 frame, which is 1000x780 of content (the title bar is 32 pt
     /// on this window). The old 1000x660 opened shorter than every pane wanted
@@ -22,6 +27,25 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// and once as a literal in `SettingsView` — so the width the cards are
     /// computed from and the width a drag stops at could drift apart.
     static let minimumContentSize = CGSize(width: 860, height: 560)
+
+    /// The level Settings rests at while a mode is on screen (S7): the app's
+    /// own drawing surfaces live at `.screenSaver` and above — the drawing
+    /// panels at `.screenSaver`, the palette at +1, the capture cards at +2,
+    /// the history sheet and the setup guide at +3 — so a normal-level
+    /// Settings window would open BEHIND everything the user is watching and
+    /// ⌘, would look like a keystroke that did nothing. The same band the
+    /// history sheet and the guide sit on; `makeKeyAndOrderFront` puts it
+    /// first inside that band.
+    static let overlaySurfaceLevel = NSWindow.Level(
+        rawValue: NSWindow.Level.screenSaver.rawValue + 3
+    )
+
+    /// The level an open uses: laid back at `.normal` when nothing of the
+    /// app's own is on screen, lifted into the overlay band when a mode holds
+    /// the screen (`aboveOverlay`, S7).
+    static func level(aboveOverlay: Bool) -> NSWindow.Level {
+        aboveOverlay ? overlaySurfaceLevel : .normal
+    }
 
     init(model: PreferencesModel, permission: ScreenRecordingPermission) {
         self.model = model
@@ -48,9 +72,18 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         )
     }
 
-    func show() {
+    /// `aboveOverlay` (S7): whether a screen-holding overlay surface is on
+    /// screen. While one is, the open lifts the window into the overlay band
+    /// (`overlaySurfaceLevel`), because a `.normal` window sits behind the
+    /// `.screenSaver` drawing panels and the user sees nothing. The caller —
+    /// the one open path in `AppDelegate` — reads the decision from the
+    /// overlay controller (`isAnyOverlaySurfaceActive`), and the window goes
+    /// back to its normal level on every later open, so an open that starts
+    /// after the modes closed never keeps the lift.
+    func show(aboveOverlay: Bool = false) {
         let window = self.window ?? makeWindow()
         self.window = window
+        window.level = Self.level(aboveOverlay: aboveOverlay)
         // The selected area lives in SwiftUI `@State`, and every open starts on
         // General (netty's behaviour): `show()` recreates the hosting view, so
         // the state and pane scroll position reset deterministically even
@@ -95,7 +128,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "Stare Settings"
+        window.title = ScreenContent.settingsWindowTitle
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.contentMinSize = Self.minimumContentSize

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import StareCore
 
@@ -247,6 +248,24 @@ struct SettingsCard<Content: View>: View {
     let title: String
     let symbol: String
     @ViewBuilder let content: Content
+
+    init(title: String, symbol: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.symbol = symbol
+        self.content = content()
+        // S6 (round three): a symbol the system does not answer renders as
+        // nothing at all, and the card's header shows a blank tile with no
+        // way to tell a deliberate blank from a broken one. Every card is
+        // built once per body evaluation in the Settings window only, so
+        // the resolution probe is cheap, and in tests it fails loudly the
+        // moment a card is built with a symbol that does not resolve. The
+        // shipping builds compile this out; `SettingsAboutSymbolTests` pins
+        // every card symbol this way statically.
+        assert(
+            NSImage(systemSymbolName: symbol, accessibilityDescription: nil) != nil,
+            "SettingsCard '\(title)' is built with symbol \(symbol), which no SF Symbol answers — its header would draw a blank tile"
+        )
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {

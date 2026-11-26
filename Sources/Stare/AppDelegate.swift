@@ -2,6 +2,27 @@ import AppKit
 import Combine
 import StareCore
 
+/// S7 (round three): the object the app menu's `Settings…` item acts through.
+/// A menu action is delivered to a RETAINED target, and a bare closure cannot
+/// be one — this tiny target keeps the closure alive inside the menu and
+/// translates the action into the call. It exists so `AppDelegate`
+/// `makeMainMenu` stays testable: a test builds the real menu around a
+/// witness target and drives ⌘, against it.
+@MainActor
+final class SettingsShortcutMenuTarget: NSObject {
+
+    private let onOpenSettings: () -> Void
+
+    init(onOpenSettings: @escaping () -> Void) {
+        self.onOpenSettings = onOpenSettings
+        super.init()
+    }
+
+    @objc func openSettings(_ sender: Any?) {
+        onOpenSettings()
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let captureService = CaptureService()
     /// The single persisted owner of the app-wide preferences blob (T6
@@ -18,6 +39,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sessionStore: BootSessionStore()
     )
     private var statusBar: StatusBarController?
+    /// The retained target the app menu's Settings item acts through (S7):
+    /// `NSApp.mainMenu` holds the item, the item holds the target.
+    private var settingsMenuTarget: SettingsShortcutMenuTarget?
     /// The Settings shell now observes the single preferences owner and the
     /// shared permission model directly (T6 slice 2); it no longer goes
     /// through the overlay editor's mirrored state.
@@ -101,6 +125,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             MainActor.assumeIsolated { self.registerGlobalHotkeys(from: bindings) }
         }
 
+        // S7: the app has no Dock icon, so it never had a standard AppKit
+        // route to Settings either — ⌘, is delivered through the main menu's
+        // key equivalents, and with no main menu the keystroke died in every
+        // mode that held the keyboard: a drawing session, the board, the
+        // history sheet. The app menu carries `Settings…` with ⌘, and routes
+        // it through the ONE open path the status bar and the guide already
+        // share. When Stare is not the active app the keystroke belongs to
+        // whatever app is: intercepting it globally would take ⌘, away from
+        // every other app, so the status-bar menu remains the route into
+        // Settings from a background Stare.
+        let target = SettingsShortcutMenuTarget { [weak self] in
+            MainActor.assumeIsolated { self?.openSettings() }
+        }
+        settingsMenuTarget = target
+        NSApp.mainMenu = Self.makeMainMenu(openSettings: target)
+
         // Updates (T10/S6): the persisted schedule decides whether a check is
         // due at launch. The app is not notarized, so a check only informs and
         // links to the release page; nothing is ever installed, and a result
@@ -158,6 +198,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             preferences.hotkeyRejection = nil
         }
+    }
+
+    /// S7: the ONE open path the keyboard's ⌘, shares with the status bar's
+    /// Settings item and the setup guide's continue. The mode decision is the
+    /// overlay controller's own: nothing is cancelled here — a drawing
+    /// session stays active underneath, as `settings.show()` has always left
+    /// it from the status bar — and while a surface holds the screen the
+    /// open lifts Settings above it, or the window would open behind the
+    /// `.screenSaver` panels and the shortcut would look like a no-op.
+    @MainActor
+    func openSettings() {
+        settings.show(aboveOverlay: overlay.isAnyOverlaySurfaceActive)
+        Diag.log("settings opened from shortcut aboveOverlay=\(overlay.isAnyOverlaySurfaceActive)")
+    }
+
+    /// S7: the app's main menu, built here rather than nib-loaded. One
+    /// submenu: the app menu, carrying `Settings…` with ⌘, — the item whose
+    /// key equivalent the whole app's keyboard questions the shortcut with.
+    /// No window menu, no edit menus: nothing else in this app asked for
+    /// them, and this menu exists for the shortcut. Internal so the tests
+    /// build the same menu the app runs with and drive ⌘, against a real
+    /// witness target.
+    @MainActor
+    static func makeMainMenu(openSettings: SettingsShortcutMenuTarget) -> NSMenu {
+        let appMenu = NSMenu(title: "Stare")
+        appMenu.addItem(
+            NSMenuItem(
+                title: "Settings…",
+                action: #selector(SettingsShortcutMenuTarget.openSettings(_:)),
+                keyEquivalent: ","
+            )
+        )
+        for item in appMenu.items { item.target = openSettings }
+        let appMenuItem = NSMenuItem()
+        appMenuItem.submenu = appMenu
+        let menu = NSMenu(title: "Main")
+        menu.addItem(appMenuItem)
+        return menu
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

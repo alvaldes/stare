@@ -2095,7 +2095,14 @@ private struct PermissionsPane: View {
 private struct AboutPane: View {
     var body: some View {
         SettingsPane(title: "About", subtitle: "Draw over your screen, together.") {
-            SettingsCard(title: "Stare", symbol: "app") {
+            // S6 (round three): the call was `symbol: "app"` — a real SF
+            // Symbol whose glyph is itself an empty rounded app tile, which
+            // inside this card's own tile read as a blank rounded square
+            // with nothing in it. The card now carries the pane object's
+            // own symbol — the one its sidebar row already shows — so card
+            // and sidebar are one decision, and `SettingsAboutSymbolTests`
+            // pins the derivation and walks every card symbol this way.
+            SettingsCard(title: "Stare", symbol: SettingsArea.about.symbol) {
                 HStack(alignment: .top, spacing: 14) {
                     AppMark(size: 56)
                     VStack(alignment: .leading, spacing: 4) {

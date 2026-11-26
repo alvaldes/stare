@@ -875,6 +875,17 @@ final class OverlayController {
         assertActivation()
     }
 
+    /// S7 (round three): whether one of the app's own screen-holding overlay
+    /// surfaces is up — drawing, the board, or the pointer highlight. Opening
+    /// Settings while one holds the screen needs the window lifted above the
+    /// app's own levels, or it opens behind the `.screenSaver` panels and the
+    /// ⌘, that opened it looks like a keystroke that did nothing; this is the
+    /// one question the open path asks, so a caller never couples to which
+    /// flags make a mode a mode.
+    var isAnyOverlaySurfaceActive: Bool {
+        isActive || isBoardActive || isPointerActive
+    }
+
     /// Makes Stare the active app with its mode's panel key, retrying while the
     /// system settles. One `async` hop is not enough: after a mode cycle the
     /// activation loses to the app that was handed focus back, and it stays lost.

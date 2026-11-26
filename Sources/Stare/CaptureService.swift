@@ -19,8 +19,43 @@ enum CaptureError: Error, Equatable {
 
 /// The lookup both capture paths share: fresh shareable content, the requested
 /// display inside it, and a filter that leaves Stare's own windows out of the
-/// pixels, plus the display's real framebuffer size.
+/// pixels — with ONE kept own window (S8, round three) — plus the display's
+/// real framebuffer size.
 enum ScreenContent {
+    /// The window Stare's capture KEEPS in the pixels: Stare's own Settings
+    /// window. The owner takes captures with Settings open and expects it
+    /// inside the shot (S8, round three: "Aunque tenga settings abiertos, el
+    /// historial debería permitir hacer capturas sobre estas pantallas … no
+    /// toma settings como parte de la captura"). The controller names its
+    /// window with this constant too, so the filter and the window cannot
+    /// drift apart. Every other Stare surface — the drawing panels, the
+    /// palette, the capture cards, the history sheet, the pinned images, the
+    /// pointer highlight, the setup guide — stays out, because those are the
+    /// overlay the capture must never photograph itself with.
+    static let settingsWindowTitle = "Stare Settings"
+
+    /// Whether a shareable window is left OUT of the capture's pixels (S8).
+    /// Stare's own windows are excluded — that is what keeps the app's
+    /// chrome out of the shot with no flicker and no timing race — EXCEPT
+    /// the Settings window, keyed on the title above. Windows owned by
+    /// another app (or by nobody) are never this exclusion's business: a
+    /// window of another process titled like Stare is, pixel for pixel, that
+    /// other app's window. Pure, so the test suite can pin the rule without
+    /// constructing ScreenCaptureKit content.
+    static func excludesOwnWindow(
+        ownerPID: Int32?,
+        title: String?,
+        ownPID: Int32,
+        settingsWindowTitle: String?
+    ) -> Bool {
+        guard ownerPID == ownPID else { return false }
+        // The Settings window rides IN; the overlay (nothing of Stare's own
+        // but Settings carries another distinguishing title) and every other
+        // own surface stay out.
+        guard let settingsWindowTitle, title == settingsWindowTitle else { return true }
+        return false
+    }
+
     struct Prepared {
         let filter: SCContentFilter
         let pixelWidth: Int
@@ -37,9 +72,16 @@ enum ScreenContent {
 
         // Excluding our own windows is what keeps the palette, the
         // drawing frame and the pointer highlight out of the shot, with
-        // no flicker and no timing race.
-        let ownWindows = content.windows.filter {
-            $0.owningApplication?.processID == ProcessInfo.processInfo.processIdentifier
+        // no flicker and no timing race — and S8 keeps the ONE own window
+        // the owner wants in the shot: the Settings window.
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let ownWindows = content.windows.filter { window in
+            excludesOwnWindow(
+                ownerPID: window.owningApplication?.processID,
+                title: window.title,
+                ownPID: ownPID,
+                settingsWindowTitle: settingsWindowTitle
+            )
         }
         let filter = SCContentFilter(display: display, excludingWindows: ownWindows)
 
