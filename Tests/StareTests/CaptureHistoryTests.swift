@@ -307,3 +307,169 @@ final class CaptureHistoryTests: XCTestCase {
         XCTAssertTrue(CaptureHistoryStore(directory: directory).entries.isEmpty)
     }
 }
+
+/// The store's `remove` and `fileURL` (S2, the history's right-click menu):
+/// removing ONE entry takes the entry, the stored PNG, the session cache and
+/// the persisted index with it, and `fileURL` hands out the validated URL or
+/// nil. Every byte these APIs touch lives inside the captures folder — the
+/// hostile-name rule that guards load and prune guards them too.
+final class CaptureHistoryStoreMenuAPITests: XCTestCase {
+    private var temporaryDirectories: [URL] = []
+
+    override func tearDown() {
+        for directory in temporaryDirectories {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        temporaryDirectories = []
+        super.tearDown()
+    }
+
+    // MARK: Helpers
+
+    private func makeStoreDirectory() -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("stare-history-remove-tests-\(UUID().uuidString)", isDirectory: true)
+        try! FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        temporaryDirectories.append(directory)
+        return directory
+    }
+
+    private func makeImage(width: Int = 8, height: Int = 6) -> CGImage {
+        let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        context.setFillColor(CGColor(gray: 0.5, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()!
+    }
+
+    private func makeStore(entries count: Int = 1) -> (CaptureHistoryStore, [PersistedCaptureEntry]) {
+        let store = CaptureHistoryStore(directory: makeStoreDirectory())
+        var added: [PersistedCaptureEntry] = []
+        for index in 0..<count {
+            added.append(store.add(
+                makeImage(width: 10 + index, height: 8),
+                date: Date(timeIntervalSince1970: TimeInterval(index + 1))
+            ))
+        }
+        return (store, added.reversed())
+    }
+
+    private func capturesDirectory(of directory: URL) -> URL {
+        directory.appendingPathComponent("captures", isDirectory: true)
+    }
+
+    private func indexURL(of directory: URL) -> URL {
+        directory.appendingPathComponent("index.json")
+    }
+
+    private func storedIndexIDs(of directory: URL) -> [UUID]? {
+        guard let data = try? Data(contentsOf: indexURL(of: directory)) else { return nil }
+        return (try? JSONDecoder().decode([PersistedCaptureEntry].self, from: data))?.map(\.id)
+    }
+
+    // MARK: fileURL
+
+    func testFileURLReturnsTheValidatedURLInsideTheCapturesFolder() {
+        let (store, entries) = makeStore(entries: 2)
+        let entry = entries[1]
+
+        let url = store.fileURL(for: entry)
+
+        XCTAssertEqual(url, capturesDirectory(of: store.directory).appendingPathComponent(entry.fileName))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url!.path))
+    }
+
+    func testFileURLIsNilWhenTheFileIsGone() {
+        let store = CaptureHistoryStore(directory: makeStoreDirectory())
+        let entry = store.add(makeImage())
+        try! FileManager.default.removeItem(
+            at: capturesDirectory(of: store.directory).appendingPathComponent(entry.fileName)
+        )
+
+        XCTAssertNil(store.fileURL(for: entry), "a URL handed out for a missing file would end in a failing action")
+    }
+
+    func testFileURLIsNilForANameThatLeavesTheCapturesFolder() {
+        let store = CaptureHistoryStore(directory: makeStoreDirectory())
+        for name in [
+            "../outside.png",
+            "a/b.png",
+            "",
+            ".",
+            "..",
+            "/etc/passwd",
+            "sub/../kept.png",
+        ] {
+            let hostile = PersistedCaptureEntry(
+                id: UUID(), date: Date(), pixelWidth: 1, pixelHeight: 1, fileName: name
+            )
+            XCTAssertNil(store.fileURL(for: hostile), "the hostile name \(name) must never get a URL")
+        }
+    }
+
+    // MARK: remove
+
+    func testRemoveTakesTheEntryItsFileTheCacheAndTheIndexWithIt() {
+        let (store, entries) = makeStore(entries: 2)
+        let gone = entries[1] // the older of the two
+        let survivors = entries[0]
+
+        XCTAssertTrue(store.remove(gone))
+
+        XCTAssertFalse(store.entries.map(\.id).contains(gone.id))
+        XCTAssertEqual(store.entries.map(\.id), [survivors.id], "the other entry is untouched")
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: capturesDirectory(of: store.directory).appendingPathComponent(gone.fileName).path
+        ), "the removed entry's stored file is deleted")
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: capturesDirectory(of: store.directory).appendingPathComponent(survivors.fileName).path
+        ))
+        XCTAssertNil(store.image(for: gone), "the removed entry's cache line is dropped with it")
+        XCTAssertEqual(storedIndexIDs(of: store.directory), [survivors.id],
+                       "the persisted index no longer lists the removed entry")
+        // A fresh store agrees: nothing about the removal lives only in memory.
+        let fresh = CaptureHistoryStore(directory: store.directory)
+        XCTAssertEqual(fresh.entries.map(\.id), [survivors.id])
+        XCTAssertNil(fresh.image(for: gone))
+    }
+
+    func testRemovingAnEntryThatIsNotInTheStoreChangesNothing() {
+        let (store, entries) = makeStore(entries: 2)
+        let outsider = PersistedCaptureEntry(
+            id: UUID(), date: Date(), pixelWidth: 3, pixelHeight: 3, fileName: entries[0].fileName
+        )
+
+        XCTAssertFalse(store.remove(outsider))
+        XCTAssertEqual(store.entries.map(\.id), entries.map(\.id))
+        XCTAssertEqual(
+            Set((try? FileManager.default.contentsOfDirectory(
+                atPath: capturesDirectory(of: store.directory).path
+            )) ?? []),
+            Set(store.entries.map(\.fileName))
+        )
+    }
+
+    func testARemoveArgumentWhoseIDMatchesCannotSendADeletionOutsideTheCapturesFolder() {
+        let (store, entries) = makeStore(entries: 1)
+        let victim = store.directory.appendingPathComponent("victim.png")
+        try! Data("sentinel".utf8).write(to: victim) // outside captures/, inside the store root
+        let deceitful = PersistedCaptureEntry(id: entries[0].id, date: Date(), pixelWidth: 1, pixelHeight: 1, fileName: "../victim.png")
+
+        XCTAssertTrue(store.remove(deceitful), "the ID matches the stored entry, so the ENTRY leaves")
+        // The removal operates on the store's OWN in-list copy: its real,
+        // admitted file name went with it, and the deceitful name never
+        // reached the disk at all.
+        XCTAssertTrue(FileManager.default.fileExists(atPath: victim.path),
+                      "a hostile file name can never delete anything outside captures/")
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: capturesDirectory(of: store.directory).appendingPathComponent(entries[0].fileName).path
+        ), "the real entry's file went with the real entry")
+    }
+}

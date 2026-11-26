@@ -1,4 +1,5 @@
 import AppKit
+import StareCore
 import SwiftUI
 import XCTest
 
@@ -499,5 +500,276 @@ final class CaptureHistoryOutsideClickTests: XCTestCase {
 
         XCTAssertEqual(hidden, 2, "each close runs the hook once")
         XCTAssertFalse(panel.isVisible)
+    }
+}
+
+/// The history cell's right-click context menu (S2): the menu's shape, the
+/// routing of each action through its seam, the two-click Delete, and the
+/// disable-when-there-is-no-file rule that keeps every offered item honest.
+/// No windows are opened: the cell's `.contextMenu` is derived from the
+/// model's item list, so driving that list IS the menu's real path.
+@MainActor
+final class CaptureHistoryContextMenuTests: XCTestCase {
+    private var temporaryDirectories: [URL] = []
+
+    override func tearDown() {
+        for directory in temporaryDirectories {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        temporaryDirectories = []
+        super.tearDown()
+    }
+
+    // MARK: Helpers
+
+    private func makeStoreDirectory() -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("stare-history-menu-tests-\(UUID().uuidString)", isDirectory: true)
+        try! FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        temporaryDirectories.append(directory)
+        return directory
+    }
+
+    private func makeImage(width: Int = 8, height: Int = 6, red: CGFloat = 1) -> CGImage {
+        let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        context.setFillColor(CGColor(red: red, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()!
+    }
+
+    private func makeModel(entries: Int = 2) -> (CaptureHistoryPanelModel, CaptureHistoryStore, [PersistedCaptureEntry]) {
+        let store = CaptureHistoryStore(directory: makeStoreDirectory())
+        var added: [PersistedCaptureEntry] = []
+        for index in 0..<entries {
+            added.append(store.add(
+                makeImage(width: 10 + index),
+                date: Date(timeIntervalSince1970: TimeInterval(index + 1))
+            ))
+        }
+        let model = CaptureHistoryPanelModel(store: store, onPick: { _ in }, onClose: {}, onEdit: { _ in })
+        model.refresh()
+        added.reverse() // newest first, the grid's order
+        return (model, store, added)
+    }
+
+    private func capturesDirectory(of store: CaptureHistoryStore) -> URL {
+        store.directory.appendingPathComponent("captures", isDirectory: true)
+    }
+
+    private func capturesDirectory(of directory: URL) -> URL {
+        directory.appendingPathComponent("captures", isDirectory: true)
+    }
+
+    private func indexIDs(of store: CaptureHistoryStore) -> [UUID] {
+        let url = store.directory.appendingPathComponent("index.json")
+        guard let data = try? Data(contentsOf: url) else { return [] }
+        return (try? JSONDecoder().decode([PersistedCaptureEntry].self, from: data))?.map(\.id) ?? []
+    }
+
+    // MARK: The menu exists, six actions, Edit first
+
+    /// Canary (S2): the cell's context menu lists the six honest actions in
+    /// the decided order, Edit first — the owner asked for a right-click menu
+    /// "opciones editar y otras mas".
+    func testACellContextMenuListsTheSixActionsWithEditFirst() {
+        let (model, _, entries) = makeModel(entries: 2)
+
+        let items = model.menuItems(for: 0)
+
+        XCTAssertEqual(items.map(\.title), [
+            "Edit",
+            "Copy Image",
+            "Copy File Path",
+            "Reveal in Finder",
+            "Save a Copy…",
+            "Delete",
+        ])
+        XCTAssertTrue(items.allSatisfy(\.isEnabled), "a wired menu over a healthy entry disables nothing")
+        XCTAssertEqual(model.menuItems(for: 0)[0].action, .edit, "the first item is Edit")
+        XCTAssertEqual(model.menuItems(for: 0).count, 6)
+        XCTAssertNotEqual(entries.count, 0)
+    }
+
+    func testTheMenusFirstItemRoutesThroughTheEditorHandoffSeam() {
+        let (model, _, _) = makeModel(entries: 1)
+        var handed: [CGImage] = []
+        model.onEdit = { handed.append($0) }
+
+        let item = model.menuItems(for: 0)[0]
+        XCTAssertEqual(item.title, "Edit")
+        item.perform()
+
+        XCTAssertEqual(handed.count, 1)
+        XCTAssertEqual(handed[0].width, 10, "the entry's own image goes to the editor")
+        XCTAssertFalse(model.entries.isEmpty, "an Edit never touches the history it was offered from")
+    }
+
+    func testEditIsDisabledUntilAnEditorHandoffIsWired() {
+        let store = CaptureHistoryStore(directory: makeStoreDirectory())
+        _ = store.add(makeImage())
+        let model = CaptureHistoryPanelModel(store: store, onPick: { _ in }, onClose: {})
+        model.refresh()
+
+        XCTAssertEqual(model.menuItems(for: 0)[0].title, "Edit")
+        XCTAssertFalse(
+            model.menuItems(for: 0)[0].isEnabled,
+            "an Edit without a handoff is disabled, never offered and left silently failing"
+        )
+    }
+
+    // MARK: Copy Image
+
+    func testCopyImageMenuActionCopiesTheCapturesBytes() {
+        let (model, _, _) = makeModel(entries: 1)
+        NSPasteboard.general.clearContents()
+
+        model.perform(.copyImage, at: 0)
+
+        XCTAssertTrue(NSPasteboard.general.types?.contains(.png) ?? false)
+        let png = try! XCTUnwrap(NSPasteboard.general.data(forType: .png))
+        let bitmap = try! XCTUnwrap(NSBitmapImageRep(data: png))
+        XCTAssertEqual(bitmap.pixelsWide, 10)
+        XCTAssertEqual(bitmap.pixelsHigh, 6)
+    }
+
+    // MARK: Copy File Path
+
+    func testCopyFilePathCopiesTheStoresValidatedURL() {
+        let (model, store, entries) = makeModel(entries: 1)
+        let expected = try! XCTUnwrap(store.fileURL(for: entries[0]))
+        NSPasteboard.general.clearContents()
+
+        model.perform(.copyFilePath, at: 0)
+
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), expected.path,
+                       "the copied path IS the store's validated URL")
+        let urls = NSPasteboard.general.readObjects(forClasses: [NSURL.self]) as? [URL] ?? []
+        XCTAssertEqual(urls.first, expected)
+    }
+
+    // MARK: Reveal in Finder
+
+    func testRevealInFinderReachesTheWorkspaceWithTheValidatedURL() {
+        let (model, store, entries) = makeModel(entries: 1)
+        var revealed: [URL] = []
+        model.onReveal = { revealed.append($0) }
+
+        model.perform(.revealInFinder, at: 0)
+
+        XCTAssertEqual(revealed, [store.fileURL(for: entries[0])!],
+                       "reveal carries exactly the store's validated URL")
+    }
+
+    // MARK: Save a Copy…
+
+    func testSaveACopyLandsWhereTheSeamIsToldAndAddsNothingToTheHistories() throws {
+        let (model, store, _) = makeModel(entries: 1)
+        let toldWhere = makeStoreDirectory().appendingPathComponent("copy.png")
+        // The seam is where the panel hands the bytes; the minimal honest
+        // witness writes them where it is told, which is what the shipped
+        // save panel does with the chosen URL.
+        model.onSaveCopy = { image in
+            try! CaptureFile.data(for: image, format: .png)!.write(to: toldWhere)
+        }
+        let count = store.entries.count
+
+        model.perform(.saveCopy, at: 0)
+
+        let data = try XCTUnwrap(Data(contentsOf: toldWhere))
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: data))
+        XCTAssertEqual(bitmap.pixelsWide, 10)
+        XCTAssertEqual(bitmap.pixelsHigh, 6)
+        XCTAssertEqual(store.entries.count, count, "a copy is a copy: no new capture in the store")
+        XCTAssertEqual(model.entries.count, count, "no new capture in the panel either")
+    }
+
+    // MARK: Delete — two clicks, then everything follows
+
+    func testDeleteAsksForAConfirmingSecondClickBeforeRemovingAnything() {
+        let (model, store, entries) = makeModel(entries: 2)
+        let target = entries[1]
+
+        model.perform(.delete, at: 1)
+
+        XCTAssertTrue(model.isArmedForDelete(target), "the first click only arms")
+        XCTAssertEqual(model.entries.count, 2, "the arm removes nothing")
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: capturesDirectory(of: store.directory).appendingPathComponent(target.fileName).path
+        ), "the arm deletes no file")
+        XCTAssertTrue(indexIDs(of: store).contains(target.id), "the arm rewrites no index")
+        XCTAssertEqual(model.menuItems(for: 1).last?.title, "Confirm Delete",
+                       "the armed cell's item says so")
+    }
+
+    func testTheConfirmingSecondDeleteRemovesEntryFileIndexAndThePanelsCountFollows() throws {
+        let (model, store, entries) = makeModel(entries: 2)
+        let target = entries[1]
+        model.perform(.delete, at: 1) // arm
+
+        model.perform(.delete, at: 1) // confirm
+
+        XCTAssertFalse(model.entries.map(\.id).contains(target.id), "the entry is gone from the model")
+        XCTAssertEqual(model.entries.count, 1, "the panel's count followed")
+        XCTAssertEqual(model.selectionPosition, "1 / 1", "the header count follows too")
+        let fileURL = store.fileURL(for: target)
+        XCTAssertNil(fileURL)
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: capturesDirectory(of: store.directory).appendingPathComponent(target.fileName).path
+        ), "the file is gone from disk")
+        XCTAssertFalse(indexIDs(of: store).contains(target.id), "the index no longer lists it")
+        XCTAssertFalse(model.isArmedForDelete(target))
+    }
+
+    func testWalkingAwayFromACellDisarmsItsPendingDelete() {
+        let (model, _, _) = makeModel(entries: 3)
+        model.select(at: 2)
+
+        model.perform(.delete, at: 2) // arm
+        XCTAssertTrue(model.isArmedForDelete(model.entries[2]))
+
+        model.moveSelection(1)
+        XCTAssertNil(
+            model.armedForDelete,
+            "walking away disarms: the confirming click has to be an immediate one on the same cell"
+        )
+        XCTAssertEqual(model.menuItems(for: 2).last?.title, "Delete")
+    }
+
+    // MARK: No file, no promised action
+
+    /// The store guards the disk; the menu mirrors it. When the stored file
+    /// is gone the two file-carried actions are disabled in one, so a menu
+    /// click can never fail after being offered — and Delete still works,
+    /// because a broken file is exactly what Delete is for.
+    func testWhenTheStoredFileIsGoneTheFileActionsAreDisabledAndDeleteStillWorks() {
+        let (model, store, entries) = makeModel(entries: 1)
+        let entry = entries[0]
+        try! FileManager.default.removeItem(
+            at: capturesDirectory(of: store.directory).appendingPathComponent(entry.fileName)
+        )
+        XCTAssertNil(store.fileURL(for: entry))
+
+        let items = model.menuItems(for: 0)
+
+        XCTAssertTrue(items.first(where: { $0.action == .copyFilePath })!.isEnabled == false)
+        XCTAssertTrue(items.first(where: { $0.action == .revealInFinder })!.isEnabled == false)
+        // And the guard holds even if something bypasses the menu:
+        var revealed: [URL] = []
+        model.onReveal = { revealed.append($0) }
+        model.perform(.revealInFinder, at: 0)
+        XCTAssertTrue(revealed.isEmpty, "no reveal without a validated URL")
+        XCTAssertTrue(items.first(where: { $0.action == .delete })!.isEnabled)
+        // The image is still cached from before the deletion, so Edit stays
+        // enabled — and the cached image is what the editor would open.
+        XCTAssertTrue(items.first(where: { $0.action == .edit })!.isEnabled)
+        XCTAssertTrue(items.first(where: { $0.action == .copyImage })!.isEnabled)
     }
 }

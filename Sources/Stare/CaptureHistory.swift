@@ -133,6 +133,38 @@ final class CaptureHistoryStore {
         return image
     }
 
+    /// The validated URL of `entry`'s stored file (S2), or nil: only for a
+    /// file name the hostile-name rule admits AND a file that actually exists
+    /// on disk. The context menu's file actions read this — an item is
+    /// offered only when there is a real URL behind it, so an offered item
+    /// can never fail to find its file.
+    func fileURL(for entry: PersistedCaptureEntry) -> URL? {
+        guard let url = capturedFileURL(for: entry.fileName),
+              FileManager.default.fileExists(atPath: url.path)
+        else { return nil }
+        return url
+    }
+
+    /// Removes ONE entry (S2, the context menu's Delete): the entry leaves
+    /// the in-memory array, its stored PNG is deleted, its session cache is
+    /// dropped, and the persisted index is rewritten so a fresh store never
+    /// lists it. The deletion goes through `capturedFileURL` and operates on
+    /// the store's OWN in-list copy — a fake or hostile argument can only
+    /// ever delete a file directly inside the captures folder.
+    @discardableResult
+    func remove(_ entry: PersistedCaptureEntry) -> Bool {
+        guard let index = entries.firstIndex(where: { $0.id == entry.id }) else {
+            Diag.log("capture history: remove ignored; not stored")
+            return false
+        }
+        let removed = entries.remove(at: index)
+        imageCache.removeValue(forKey: removed.id)
+        deleteStoredFile(for: removed)
+        persistIndex()
+        Diag.log("capture history: removed entries=\(entries.count)")
+        return true
+    }
+
     /// Empties the history and deletes the stored captures with it (S2a):
     /// every file in the captures folder, the index, and the session cache.
     func clear() {

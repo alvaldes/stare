@@ -151,3 +151,69 @@ final class CaptureHistoryPanelKeyboardTests: XCTestCase {
         XCTAssertEqual(panel.model.selectedIndex, 0, "the walk never leaves the entries")
     }
 }
+
+/// Canary (S2): the context menu never disturbs the keyboard. Arming a
+/// Delete on one cell leaves the panel's real event path exactly as shipped
+/// — Esc closes, the arrows walk and disarm, Return still picks.
+@MainActor
+final class CaptureHistoryMenuKeyboardSurvivalTests: XCTestCase {
+    private func makeImage() -> CGImage {
+        let context = CGContext(
+            data: nil, width: 8, height: 6, bitsPerComponent: 8,
+            bytesPerRow: 32, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 8, height: 6))
+        return context.makeImage()!
+    }
+
+    private func makePanel(entries: Int) -> (CaptureHistoryPanel, CaptureHistoryStore) {
+        let store = CaptureHistoryStore(
+            directory: FileManager.default.temporaryDirectory
+                .appendingPathComponent("stare-history-menu-keys-\(UUID().uuidString)", isDirectory: true)
+        )
+        for index in 0..<entries {
+            _ = store.add(makeImage(), date: Date(timeIntervalSince1970: TimeInterval(index + 1)))
+        }
+        return (CaptureHistoryPanel(store: store, onPick: { _ in }), store)
+    }
+
+    private func keyEvent(_ keyCode: UInt16, for window: NSWindow) -> NSEvent {
+        NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            characters: "",
+            charactersIgnoringModifiers: "",
+            isARepeat: false,
+            keyCode: keyCode
+        )!
+    }
+
+    func testArmedDeleteLeavesTheKeyboardMapExactlyAsItWas() throws {
+        try XCTSkipIf(NSScreen.main == nil, "no primary screen in this environment")
+        let (panel, _) = makePanel(entries: 3)
+        panel.showPanel()
+        defer { panel.hide() }
+
+        XCTAssertEqual(panel.model.menuItems(for: 0).first?.title, "Edit", "the cell menu exists beside the keys")
+        // Pin the grid to one column, exactly as the walk tests above do:
+        // one ENTRY per arrow, so the armed state is read on known indices.
+        panel.model.updateColumnCount(forGridWidth: CGFloat(panel.model.thumbnailSize))
+        XCTAssertEqual(panel.model.columnCount, 1)
+        panel.model.perform(.delete, at: 0) // arm
+        XCTAssertNotNil(panel.model.armedForDelete)
+
+        panel.sendEvent(keyEvent(125, for: panel)) // ↓ walks older
+
+        XCTAssertEqual(panel.model.selectedIndex, 1, "the walk still works")
+        XCTAssertNil(panel.model.armedForDelete, "the walk disarms the pending delete")
+        XCTAssertEqual(panel.model.menuItems(for: 0).last?.title, "Delete", "the disarm is visible in the menu")
+        panel.sendEvent(keyEvent(36, for: panel)) // Return picks
+        XCTAssertEqual(panel.model.selectedIndex, 1, "Return picked through the armed session too")
+    }
+}

@@ -1,6 +1,7 @@
 import AppKit
 import StareCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The paste-style capture history panel (T2a/S2), re-shaped as the full-width
 /// bottom sheet (B3/S1): a non-activating borderless panel above every other
@@ -52,16 +53,42 @@ final class CaptureHistoryPanel: NSPanel {
     /// can return key focus to the surface that was working before it.
     var onHidden: (() -> Void)?
 
+    // MARK: The context menu's seams (S2)
+
+    /// The editor handoff (S2): what the menu's Edit does. The overlay wires
+    /// `openCaptureEditor` — the ONE handoff the capture card and the session
+    /// history share — so an edit from the persisted history opens the editor
+    /// exactly like a card click. nil (a panel built without a wire) offers
+    /// Edit disabled instead of an item that would silently do nothing.
+    var onEdit: ((CGImage) -> Void)? {
+        get { model.onEdit }
+        set { model.onEdit = newValue }
+    }
+
+    /// The Finder reveal seam (S2): what Reveal in Finder does with the
+    /// validated file URL. Default to `NSWorkspace`'s file viewer selecting;
+    /// tests inject a witness.
+    var onReveal: (URL) -> Void {
+        get { model.onReveal }
+        set { model.onReveal = newValue }
+    }
+
     init(
         store: CaptureHistoryStore,
         thumbnailSize: @escaping () -> Double = { HistoryPreference.defaultThumbnailSize },
-        onPick: @escaping (CGImage) -> Void = CaptureHistoryPanel.copyToPasteboard
+        onPick: @escaping (CGImage) -> Void = CaptureHistoryPanel.copyToPasteboard,
+        onEdit: ((CGImage) -> Void)? = nil,
+        onReveal: @escaping (URL) -> Void = CaptureHistoryPanel.revealInFinder,
+        onSaveCopy: @escaping (CGImage) -> Void = CaptureHistoryPanelModel.saveACopyThroughPanel
     ) {
         model = CaptureHistoryPanelModel(
             store: store,
             thumbnailSize: thumbnailSize,
             onPick: onPick,
-            onClose: {}
+            onClose: {},
+            onEdit: onEdit,
+            onReveal: onReveal,
+            onSaveCopy: onSaveCopy
         )
         super.init(
             contentRect: CGRect(origin: .zero, size: Self.fallbackContentSize),
@@ -399,6 +426,23 @@ final class CaptureHistoryPanel: NSPanel {
             pasteboard.setData(tiff, forType: .tiff)
         }
     }
+
+    /// The context menu's Copy File Path (S2): the validated file URL as the
+    /// pasteboard's file URL and its path as the string — the two shapes
+    /// Finder and the plain text field each read natively.
+    static func copyFilePath(_ url: URL) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.declareTypes([.fileURL, .string], owner: nil)
+        pasteboard.writeObjects([url as NSURL])
+        pasteboard.setString(url.path, forType: .string)
+    }
+
+    /// The context menu's Reveal in Finder (S2) default: select the validated
+    /// file in the workspace's file viewer.
+    static func revealInFinder(_ url: URL) {
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
 }
 
 /// The keyboard: arrows move the selection, Return picks it, Esc closes.
@@ -453,6 +497,10 @@ final class CaptureHistoryPanelModel: ObservableObject {
     /// route (T2b) without reworking the panel.
     var onPick: (CGImage) -> Void
     var onClose: () -> Void
+    /// The context menu's seams (S2) — see the panel's own doc comments.
+    var onEdit: ((CGImage) -> Void)?
+    var onReveal: (URL) -> Void
+    var onSaveCopy: (CGImage) -> Void
 
     /// The grid cell width in points (B1). Read from the preferences on every
     /// `refresh()`, so a change made in Settings reaches the next open: the
@@ -465,13 +513,19 @@ final class CaptureHistoryPanelModel: ObservableObject {
         store: CaptureHistoryStore,
         thumbnailSize: @escaping () -> Double = { HistoryPreference.defaultThumbnailSize },
         onPick: @escaping (CGImage) -> Void,
-        onClose: @escaping () -> Void
+        onClose: @escaping () -> Void,
+        onEdit: ((CGImage) -> Void)? = nil,
+        onReveal: @escaping (URL) -> Void = CaptureHistoryPanel.revealInFinder,
+        onSaveCopy: @escaping (CGImage) -> Void = CaptureHistoryPanelModel.saveACopyThroughPanel
     ) {
         self.store = store
         self.thumbnailSizeProvider = thumbnailSize
         self.thumbnailSize = thumbnailSize()
         self.onPick = onPick
         self.onClose = onClose
+        self.onEdit = onEdit
+        self.onReveal = onReveal
+        self.onSaveCopy = onSaveCopy
     }
 
     /// Reloads from the store and starts selected on the newest capture.
@@ -479,12 +533,16 @@ final class CaptureHistoryPanelModel: ObservableObject {
         thumbnailSize = thumbnailSizeProvider()
         entries = store.entries
         selectedIndex = entries.isEmpty ? nil : 0
+        armedForDelete = nil
         Diag.log("history refresh entries=\(entries.count) selected=\(selectedIndex.map(String.init) ?? "nil")")
     }
 
-    /// Selects `index` outright; an out-of-bounds index is ignored.
+    /// Selects `index` outright; an out-of-bounds index is ignored. A walk
+    /// away from a cell also disarms its pending Delete confirmation: the
+    /// confirming click has to be an immediate one on the same cell.
     func select(at index: Int) {
         guard entries.indices.contains(index) else { return }
+        armedForDelete = nil
         selectedIndex = index
     }
 
@@ -521,6 +579,9 @@ final class CaptureHistoryPanelModel: ObservableObject {
             return
         }
         let next = min(max(current + delta, 0), entries.count - 1)
+        // Walking the grid disarms a pending Delete confirmation: the
+        // confirming click has to be an immediate one on the same cell.
+        armedForDelete = nil
         selectedIndex = next
         Diag.log("history move delta=\(delta) from=\(current) to=\(next) entries=\(entries.count)")
     }
@@ -556,6 +617,154 @@ final class CaptureHistoryPanelModel: ObservableObject {
 
     func close() {
         onClose()
+    }
+
+    // MARK: The right-click context menu (S2)
+
+    /// One entry ID armed for a two-click Delete, nil when nothing is armed.
+    /// The first Delete arms — the cell then shows the confirm line and the
+    /// menu's item reads "Confirm Delete" — and the second Delete on the
+    /// SAME entry removes it: one click cannot lose work. Any walk away
+    /// (a selection, an arrow move, a refresh) disarms.
+    @Published private(set) var armedForDelete: UUID?
+
+    func isArmedForDelete(_ entry: PersistedCaptureEntry) -> Bool {
+        armedForDelete == entry.id
+    }
+
+    /// The context menu's actions, in the order the menu shows them.
+    enum CaptureHistoryContextAction: CaseIterable, Equatable {
+        case edit
+        case copyImage
+        case copyFilePath
+        case revealInFinder
+        case saveCopy
+        case delete
+
+        var title: String {
+            switch self {
+            case .edit: return "Edit"
+            case .copyImage: return "Copy Image"
+            case .copyFilePath: return "Copy File Path"
+            case .revealInFinder: return "Reveal in Finder"
+            case .saveCopy: return "Save a Copy…"
+            case .delete: return "Delete"
+            }
+        }
+    }
+
+    /// One item of the menu (S2): its title, its enabled state, and the
+    /// routing the click runs. The menu exists in exactly one shape — the
+    /// cell's SwiftUI menu and the tests both derive from this list, so the
+    /// titles, the order and the routing cannot drift apart.
+    struct CaptureHistoryMenuItem: Identifiable {
+        var id: CaptureHistoryContextAction { action }
+        let action: CaptureHistoryContextAction
+        let title: String
+        let isEnabled: Bool
+        let perform: () -> Void
+    }
+
+    /// The cell's context menu for `index`: the six actions in the decided
+    /// order, Edit first. A file action is DISABLED (not absent) when the
+    /// store has no validated URL for the entry, so the menu cannot offer an
+    /// item that would fail after being offered; Edit is disabled until an
+    /// editor handoff is wired and the image loads.
+    func menuItems(for index: Int) -> [CaptureHistoryMenuItem] {
+        guard entries.indices.contains(index) else { return [] }
+        let entry = entries[index]
+        let image = store.image(for: entry)
+        let fileURL = store.fileURL(for: entry)
+        return CaptureHistoryContextAction.allCases.map { action in
+            let title: String
+            let isEnabled: Bool
+            switch action {
+            case .edit:
+                title = CaptureHistoryContextAction.edit.title
+                isEnabled = onEdit != nil && image != nil
+            case .copyImage:
+                title = CaptureHistoryContextAction.copyImage.title
+                isEnabled = image != nil
+            case .copyFilePath, .revealInFinder:
+                title = action.title
+                isEnabled = fileURL != nil
+            case .saveCopy:
+                title = CaptureHistoryContextAction.saveCopy.title
+                isEnabled = image != nil
+            case .delete:
+                title = armedForDelete == entry.id ? "Confirm Delete" : "Delete"
+                isEnabled = true
+            }
+            return CaptureHistoryMenuItem(
+                action: action,
+                title: title,
+                isEnabled: isEnabled,
+                perform: { [weak self] in self?.perform(action, at: index) }
+            )
+        }
+    }
+
+    /// Runs one menu action against `index` (S2). Every action re-reads its
+    /// own precondition through the store — the menu only ever opens the
+    /// door, the store decides what is true.
+    func perform(_ action: CaptureHistoryContextAction, at index: Int) {
+        guard entries.indices.contains(index) else { return }
+        let entry = entries[index]
+        let fileURL = store.fileURL(for: entry)
+        switch action {
+        case .edit:
+            guard let onEdit, let image = store.image(for: entry) else { return }
+            onEdit(image)
+        case .copyImage:
+            guard let image = store.image(for: entry) else { return }
+            CaptureHistoryPanel.copyToPasteboard(image)
+        case .copyFilePath:
+            guard let fileURL else { return }
+            CaptureHistoryPanel.copyFilePath(fileURL)
+        case .revealInFinder:
+            guard let fileURL else { return }
+            onReveal(fileURL)
+        case .saveCopy:
+            guard let image = store.image(for: entry) else { return }
+            onSaveCopy(image)
+        case .delete:
+            performDelete(at: index, entry: entry)
+        }
+        Diag.log("history menu \(action) index=\(index)")
+    }
+
+    /// The Delete rule: the first click ARMS, the second on the same entry
+    /// removes it through the store — entry, file, cache and index all go —
+    /// and the model refreshes so the count follows.
+    private func performDelete(at index: Int, entry: PersistedCaptureEntry) {
+        if armedForDelete == entry.id {
+            armedForDelete = nil
+            store.remove(entry)
+            refresh()
+            return
+        }
+        armedForDelete = entry.id
+        Diag.log("history delete armed index=\(index)")
+    }
+
+    /// The shipped Save a Copy… (S2): a save panel names the destination and
+    /// the PNG is written there. Nothing is added to the histories — the copy
+    /// is a copy, not a new capture. A cancelled panel changes nothing.
+    static func saveACopyThroughPanel(_ image: CGImage) {
+        guard let data = CaptureFile.data(for: image, format: .png) else {
+            Diag.log("history save copy: png encoding failed")
+            return
+        }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.png]
+        panel.nameFieldStringValue = "Stare Capture"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try data.write(to: url)
+            Diag.log("history save copy \(url.lastPathComponent)")
+        } catch {
+            Diag.log("history save copy failed: \(error)")
+        }
     }
 }
 
@@ -653,8 +862,10 @@ struct CaptureHistoryPanelContent: View {
     }
 }
 
-/// One grid cell: the thumbnail, its metadata line, the selection outline and
-/// the click-to-pick gesture.
+/// One grid cell: the thumbnail, its metadata line, the selection outline
+/// and the click-to-pick gesture, plus the right-click context menu (S2):
+/// the menu's own shape is the model's item list, so a cell's menu and its
+/// actions cannot drift apart.
 struct CaptureHistoryCell: View {
     let model: CaptureHistoryPanelModel
     let index: Int
@@ -695,6 +906,31 @@ struct CaptureHistoryCell: View {
                 .strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 2)
         )
         .onTapGesture { model.pick(at: index) }
+        // The right-click menu (S2): built from the model's item list — the
+        // ONE shape the tests pin. It works on the clicked cell's own entry,
+        // whether that cell is the selection or not.
+        .contextMenu {
+            ForEach(model.menuItems(for: index)) { item in
+                Button(item.title) {
+                    item.perform()
+                }
+                .disabled(!item.isEnabled)
+            }
+        }
+        // The armed Delete says so, or the second click would look identical
+        // to the first with nothing on screen explaining it.
+        .overlay(alignment: .top) {
+            if model.isArmedForDelete(entry) {
+                Text("Click Delete again to confirm")
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .padding(.vertical, 2)
+                    .padding(.horizontal, 6)
+                    .background(Color.red.opacity(0.12), in: Capsule())
+                    .offset(y: -4)
+                    .transition(.opacity)
+            }
+        }
     }
 
     /// The one metadata line: when the capture was taken and its pixel size.

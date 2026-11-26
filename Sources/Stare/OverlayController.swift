@@ -319,7 +319,13 @@ final class OverlayController {
         thumbnailSize: { [weak self] in
             self?.preferences?.history.thumbnailSize ?? HistoryPreference.defaultThumbnailSize
         },
-        onPick: { [weak self] image in self?.deliverHistoryPick(image) }
+        onPick: { [weak self] image in self?.deliverHistoryPick(image) },
+        // The context menu's Edit (S2) goes through the ONE editor handoff
+        // the capture card and the session history share — a history re-open
+        // from an earlier session reads as no identity, and the handoff's
+        // own contract refuses the {app}/{display} tokens into the prefix
+        // fallback for it.
+        onEdit: { [weak self] image in self?.openCaptureEditor(image) }
     )
     private var cancellables: Set<AnyCancellable> = []
     private var keyMonitor: Any?

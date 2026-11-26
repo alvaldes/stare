@@ -82,3 +82,33 @@ shipped in the previous rounds.
   captures requested by plain `s`/`⌥S` while area mode is armed stay armed — by
   design, and unchanged; the parent's S9 clarification with the owner decides
   whether those paths should disarm too. Commit cells left `uncommitted`.
+
+- **L3** (S2 worker, 2026-11-26): The history's right-click menu shipped. A
+  context menu on a cell — Edit first, then Copy Image, Copy File Path,
+  Reveal in Finder, Save a Copy…, Delete — exists in exactly one shape: the
+  model's item list (`CaptureHistoryPanelModel.menuItems(for:)`), from which
+  the cell's SwiftUI `.contextMenu` and the tests both derive, so titles,
+  order and routing cannot drift apart. The store gained the two APIs the
+  honest actions needed: `CaptureHistoryStore.remove(_:)` — the entry, its
+  stored PNG, its session cache line and the persisted index record all go,
+  and it operates on the store's OWN in-list copy, so even a deceitful
+  argument whose ID matches a real entry cannot send a deletion outside the
+  captures folder — and `fileURL(for:)`, the validated URL or nil (nil for a
+  hostile name or a missing file; the hostile-name rule that guards load and
+  prune, pinned in CaptureHistoryIndexPathTests, guards these too). Choices
+  recorded: the file-carried actions are DISABLED, not absent, when the
+  store has no validated URL (the menu can never offer an item that would
+  fail after being offered); Edit is disabled until a handoff is wired, and
+  the overlay wires the ONE handoff (`openCaptureEditor`) the capture card
+  already shares; Save a Copy… runs a save panel and writes the PNG where
+  the user names it, adding nothing to either history; Delete asks for a
+  confirming second click on the SAME cell — a single click cannot lose
+  work — the first click arming it with a visible "Click Delete again to
+  confirm" line on the cell and "Confirm Delete" in the menu, any walk away
+  (click-select, arrows, refresh) disarming it. Everything existing survives
+  re-pin: click-to-pick, keyboard map, dismiss rules, sheet geometry,
+  becoming key. Tests canary S2: 18 new (CaptureHistoryStoreMenuAPITests 6,
+  CaptureHistoryContextMenuTests 11, CaptureHistoryMenuKeyboardSurvivalTests
+  1). Focused `swift test --filter 'CaptureHistory'`: exit 0, 61 tests,
+  0 failures. Whole suite unpiped `swift test`: exit 0, StareCoreTests
+  920/0 failures, StareTests 458/0 failures. Commit cells left `uncommitted`.
