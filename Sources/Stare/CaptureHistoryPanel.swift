@@ -529,13 +529,29 @@ final class CaptureHistoryPanelModel: ObservableObject {
     }
 
     /// Reloads from the store and starts selected on the newest capture.
+    /// The re-read bumps `revision` (see it below) so the sheet re-reads
+    /// visible content, not stale cells, and a caller may refresh it
+    /// mid-session — the overlay's rewrite seam runs exactly this call the
+    /// moment an in-place save lands (editor-save-in-place, the open-sheet
+    /// rule).
     func refresh() {
         thumbnailSize = thumbnailSizeProvider()
         entries = store.entries
         selectedIndex = entries.isEmpty ? nil : 0
         armedForDelete = nil
-        Diag.log("history refresh entries=\(entries.count) selected=\(selectedIndex.map(String.init) ?? "nil")")
+        revision &+= 1
+        Diag.log("history refresh entries=\(entries.count) selected=\(selectedIndex.map(String.init) ?? "nil" ) revision=\(revision)")
     }
+
+    /// The re-read's stamp (editor-save-in-place, the open-sheet rule):
+    /// an in-place save keeps the entry's id and — without a crop — every
+    /// field, so an equal cell input would be a skipped SwiftUI re-render
+    /// with the OLD pixels still on screen (the owner's report one, the
+    /// preview half). The grid keys itself on this revision (`.id` under
+    /// the model), so every re-read rebuilds the cells and the thumbnails
+    /// re-read the store — the same pattern the Settings history pane's
+    /// Clear already uses for its own post-mutation re-read.
+    @Published private(set) var revision = 0
 
     /// Selects `index` outright; an out-of-bounds index is ignored. A walk
     /// away from a cell also disarms its pending Delete confirmation: the
@@ -850,6 +866,12 @@ struct CaptureHistoryPanelContent: View {
                                     isSelected: model.selectedEntry?.id == entry.id
                                 )
                             }
+                            // The revision keys the ForEach (editor-save-in-place,
+                            // the open-sheet rule): a re-read whose entries are
+                            // value-equal to the last ones would otherwise re-render
+                            // nothing and the saved pixels would never reach a
+                            // still-visible cell.
+                            .id(model.revision)
                         }
                         .padding(.horizontal, 16)
                         .padding(.bottom, 16)

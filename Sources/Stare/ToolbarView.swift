@@ -56,12 +56,57 @@ enum ToolbarDragPayload: Equatable {
 /// `isSelected` marks it as the palette's one armed item (S6), in the same
 /// accent style the tool buttons mark theirs — the crop uses this, copy and
 /// save stay plain.
+///
+/// The save control (editor-save-in-place, the owner's second report)
+/// extends the struct with a labelled split shape: an action with `label`
+/// is drawn as ONE labelled control whose click arm carries the action's
+/// own words and whose attached menu carries the secondary commands, each
+/// under its own visible label.
 struct ToolbarAction: Identifiable {
     let id = UUID()
+    /// The SF Symbol the plain glyph cell draws; empty when a `label` names
+    /// the click arm in words instead.
     let symbolName: String
     let help: String
     var isSelected: Bool = false
     let handler: () -> Void
+    /// The click arm's own words (editor-save-in-place, the control
+    /// decision). When present the bar draws one labelled split control
+    /// instead of a glyph cell: the words say what the click does — no
+    /// tooltip asked, no glyph guessed — and `menuItems` becomes the
+    /// control's menu. nil keeps the plain glyph cell.
+    var label: String? = nil
+    /// The split control's menu: the secondary commands, each its own
+    /// visible label ("Save As…"). Empty keeps a plain button with no menu
+    /// arm.
+    var menuItems: [MenuItem] = []
+
+    struct MenuItem: Identifiable {
+        let title: String
+        let handler: () -> Void
+        var id: String { title }
+    }
+
+    init(
+        symbolName: String = "",
+        help: String,
+        isSelected: Bool = false,
+        handler: @escaping () -> Void,
+        label: String? = nil,
+        menuItems: [MenuItem] = []
+    ) {
+        self.symbolName = symbolName
+        self.help = help
+        self.isSelected = isSelected
+        self.handler = handler
+        self.label = label
+        self.menuItems = menuItems
+    }
+
+    /// Whether the bar draws the AppKit-backed labelled split control
+    /// (exposed so the tests pin the shape decision without AppKit
+    /// internals).
+    var isLabelledSplit: Bool { label != nil }
 }
 
 /// The `⠇⠇` grab handle after the close button (T3/S4). An AppKit view
@@ -648,12 +693,17 @@ struct ToolbarView: View {
             if !extraActions.isEmpty {
                 divider
                 ForEach(extraActions) { action in
-                    iconButton(
-                        action.symbolName,
-                        help: action.help,
-                        isMarked: action.isSelected,
-                        action: action.handler
-                    )
+                    if action.isLabelledSplit {
+                        ToolbarSplitAction(action: action)
+                            .help(Text(verbatim: action.help))
+                    } else {
+                        iconButton(
+                            action.symbolName,
+                            help: action.help,
+                            isMarked: action.isSelected,
+                            action: action.handler
+                        )
+                    }
                 }
             }
 
@@ -935,6 +985,128 @@ struct ToolbarView: View {
             blue: Double(ink.rgb.blue),
             opacity: 1
         )
+    }
+}
+
+// MARK: - The labelled split control (editor-save-in-place, the owner's second
+// report)
+
+/// The labelled split button the bar draws for an action that carries a
+/// `label`: one control, two arms — a WORD arm and a menu arm — where the
+/// owner's complaint had two confusing glyphs beside each other. The
+/// AppKit host follows the spotlight's precedent: a menu-bearing cell on
+/// the bar takes a real NSView.
+private struct ToolbarSplitAction: NSViewRepresentable {
+    let action: ToolbarAction
+
+    func makeNSView(context: Context) -> ToolbarSplitActionView {
+        ToolbarSplitActionView(action: action)
+    }
+
+    func updateNSView(_ view: ToolbarSplitActionView, context: Context) {
+        view.update(action)
+    }
+}
+
+/// The handle itself: the click arm is the action's own words ("Save"), so
+/// what a click does is on its face — the owner's constraint, no tooltip
+/// asked and no glyph guessed — and the chevron arm opens the menu of the
+/// secondary commands ("Save As…"), each under its own visible label. The
+/// menu is built fresh per invocation so the labels and the targets are
+/// the live truth, the same rule the spotlight's shape menu keeps.
+final class ToolbarSplitActionView: NSView {
+    private var action: ToolbarAction
+    private let labelButton: NSButton
+    private let menuButton: NSButton
+    private let stack: NSStackView
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("ToolbarSplitActionView is created in code only")
+    }
+
+    init(action: ToolbarAction) {
+        self.action = action
+        labelButton = NSButton(title: action.label ?? "", target: nil, action: nil)
+        labelButton.isBordered = false
+        labelButton.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        labelButton.contentTintColor = .secondaryLabelColor
+        menuButton = NSButton(
+            image: NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "More actions") ?? NSImage(),
+            target: nil,
+            action: nil)
+        menuButton.isBordered = false
+        menuButton.font = NSFont.systemFont(ofSize: 9, weight: .medium)
+        menuButton.contentTintColor = .tertiaryLabelColor
+        stack = NSStackView(views: [labelButton, menuButton])
+        stack.orientation = .horizontal
+        stack.spacing = 3
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        super.init(frame: NSRect(x: 0, y: 0, width: 48, height: 26))
+        labelButton.target = self
+        labelButton.action = #selector(runPrimaryArm)
+        menuButton.target = self
+        menuButton.action = #selector(openMenuArm)
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        toolTip = action.help
+        labelButton.setAccessibilityElement(true)
+        labelButton.setAccessibilityRole(.button)
+        refreshAccessibility()
+        menuButton.setAccessibilityElement(true)
+        menuButton.setAccessibilityRole(.menuButton)
+        menuButton.setAccessibilityLabel("More save actions")
+    }
+
+    private func refreshAccessibility() {
+        let menu = action.menuItems.map(\.title).joined(separator: ", ")
+        labelButton.setAccessibilityLabel(
+            menu.isEmpty ? (action.label ?? action.help) : "\(action.label ?? "") (menu: \(menu))")
+    }
+
+    func update(_ action: ToolbarAction) {
+        self.action = action
+        labelButton.title = action.label ?? ""
+        toolTip = action.help
+        refreshAccessibility()
+        invalidateIntrinsicContentSize()
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: max(stack.fittingSize.width, 24), height: 26)
+    }
+
+    /// The word arm: exactly the primary action, nothing from the menu.
+    @objc private func runPrimaryArm() {
+        action.handler()
+    }
+
+    /// The chevron arm: the menu of the secondary commands under their own
+    /// labels. A menu with no items is no affordance.
+    @objc private func openMenuArm() {
+        guard !action.menuItems.isEmpty else { return }
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for (index, item) in action.menuItems.enumerated() {
+            let menuItem = NSMenuItem(
+                title: item.title, action: #selector(chooseMenuItem(_:)), keyEquivalent: "")
+            menuItem.target = self
+            menuItem.representedObject = index
+            menu.addItem(menuItem)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: bounds.maxY + 4), in: self)
+    }
+
+    /// The menu's route: one item, one handler — the click does exactly
+    /// what its label said, never the primary arm's action.
+    @objc private func chooseMenuItem(_ sender: NSMenuItem) {
+        guard let index = sender.representedObject as? Int,
+            action.menuItems.indices.contains(index)
+        else { return }
+        action.menuItems[index].handler()
     }
 }
 

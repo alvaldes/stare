@@ -656,12 +656,25 @@ final class OverlayController {
         // The editor's own captures come back through the same recording an
         // overlay capture goes through (L7).
         editor.onDeliver = { [weak self] composed in self?.deliverEdited(composed) }
-        // editor-save-in-place S2: the ONE store call an in-place history
-        // save makes — every editor window routes through this rewrite, so
-        // a save can never mint a second entry or a second file beside it.
+        // editor-save-in-place S2 + the open-sheet rule: the ONE store call
+        // an in-place history save makes — every editor window routes through
+        // this rewrite — AND, when it succeeds, the open sheet's own re-read:
+        // the store cannot tell a visible sheet, so the seam runs the panel
+        // model's refresh, and the sheet shows the saved pixels and the front
+        // position the changed capture took (the store moves the rewritten
+        // entry to the front) the moment the save lands.
         editor.rewriteHistoryEntry = { [weak self] composed, id in
             guard let self else { return false }
-            return self.captureHistoryStore.rewrite(entryID: id, with: composed)
+            let rewrote = self.captureHistoryStore.rewrite(entryID: id, with: composed)
+            if rewrote {
+                // The save ran on the editor's main thread; the model is
+                // main-actor isolated, the same assumed hop the app's launch
+                // path owns.
+                MainActor.assumeIsolated {
+                    self.captureHistoryPanel.model.refresh()
+                }
+            }
+            return rewrote
         }
         // The editor is a normal window: opening it while a layer is still
         // armed would leave it above, eating every click. The card's click and

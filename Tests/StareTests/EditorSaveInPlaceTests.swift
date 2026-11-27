@@ -254,7 +254,45 @@ final class EditorSaveInPlaceTests: XCTestCase {
         XCTAssertNil(content.canvas.transientHintMessage, "the panel is the feedback; no false success hint")
     }
 
-    func testSaveAsStaysACopyAndNeverOverwritesTheStoredFile() throws {
+    /// The chrome's Save As arm — the split menu's item, not a second glyph
+    /// beside Save — opens the panel (witnessed here; production runs with
+    /// the real panel) and the opened file is untouched: a copy is a copy.
+    /// The full affordance pair is pinned in the control tests below.
+
+    // MARK: - S4: the control that says what it does (the owner's second
+    // report)
+
+    /// The owner's second report: "el icono que le pusiste a save en el
+    /// editor no indica lo que la accion y como esta pegado junto a save as
+    /// se confunde, asi que hay que buscar otra solucion" — confusing
+    /// GLYPHS beside each other, so the fix is not another glyph but a
+    /// shape change. The judged shape: ONE labelled split control. The
+    /// click arm carries the word "Save" — what the click overwrites is on
+    /// its face, no tooltip asked, no glyph guessed — and the chevron menu
+    /// carries "Save As…" under its own visible label, so nothing reading
+    /// "save" sits beside another thing reading "save" again.
+    func testTheChromeCarriesOneLabelledSaveControlWithSaveAsInItsMenu() throws {
+        let content = CaptureEditorContent(image: solid(40, 20), capture: .standard, redactionStyle: .blur)
+        let toolbar = content.chrome.rootView.chromeToolbar
+        XCTAssertFalse(
+            toolbar.extraActions.contains { $0.symbolName == "square.and.arrow.down" },
+            "S4: Save As… is no longer a second glyph beside the save control")
+        XCTAssertEqual(
+            toolbar.extraActions.filter { $0.help == "Save" }.count, 1,
+            "S4: exactly one Save control: \(toolbar.extraActions.map { ($0.symbolName, $0.help) })")
+        let save = try XCTUnwrap(
+            toolbar.extraActions.first { $0.help == "Save" },
+            "the one Save control")
+        XCTAssertEqual(save.label, "Save", "S4: the click arm is the word, not a glyph — the label is what it does")
+        XCTAssertEqual(
+            save.menuItems.map(\.title), ["Save As…"],
+            "S4: Save As… lives in the split's menu, under its own label")
+    }
+
+    /// Each affordance does exactly what its own label says: the menu is
+    /// Save As's panel and never touches the opened file; the Save arm is
+    /// the overwrite and nothing else.
+    func testTheSaveArmsOverwriteAndTheMenusSaveAsAsksForThePanel() throws {
         let dir = makeTempDir()
         let url = dir.appendingPathComponent("shot.png")
         try CaptureFile.data(for: solid(40, 20, red: 0, blue: 1), format: .png)!.write(to: url)
@@ -267,30 +305,22 @@ final class EditorSaveInPlaceTests: XCTestCase {
         var asked: [CapturePreference] = []
         content.presentSaveAsPanel = { asked.append($0) }
 
-        // The chrome's Save As arm — not Save. The panel opens (witnessed
-        // here; production runs with the real panel) and the opened file is
-        // untouched: a copy is a copy.
-        let saveAs = try XCTUnwrap(
-            content.chrome.rootView.chromeToolbar.extraActions
-                .last { $0.help == "Save As…" },
-            "the chrome keeps Save As… beside Save")
+        let save = try XCTUnwrap(
+            content.chrome.rootView.chromeToolbar.extraActions.first { $0.help == "Save" },
+            "the chrome carries the one Save arm")
+        let saveAs = try XCTUnwrap(save.menuItems.first, "the split's menu carries Save As…")
         saveAs.handler()
 
-        XCTAssertEqual(asked.count, 1, "Save As… asks for the panel")
+        XCTAssertEqual(asked.count, 1, "the menu's Save As… asks for the panel")
+        XCTAssertEqual(saveAs.title, "Save As…")
         XCTAssertEqual(try Data(contentsOf: url), before, "Save As… never overwrites the file it was opened from")
-    }
+        XCTAssertNil(content.canvas.transientHintMessage, "the panel is the feedback; no false success hint")
 
-    // MARK: - S4: the button and the route
-
-    func testTheChromeCarriesSaveBesideSaveAs() throws {
-        let content = CaptureEditorContent(image: solid(40, 20), capture: .standard, redactionStyle: .blur)
-        let shown = content.chrome.rootView.chromeToolbar.extraActions.map { ($0.symbolName, $0.help) }
-        XCTAssertTrue(
-            shown.contains { $0.0 == "arrow.down.doc" && $0.1 == "Save" },
-            "S4: the Save button sits in the editor's chrome: \(shown)")
-        XCTAssertTrue(
-            shown.contains { $0.0 == "square.and.arrow.down" && $0.1 == "Save As…" },
-            "S4: Save As… keeps its export glyph and help")
+        // The click arm's own word is its contract: Save overwrites.
+        save.handler()
+        XCTAssertNotEqual(try Data(contentsOf: url), before, "the Save arm overwrites the opened file")
+        XCTAssertEqual(content.canvas.transientHintMessage, "Saved to shot.png", "the button shows that it saved")
+        XCTAssertEqual(asked.count, 1, "the Save arm never opens a panel")
     }
 
     /// The chrome's Save arm saves in place: the file-backed editor
@@ -455,6 +485,35 @@ final class EditorSaveInPlaceTests: XCTestCase {
         let reloaded = CaptureHistoryStore(directory: dir)
         XCTAssertEqual(reloaded.entries.first?.pixelWidth, 60)
         XCTAssertFalse(store.rewrite(entryID: UUID(), with: smaller), "an unknown entry refuses")
+    }
+
+    /// The open-sheet rule's position half (the owner's first report:
+    /// "si se guarda pero no se actualiza el orden ni el preview"): an edit
+    /// is a new version of that capture, so the rewritten entry takes the
+    /// front the history's newest-first order gives a changed capture —
+    /// never a slot behind captures the user's image now replaces.
+    func testTheStoreRewriteTakesTheFrontPositionAChangedCaptureDeserves() throws {
+        let dir = makeTempDir()
+        let store = CaptureHistoryStore(directory: dir)
+        _ = store.add(solid(10, 10), date: Date(timeIntervalSince1970: 1))
+        let entry = store.add(solid(20, 20), date: Date(timeIntervalSince1970: 2))
+        _ = store.add(solid(30, 30), date: Date(timeIntervalSince1970: 3))
+        let fileURL = try XCTUnwrap(store.fileURL(for: entry))
+        let before = try Data(contentsOf: fileURL)
+
+        XCTAssertTrue(store.rewrite(entryID: entry.id, with: solid(50, 40)))
+
+        XCTAssertEqual(store.entries.first?.id, entry.id, "the edit is a new version: the capture takes the front")
+        XCTAssertEqual(store.entries.count, 3, "the move made no second entry")
+        XCTAssertEqual(store.entries.first?.date, entry.date, "the entry keeps the capture's own date")
+        XCTAssertEqual(store.entries.first?.fileName, entry.fileName, "and its own file")
+        XCTAssertEqual(store.entries.first?.pixelWidth, 50, "the pixel size is what the save made it")
+        XCTAssertEqual(store.entries.first?.pixelHeight, 40)
+        XCTAssertNotEqual(try Data(contentsOf: fileURL), before, "the stored PNG was replaced in place")
+        // The move persists: a fresh store reads the new order too.
+        let reloaded = CaptureHistoryStore(directory: dir)
+        XCTAssertEqual(reloaded.entries.first?.id, entry.id, "the front position survives the session")
+        XCTAssertEqual(reloaded.entries.first?.pixelWidth, 50)
     }
 
     // MARK: - The staged crop, driven through the real window

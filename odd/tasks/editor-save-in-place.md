@@ -95,11 +95,62 @@
   `CaptureEditorWindowCloseTests` needed no change — the launch call stayed in
   the one-line shape its S8 canary reads.
 
-- **L5** (the honest limits). The window into which the history rewrite lands
-  when the panel is OPEN on screen does not re-render a still-visible cell
-  itself — `CaptureHistoryPanel` (not this task's file) refreshes `entries` on
-  `showPanel`, so the next open shows the saved pixels; the store's side of
-  the contract (file, entry, cache, index) is complete and tested. A file
-  whose format the writer does not name (a TIFF under Open With) has no honest
-  overwrite: Save falls back to the Save As panel (pinned by the extension
-  switch's default branch).
+- **L5** (the owner's two reports, corrected 2026-11-26). _Cause one —
+  "si se guarda pero no se actualiza el orden ni el preview en el capture
+  history"._ Two halves. The ORDER half: `rewrite` replaced the entry in
+  place and kept its slot, so a changed capture stayed where it was — an
+  edit is a new version of that capture, so the rewrite now also MOVES the
+  entry to the FRONT of the newest-first array and persists the move with
+  the index (id, date and file name stay the capture's own; the entry
+  keeps the capture's date even at the front — an edit re-versions the
+  capture, it does not re-date it). The PREVIEW half, twice over: (a) live
+  re-read — the store cannot tell a visible sheet, so the overlay's ONE
+  rewrite seam (`wireEditor`) now runs `captureHistoryPanel.model.refresh()`
+  after a successful rewrite, `MainActor.assumeIsolated`, the same assumed
+  hop the launch path owns; and (b) the re-RENDER half — an in-place save
+  keeps the entry's id and, without a crop, every field, so a value-equal
+  cell input would be a skipped SwiftUI re-render with the OLD pixels on
+  screen; the model's `refresh()` now bumps a published `revision` and the
+  grid keys its `ForEach` on it (`.id(model.revision)`), the pattern the
+  Settings history pane's `historyRevision` already uses for its own
+  post-Clear re-read. A closed-and-reopened sheet reads the same store
+  state, so both opens agree. _Cause two — "el icono que le pusiste a
+  save en el editor no indica lo que la accion y como esta pegado junto
+  a save as se confunde, asi que hay que buscar otra solucion"._ Judged
+  shape: ONE labelled SPLIT control replacing both glyph buttons. Justification:
+  the click arm carries the WORD "Save" — what a click overwrites is on
+  its face, no tooltip asked and no glyph guessed, which no glyph could
+  honestly give — and the chevron arm opens a menu carrying "Save As…"
+  under its own visible label, so nothing reading "save" sits beside
+  another thing reading "save" again; the word arm performs exactly the
+  in-place save (the ⌘S route unchanged) and never opens a panel, the
+  menu item performs exactly the Save As panel and never overwrites, each
+  tested doing exactly that. AppKit-backed cell (`ToolbarSplitActionView`,
+  NSStackView of an unbordered word NSButton + a small chevron NSButton,
+  `NSMenu.popUp` built fresh per opening) — the spotlight's menu-bearing
+  cell precedent; the toolbar's glyph path is untouched for every other
+  action. _The numbers_ (focused, short runs only — the full suite was
+  NOT run): the RED build failed exactly on the new API (`ToolbarAction
+  has no member 'label'/'menuItems'`), then `swift test --filter
+  "EditorSaveInPlaceTests|CaptureHistoryPanelTests|CaptureEditorChromeTests"`
+  > .build/a3.log — exit 0, Executed 42 tests, with 0 failures
+  (CaptureEditorChromeTests 5 — pinning the
+  bar unchanged; CaptureHistoryPanelTests 19 = 17 + the open-sheet
+  reflection test + the revision test + the wiring canary, net +2;
+  EditorSaveInPlaceTests 18 = 17 − the old glyph-beside-glyph shape test −
+  the old Save-As-copy test + the one-labelled-control test + the both
+  -arms affordance test + the front position store test). The wiring canary names its report in
+  `testTheOverlayRewriteSeamRunsTheOpenSheetsReRead` — the overlay's
+  `captureHistoryPanel.model.refresh()` call is what makes a visible
+  sheet re-read, so a refactor must not drop it. _Not done_: the
+  SETTINGS history pane (`SettingsHistoryPane`) is not on this task's
+  edit surfaces, so an editor save does not live-refresh a pane standing
+  open in Settings — it re-reads when Settings next re-renders rows (the
+  store side is complete there); reported to the owner rather than
+  widened into. _History_ (the honest limits, superseded in part): the
+  earlier form of this entry recorded that only the NEXT open showed the
+  saved pixels — that open-sheet limitation is what causes one above
+  fixed; the limits that still stand: a file whose format the writer
+  does not name (TIFF under Open With) has no honest overwrite — Save
+  falls back to the Save As panel (pinned by the extension switch's
+  default branch).

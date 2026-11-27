@@ -599,12 +599,22 @@ struct EditorChrome: View {
                     isSelected: showsBackgroundControl,
                     handler: { showsBackgroundControl = true }
                 ),
-                // Copy and the two saves are plain actions: `Save` (S4)
-                // overwrites the image being edited, `Save As…` keeps its
-                // panel — the copy behaviour it has always had.
+                // Copy is a plain glyph action. The save control is the ONE
+                // labelled split control (the owner's second report — the two
+                // glyphs beside each other confused "el icono ... no indica
+                // lo que la accion ... hay que buscar otra solucion"): the
+                // click arm IS the word "Save" — a click overwrites the image
+                // being edited, said on its face, no tooltip needed, no glyph
+                // guessed — and the chevron menu carries "Save As…" under its
+                // own visible label, so nothing reading "save" sits beside
+                // another thing reading "save" again.
                 ToolbarAction(symbolName: "doc.on.doc", help: "Copy", handler: onCopy),
-                ToolbarAction(symbolName: "arrow.down.doc", help: "Save", handler: onSaveInPlace),
-                ToolbarAction(symbolName: "square.and.arrow.down", help: "Save As…", handler: onSave),
+                ToolbarAction(
+                    help: "Save",
+                    handler: onSaveInPlace,
+                    label: "Save",
+                    menuItems: [ToolbarAction.MenuItem(title: "Save As…", handler: onSave)]
+                ),
             ],
             showsWindowChrome: false,
             // The editor draws over a static captured image: tools that need a

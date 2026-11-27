@@ -197,11 +197,14 @@ final class CaptureHistoryStore {
     /// the file keeps its name, the entry keeps its id and date, and only
     /// the pixels — and the pixel size, when the edit cropped it — change,
     /// so a save can never become a second entry or a second file. The
-    /// session cache is refreshed with the saved pixels, so the next panel
-    /// line and the next Edit open carry what the user now has. The index
-    /// is persisted, so the refresh survives the session. False means "the
-    /// store does not hold that id, or the write failed" — the caller
-    /// decides the fallback.
+    /// rewritten entry then takes the position a changed capture deserves
+    /// (the open-sheet rule, the owner's first report): an edit is a new
+    /// version of that capture, so it moves to the FRONT of the newest-first
+    /// array, in memory and in the persisted index. The session cache is
+    /// refreshed with the saved pixels, so the next panel line and the next
+    /// Edit open carry what the user now has. False means "the store does
+    /// not hold that id, or the write failed" — the caller decides the
+    /// fallback.
     @discardableResult
     func rewrite(entryID: UUID, with image: CGImage) -> Bool {
         guard let index = entries.firstIndex(where: { $0.id == entryID }),
@@ -216,17 +219,24 @@ final class CaptureHistoryStore {
             Diag.log("capture history: rewrite failed: \(error)")
             return false
         }
-        let current = entries[index]
+        let written = entries[index]
+        // The move is a re-position, never a re-entry: the id, the date and
+        // the file name stay the capture's own; only the pixels change —
+        // and the position, to the front the newest-first order gives a
+        // changed capture.
         entries[index] = PersistedCaptureEntry(
-            id: current.id,
-            date: current.date,
+            id: written.id,
+            date: written.date,
             pixelWidth: image.width,
             pixelHeight: image.height,
-            fileName: current.fileName
+            fileName: written.fileName
         )
-        imageCache[current.id] = image
+        if index != 0 {
+            entries.move(fromOffsets: IndexSet(integer: index), toOffset: 0)
+        }
+        imageCache[written.id] = image
         persistIndex()
-        Diag.log("capture history: rewrote \(current.fileName) \(image.width)x\(image.height)")
+        Diag.log("capture history: rewrote \(written.fileName) \(image.width)x\(image.height) front=\(index == 0 ? 0 : 1)")
         return true
     }
 

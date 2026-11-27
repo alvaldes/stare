@@ -90,6 +90,86 @@ final class CaptureHistoryPanelTests: XCTestCase {
         XCTAssertNil(model.selectedEntry)
     }
 
+    // MARK: editor-save-in-place: an open sheet reflects a save
+
+    /// The owner's first report: "si se guarda pero no se actualiza el orden
+    /// ni el preview en el capture history". The open sheet must show the
+    /// saved pixels and the position the changed capture deserves — an edit
+    /// is a new version of that capture, so it takes the front — the moment
+    /// the save lands, and a closed-and-reopened sheet must agree.
+    func testAnInPlaceSaveFacesTheOpenSheetWithTheNewPixelsInFrontAndAReopenAgrees() throws {
+        try XCTSkipIf(NSScreen.main == nil, "no display: the panel cannot be shown")
+        let store = makeStore(entries: 2)
+        let first = try XCTUnwrap(store.entries.first, "the newest capture")
+        let older = try XCTUnwrap(store.entries.last, "the capture about to be edited")
+        let panel = CaptureHistoryPanel(store: store)
+        panel.showPanel()
+        XCTAssertEqual(panel.model.entries.map(\.id), [first.id, older.id], "newest first before the edit")
+
+        // The edit-save: the store's ONE rewrite (the call the overlay's
+        // seam makes), then the re-read that seam runs on the sheet.
+        XCTAssertTrue(store.rewrite(entryID: older.id, with: makeImage(width: 40, height: 9)))
+        panel.model.refresh()
+
+        XCTAssertEqual(panel.model.entries.map(\.id), [older.id, first.id], "the changed capture takes the front")
+        XCTAssertEqual(panel.model.selectedIndex, 0, "the re-read lands on the newest — the entry just saved")
+        XCTAssertEqual(panel.model.entries.first?.pixelWidth, 40, "the metadata line reads the saved pixels")
+        XCTAssertEqual(panel.model.entries.first?.pixelHeight, 9)
+        XCTAssertEqual(
+            try XCTUnwrap(panel.model.image(for: panel.model.entries[0])).width, 40,
+            "the open sheet's thumbnail re-reads the saved pixels, not the old capture")
+        XCTAssertEqual(panel.model.entries[1].pixelWidth, first.pixelWidth, "the untouched capture keeps its line")
+
+        // Closed-and-reopened agrees with what the open sheet showed.
+        panel.hide()
+        panel.showPanel()
+        XCTAssertEqual(panel.model.entries.map(\.id), [older.id, first.id], "the reopened sheet shows the same order")
+        XCTAssertEqual(
+            try XCTUnwrap(panel.model.image(for: panel.model.entries[0])).width, 40,
+            "and the same saved pixels")
+        panel.model.onClose = {} // the test's own panel: detach the hide hook from production wiring
+    }
+
+    /// The re-read's re-render half: an in-place save keeps the entry's id
+    /// and (without a crop) every field, so an equal cell input would be a
+    /// skipped re-render with the old pixels still on screen. The refresh
+    /// bumps a revision which the grid keys on — the same pattern the
+    /// Settings history pane's Clear uses for its own re-read — so a save
+    /// visibly re-reads the store.
+    func testTheOpenSheetsRefreshBumpsTheRevisionTheGridKeysOn() {
+        let store = makeStore(entries: 1)
+        let entry = store.entries[0]
+        let model = CaptureHistoryPanelModel(store: store, onPick: { _ in }, onClose: {})
+        model.refresh()
+        let before = model.revision
+
+        store.rewrite(entryID: entry.id, with: makeImage(width: 20, height: 7))
+        model.refresh()
+
+        XCTAssertGreaterThan(model.revision, before, "the re-read re-keys the grid, stamping out a stale cell")
+    }
+
+    /// Canary naming its report: the open-sheet half of the owner's first
+    /// report lives in the overlay's ONE rewrite seam — the store's rewrite
+    /// alone cannot re-read a sheet already on screen. This pins the wiring
+    /// (the model re-read a successful rewrite runs) that a refactor must
+    /// not drop.
+    func testTheOverlayRewriteSeamRunsTheOpenSheetsReRead() throws {
+        var url = URL(fileURLWithPath: #filePath)
+        for _ in 0..<3 { url.deleteLastPathComponent() }
+        let source = try String(
+            contentsOf: url.appendingPathComponent("Sources/Stare/OverlayController.swift"),
+            encoding: .utf8)
+        XCTAssertTrue(
+            source.contains("captureHistoryStore.rewrite(entryID: id, with: composed)"),
+            "the overlay owns the ONE rewrite call"
+        )
+        XCTAssertTrue(
+            source.contains("captureHistoryPanel.model.refresh()"),
+            "a successful save runs the open sheet's re-read through that seam"
+        )
+    }
+
     // MARK: Keyboard navigation
 
     func testArrowNavigationMovesTheSelectionAndClampsAtTheEnds() {
