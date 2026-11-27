@@ -215,6 +215,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editorSaveTarget = saveTarget
         NSApp.mainMenu = Self.makeMainMenu(openSettings: target, closeEditor: editorTarget, saveEditor: saveTarget)
 
+        // Round four S10: the ONE Dock census — this delegate owns both of
+        // the app's user-facing window kinds (the editor through the
+        // overlay, the Settings window here), so it feeds the Settings
+        // window's 0/1 into the census the ONE policy rule decides from, and
+        // the Settings window's open/close re-runs the ONE reflection the
+        // editor open/close already ride.
+        overlay.setDockCensusOfOtherUserWindows { [weak self] in
+            guard let self else { return 0 }
+            return MainActor.assumeIsolated { self.settings.isWindowOpen ? 1 : 0 }
+        }
+        settings.dockPresenceDidChange = { [weak self] in
+            self?.overlay.refreshDockPresence()
+        }
+
         // Updates (T10/S6): the persisted schedule decides whether a check is
         // due at launch. The app is not notarized, so a check only informs and
         // links to the release page; nothing is ever installed, and a result

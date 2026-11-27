@@ -89,19 +89,38 @@ final class CaptureEditorController {
         windows.first(where: { $0.isVisible }) ?? windows.first
     }
 
-    /// Round four S6: opening an editor and closing the last one moves the
-    /// app's Dock presence with the truth of the editor windows. Stare keeps
-    /// launching as the accessory menu-bar app (main.swift's policy, LSUIElement
-    /// untouched); only an editor ON SCREEN brings the Dock icon, so the open
-    /// editor "se queda la ventana abierta" behind every other app no more —
-    /// while it exists, the Dock shows Stare like another app, and the last
-    /// window's close returns the accessory contract atomically.
-    static func dockActivationPolicy(forEditorCount count: Int) -> NSApplication.ActivationPolicy {
+    /// Round four S10 (the ONE policy rule, widening S6's editor-only
+    /// census at the owner's second report "settings tambien tiene que tener
+    /// icono en el dock como el editor"): decided from the count of the
+    /// app's USER-FACING windows open — an editor, a Settings window, or
+    /// both — whatever kind they are, so one number decides it and two rules
+    /// can never fight. No windows, the accessory menu-bar app Stare has
+    /// always been (the LSUIElement launch contract untouched); any one of
+    /// them brings the Dock icon; the last of all closing returns the
+    /// accessory contract atomically.
+    static func dockActivationPolicy(forUserWindowCount count: Int) -> NSApplication.ActivationPolicy {
         count == 0 ? .accessory : .regular
     }
 
+    /// Round four S10: the census of the app's OTHER user-facing windows —
+    /// the Settings window's 0/1 — provided by the owner that sees both
+    /// kinds (the app delegate). The ONE reflection below counts them WITH
+    /// the editor windows, so one number decides the policy whatever kind
+    /// the open windows are. A bare controller (tests, detached use) counts
+    /// only its own windows.
+    var otherUserWindowCount: () -> Int = { 0 }
+
+    /// Round four S10: the ONE reflection any census change re-runs — the
+    /// Settings window's open/close rides it, exactly as the editor's own
+    /// open/close already do.
+    func refreshDockPresence() {
+        reflectDockPresence()
+    }
+
+    private var userWindowCount: Int { windows.count + otherUserWindowCount() }
+
     private func reflectDockPresence() {
-        NSApp?.setActivationPolicy(Self.dockActivationPolicy(forEditorCount: windows.count))
+        NSApp?.setActivationPolicy(Self.dockActivationPolicy(forUserWindowCount: userWindowCount))
     }
 
     /// The history-rewrite seam (editor-save-in-place S2): the ONE

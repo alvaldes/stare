@@ -103,6 +103,16 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.contentMinSize = Self.minimumContentSize
         window.minSize = Self.minimumFrameSize(for: window)
 
+        // Round four S10: the Settings window is one of the app's
+        // user-facing windows, like the editor — its open rides the ONE Dock
+        // census, so the Dock shows the app exactly while it stands open
+        // ("settings tambien tiene que tener icono en el dock como el
+        // editor", the owner's words). The reflection itself is re-read by
+        // the owner that sees both kinds (the app delegate); nothing is
+        // wired here, only the change is announced.
+        isWindowOpen = true
+        dockPresenceDidChange?()
+
         if self.window === window, window.isVisible == false, window.frame.origin == .zero {
             window.center()
         }
@@ -148,7 +158,25 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         // The owner's exit: any queued re-assert belongs to a window that no
         // longer exists, so it must not run.
         cancelQueuedReassert()
+        // Round four S10: the Settings window closing is one user-facing
+        // window fewer — the census is re-read through the ONE reflection,
+        // so the accessory contract returns when the LAST of the app's
+        // user-facing windows (an editor, this window, or both) has closed.
+        isWindowOpen = false
+        dockPresenceDidChange?()
     }
+
+    /// Round four S10: whether the Settings window stands open — its 0/1 in
+    /// the app's user-facing-window census, the ONE number the Dock policy
+    /// decides from. The open flag is announced with
+    /// `dockPresenceDidChange`, never decided here.
+    private(set) var isWindowOpen = false
+
+    /// Round four S10: what a change of the window's open state asks the app
+    /// delegate to run — the ONE Dock census reflection, re-read for both
+    /// window kinds together. The editor's open/close already run it on
+    /// their own; this window is never outside the same count.
+    var dockPresenceDidChange: (() -> Void)?
 
     private func makeWindow() -> NSWindow {
         let window = NSWindow(
@@ -158,6 +186,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             defer: false
         )
         window.title = ScreenContent.settingsWindowTitle
+
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.contentMinSize = Self.minimumContentSize

@@ -293,3 +293,54 @@
     StareCore), 0 failures, run TWICE consecutively with the same result (second run: EXIT=0, 920
     tests, 0 failures, both bundles passed), 0 added `--skip`, 0 weakened assertion, and every earlier
     suite's leave-as-found hooks untouched.
+- **L6** (worker, 2026-11-26, the correction pass, S7 corrected + S10): BOTH causes are the owner's two
+  reports. S7 CORRECTED — "ahora cada que cierro el capture history con la combinacion de keys hace foco
+  en finder y no en la app que estaba usando, eso esta mal": a correction of the previous round (L3),
+  which built the rule HE had asked for ("editor o finder", L1) literally. The history's close now hands
+  the foreground back to the app the user was in before the history opened:
+  `OverlayController.HistoryFocusDestination`'s third fallback `.finder` is replaced by `.previousApp`
+  and `captureHistoryPanelDidHide` runs the standing restore the controller always owned
+  (`rememberFrontmostApplication` at the sheet's open, `restoreFrontmostApplication` at the hide,
+  re-exposed as the witnessed seam `restorePreviousFrontmost`); the Finder fallback and its seam
+  (`activateFinder`/`activateFinderApplication`) are REMOVED. An open editor still takes the key first
+  (the value rule and the witnessed editor route unchanged; the editor route now additionally asserts
+  the previous-app restore NEVER runs while an editor stands open), and the board canvas keeps its rule;
+  deliveries and refusals untouched (`deliverHistoryPick` and the identity ledger untouched).
+  S10 — "settings tambien tiene que tener icono en el dock como el editor": ONE policy rule, not two
+  that fight. `CaptureEditorController.dockActivationPolicy(forEditorCount:)` is re-derived as
+  `dockActivationPolicy(forUserWindowCount:)` — the census is the count of the app's user-facing
+  windows open, WHATEVER kind they are (editor, Settings window, or both), one number; the rule itself
+  is unchanged (0 → accessory, any → regular). The reflection stays the editor controller's ONE site,
+  fed by both halves: the app delegate — the owner that sees both kinds — installs the Settings
+  window's 0/1 (`OverlayController.setDockCensusOfOtherUserWindows`) and the Settings window's
+  open/close announces its change (`SettingsWindowController.isWindowOpen` + `dockPresenceDidChange`,
+  announced in `show()` and in `windowWillClose`) into `OverlayController.refreshDockPresence`, so it
+  re-runs the ONE reflection the editor open/close already ride. Evidence — RED observed
+  before each fix (the re-derived tests fail to compile against the missing `.previousApp` destination,
+  `forUserWindowCount` and the census seams); GREEN — focused run
+  `swift test --filter "CaptureHistoryPanel|CaptureEditorDock|SettingsShortcut|SettingsWindowSizing"
+  > .build/b.log 2>&1; echo EXIT=$?` — EXIT=0 TWICE consecutively, 45 StareTests, 0 failures (9 dock +
+  27 history panel/keyboard/leave-focus + 7 shortcut + 3 sizing), StareCore 0 under this filter;
+  additions 2 (the S10 runtime census test across no-windows/editor-only/both/closing-one-of-two/
+  Settings-only/last-close, and the app-delegate wiring canary); RE-DERIVED 4, each with a canary
+  naming its report (the dock policy value test → `...AnswersByTheUserWindowCount` "S10: ... whatever
+  kind"; the S7 value test → `...NamesTheEditorTheBoardAndTheAppTheUserWasIn` "S7 CORRECTED: ... the
+  Finder fallback is removed"; the S7 finder route test → `...ReturnsToTheAppTheUserWasIn` "S7
+  CORRECTED: ... never a Finder activation"; the editor route's added assertion "an open editor still
+  takes the key FIRST"). Two harness discoveries recorded: one composition poison and one locator
+  hijack, both in the census test's own surfaces — (1) a census runtime test that opens and closes a
+  REAL Settings window left the window standing closed-but-listed in `NSApp.windows`, and the LATER
+  classes' title locators (`NSApp.windows.first { $0.title == ... }` in SettingsShortcutTests and
+  SettingsWindowSizingTests) found IT — the lift test read a closed `level 0` window and the sizing
+  tests read `contentMinSize (0,0)` / `minSize (0,32)` off it; cured by releasing the census window
+  with its close (`isReleasedWhenClosed = true` before the final close), which removes it from the
+  window list; skip-probes bounded it: the delivered filter with `--skip "Census"` EXIT=0, and
+  `CaptureEditorDock|SettingsShortcut|SettingsWindowSizing` without the census test EXIT=0, while the
+  full delivered filter without the cure was EXIT=1 twice. (2) The same class also got the shared
+  `LeaveAsFound` hooks (the class flips the activation policy repeatedly) — right thing for hygiene,
+  but NOT the cure: full-run EXIT=1 identical with hooks alone; the evidence above is the ADD/REMOVE
+  proof. Two deliberate exclusions: the Dock icon's REAL visibility while the Settings window is open
+  and the actual reactivation of the owner's app are runtime system appearances — the owner's eye
+  closes those (the tests witness the routes, as the harness always has); and the Onboarding window
+  was deliberately NOT added to the census — the owner named the editor and Settings only, and the
+  guide promotes to Settings when it finishes.

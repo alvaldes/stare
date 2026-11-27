@@ -471,7 +471,6 @@ final class CaptureHistoryPanelTests: XCTestCase {
 /// tests after it here are the ones the keyboard-keyed states belong to.
 @MainActor
 final class CaptureHistoryPanelLeaveFocusTests: XCTestCase {
-    private final class ActivationCount { var count = 0 }
 
     /// The process state before the test's real activations (round four S7
     /// follow-up, cross-test contamination): a test that activates the app —
@@ -542,23 +541,27 @@ final class CaptureHistoryPanelLeaveFocusTests: XCTestCase {
             characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 53)!
     }
 
-    /// The value side (S7): the fallbacks named in order — the editor wins
-    /// when one stands open, the board canvas keeps the standing rule the
-    /// picks serve, and the Finder is the third fallback.
-    func testTheHideFocusRuleNamesTheEditorTheBoardAndTheFinderAsTheFallbacks() {
+    /// The value side (S7 CORRECTED — the owner's words carried back into
+    /// the test's own report: "hace foco en finder y no en la app que estaba
+    /// usando, eso esta mal"): the editor wins when one stands open, the
+    /// board canvas keeps the standing rule the picks' delivery serves, and
+    /// with neither the foreground returns to THE APP THE USER WAS IN when
+    /// the history opened — the Finder fallback the previous round built is
+    /// gone.
+    func testTheHideFocusRuleNamesTheEditorTheBoardAndTheAppTheUserWasIn() {
         typealias Destination = OverlayController.HistoryFocusDestination
         XCTAssertEqual(
             Destination.destination(hasOpenEditorWindow: true, isBoardActive: false), .editor,
-            "S7: an editor standing open takes the focus back")
+            "S7 (kept): an editor standing open takes the focus back")
         XCTAssertEqual(
             Destination.destination(hasOpenEditorWindow: false, isBoardActive: true), .boardCanvas,
-            "S7 (preserved): with no editor, the open board's canvas keeps the keyboard, as the picks' delivery path has always kept")
+            "S7 (kept): with no editor, the open board's canvas keeps the keyboard, as the picks' delivery path has always kept")
         XCTAssertEqual(
-            Destination.destination(hasOpenEditorWindow: false, isBoardActive: false), .finder,
-            "S7: with neither editor nor board, the FINDER takes the foreground back — never the app that was frontmost before the sheet opened")
+            Destination.destination(hasOpenEditorWindow: false, isBoardActive: false), .previousApp,
+            "S7 CORRECTED: with neither editor nor board, the foreground returns to the APP THE USER WAS IN before the history opened — the Finder fallback is removed")
         XCTAssertEqual(
             Destination.destination(hasOpenEditorWindow: true, isBoardActive: true), .editor,
-            "S7: the editor wins over the board too — the spec's own order")
+            "S7 CORRECTED (kept): an open editor still takes the key first — over the board and over the previous-app restore too")
     }
 
     /// The editor route, driven through the REAL history path: an editor
@@ -583,6 +586,8 @@ final class CaptureHistoryPanelLeaveFocusTests: XCTestCase {
         window.confineToPrimaryScreen()
         var activated: [CaptureEditorWindow] = []
         controller.makeEditorKey = { activated.append($0) }
+        var previousRestores = 0
+        controller.restorePreviousFrontmost = { previousRestores += 1 }
         defer {
             window.orderOut(nil)
             window.close()
@@ -595,19 +600,24 @@ final class CaptureHistoryPanelLeaveFocusTests: XCTestCase {
 
         XCTAssertFalse(controller.isCaptureHistoryVisible, "Esc closes the sheet")
         XCTAssertTrue(activated == [window], "S7: closing the history ACTIVATES the standing editor window — the real route's exact window")
+        XCTAssertEqual(previousRestores, 0, "S7 CORRECTED: an open editor still takes the key FIRST — the previous-app restore never runs while one stands open")
         XCTAssertTrue(window.isVisible, "S7: the activation targets the visible editor, not a closed one")
     }
 
-    /// The Finder fallback, driven through the REAL history path with a
-    /// witnessed activation: with no editor and no board, the close hands
-    /// the foreground to the Finder.
-    func testClosingTheHistoryWithNoEditorAndNoBoardActivatesTheFinder() throws {
+    /// The previous-app restore route, driven through the REAL history path
+    /// with a witnessed restore (S7 CORRECTED): with no editor and no board,
+    /// the close hands the foreground back to the app the user was in when
+    /// the history opened — the standing remember/restore the controller
+    /// always owned before the last round's Finder detour. The headless
+    /// harness cannot answer frontmost truth, so the route is witnessed,
+    /// exactly as the editor route is.
+    func testClosingTheHistoryWithNoEditorAndNoBoardReturnsToTheAppTheUserWasIn() throws {
         try XCTSkipIf(NSScreen.main == nil, "no display: the panel cannot be shown")
         _ = NSApplication.shared
         let controller = OverlayController(captureService: CaptureService())
         self.controller = controller // teardown closes what the route left standing
-        let activations = ActivationCount()
-        controller.activateFinder = { activations.count += 1 }
+        var restores = 0
+        controller.restorePreviousFrontmost = { restores += 1 }
 
         controller.toggleCaptureHistory()
         XCTAssertTrue(controller.isCaptureHistoryVisible, "the sheet is the one under test")
@@ -616,8 +626,8 @@ final class CaptureHistoryPanelLeaveFocusTests: XCTestCase {
 
         XCTAssertFalse(controller.isCaptureHistoryVisible, "Esc closes the sheet")
         XCTAssertEqual(
-            activations.count, 1,
-            "S7: with neither editor nor board on screen, the close activates the FINDER once")
+            restores, 1,
+            "S7 CORRECTED: with neither editor nor board on screen, the close returns the foreground to the app the user was in — once, the standing restore route, never a Finder activation")
     }
 }
 
