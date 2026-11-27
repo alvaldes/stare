@@ -154,3 +154,82 @@
   does not name (TIFF under Open With) has no honest overwrite — Save
   falls back to the Save As panel (pinned by the extension switch's
   default branch).
+- **L6** (the owner's three reports, 2026-11-27). _Cause one — "aun sigo
+  sin ver que se actualice la preview, ya por lo menos se pone de primero
+  en la lista". The entry MOVES (the L5 seam's re-read works) but the
+  thumbnail still paints the old pixels — two caches stood between the
+  store's PNG and the cell. (a) The store's session cache: `rewrite`
+  REFRESHED the cached decode with the composed instance instead of
+  evicting it, so the decode a cell fetches never re-decoded the file the
+  rewrite just replaced; `rewrite` now EVICTS the cache entry, and the
+  next `image(for:)` — the same call the grid cell makes — decodes the
+  file that is now on disk. Proven by the test
+  `testARewritesThumbnailDecodesTheSavedFilesPixelsThroughTheCellsCall`,
+  which fetches through `CaptureHistoryPanelModel.image(for:)` before and
+  after a rewrite in the same process and compares decoded pixels (blue
+  capture → red rewrite, no crop, value-equal entry) against both the
+  pre-rewrite pixels AND the file's own decode — not by trusting a cache
+  was cleared. (b) The grid's identity: the L5 `.id(model.revision)` sat
+  on the ForEach, and a LazyVGrid holds its cells across an identity
+  change of the ForEach ALONE — which is why the front-move still showed
+  (a pure order change renders without any re-key) while the pixels stayed
+  old. The re-read's identity change now sits ON THE GRID CONTENT ITSELF
+  (`.id(model.revision)` on the LazyVGrid), the placement the Settings
+  history pane's Clear re-read already uses on its card. The panel keeps
+  no per-cell decode of its own (the cell asks the store at every
+  re-render); pinned by the source canary
+  `testTheReReadRekeysTheGridContentItselfNotTheForEachRow` (exactly one
+  `.id(model.revision)` in the panel's source, plus the marker comment).
+  _Cause two — "en el editor no funciona el step porque no se ve el numero
+  solo la bola de color". The glyph was never ONE decision: the overlay
+  and the compositor each drew the digit as a SECOND layer on top of
+  `MarkRenderer.draw`, and a caller that only feeds the renderer — the
+  editor's own canvas (`drawLiveMark`) — got the ball with no number. The
+  digit drawing moved INTO `MarkRenderer.drawGeometry` (the compositor's
+  font, placement and ball-contrast ink rule, verbatim, plus the CoreText
+  helpers), so every surface — overlay, compositor, editor canvas, self
+  test — reads the same glyph from one call; `MarkCompositor`'s
+  `case .number` second layer is deleted (the capture draws the digit once
+  again, under the same rotation transform it used before). Pinned three
+  ways: `testANumberedStepDrawsItsDigitInTheSharedRendererPath` (digit
+  pixels inside the ball, drawn through the flipped context shape every
+  production caller uses), `testAStepMarkShowsItsNumberInTheEditorsOwnCanvasPath`
+  (the editor's own `draw(_:)` path, rendered to a bitmap and sampled: the
+  ball's yellow pixels are there AND the digit's black-contrast pixels
+  are), and `testTheCompositorAndTheRendererDrawTheSameNumberGlyph`
+  (renderer-direct vs composited bytes agree inside the digit's window, so
+  an editor canvas and the captures it saves cannot disagree again).
+  `testAStepMarkWithoutANumberStaysTheBareBall` keeps the digit data-driven
+  (a `stepNumber`-less mark is the bare ball). _Cause three — "el btn save
+  se ve muy grande (ocupa mucho ancho) igual que como se veia el spotlight
+  antes". Measured exactly that: the split control sized itself to its
+  word-and-chevron fitting and the resizable row handed it the rest —
+  47 pt at the editor's preferred width and 116 pt in a wider row, the
+  spotlight's old disease. Two strikes: a tighter word (11 pt medium —
+  still the word, what makes the action legible) with a 9 pt chevron and
+  2 pt spacing, and the pinned cell `ToolbarSplitActionView.cellSize`
+  (44×26) that both the view's `intrinsicContentSize` answers to and a
+  fixed `frame` wraps — the neighbours' fixed-26/28 discipline, so a row
+  can never hand the control spare width again. Pinned measured:
+  `testTheSaveSplitControlKeepsItsPinnedCompactCellWhereverTheRowStretches`
+  asserts the exact cell size at the preferred width, at 706 and at 1000.
+  _The numbers_ (focused only, full suite NOT run): RED run on the
+  pre-change shape — `swift test --filter
+  "EditorSaveInPlaceTests|CaptureHistoryPanelTests|CaptureEditorChromeTests|MarkRendererTests"`
+  failed 4 new tests (digit-in-renderer, digit-in-editor-canvas, the
+  pinned-cell pin — measured 47/47/116 Pt — and the grid canary) and the
+  StareCore bundle died mid-run (signal 5) inside the parity test's own
+  out-of-bounds sampler (fixed in this entry's cycle); the GREEN run:
+  exit 0, CaptureEditorChromeTests 7 (0 failures),
+  CaptureHistoryPanelTests 21 (0), EditorSaveInPlaceTests 18 (0 —
+  untouched, the PRESERVE proofs), MarkRendererTests 22 (0) — 68 tests,
+  0 failures. _Not done_: the OVERLAY's live drawing still adds its own
+  digit on top of the renderer's (`OverlayView.render` draws
+  `MarkRenderer.draw` then AppKit-draws its own digit over it, at the same
+  centred position) — `OverlayView.swift` is not on this task's edit
+  surfaces, so the short-lived live preview may carry both digits' slight
+  weight difference until that branch is dropped there; reported to the
+  owner rather than widened into. _History_: L5's preview half superseded
+  in part — its re-read seam and revision stamp stand; only the cache and
+  the identity PLACEMENT halves above are new.
+

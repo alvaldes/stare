@@ -91,12 +91,6 @@ public enum MarkCompositor {
                 drawText(stroke, in: context)
             }
             return
-        case .number:
-            MarkRenderer.draw(stroke: stroke, in: context)
-            drawWithRotation(stroke, in: context) { context in
-                drawStepNumber(stroke, in: context)
-            }
-            return
         case .blur:
             drawWithRotation(stroke, in: context) { context in
                 drawBlur(stroke, in: context, base: base, scale: scale, diffusesContent: diffusesContent)
@@ -123,8 +117,9 @@ public enum MarkCompositor {
     }
 
     /// Applies the mark's rotation about its anchor to a branch that draws its
-    /// own geometry (text, the step digit, the blur image). `MarkRenderer.draw`
-    /// already rotates everything it draws itself.
+    /// own geometry (text and the blur image). `MarkRenderer.draw` already
+    /// rotates everything it draws itself — the numbered step's ball and
+    /// digit included.
     private static func drawWithRotation(
         _ stroke: Stroke,
         in context: CGContext,
@@ -246,29 +241,6 @@ public enum MarkCompositor {
         return base * size.width / width
     }
 
-    private static func drawStepNumber(_ stroke: Stroke, in context: CGContext) {
-        guard let number = stroke.stepNumber, let centre = stroke.points.first else { return }
-        let line = makeLine(
-            "\(number)",
-            // The digit scales with the badge it sits on (advisory A).
-            font: font(ofSize: OverlayStyle.stepNumberSize * stroke.badgeScale),
-            ink: digitInk(for: stroke.ink)
-        )
-
-        var ascent: CGFloat = 0
-        var descent: CGFloat = 0
-        let width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, nil))
-
-        context.saveGState()
-        context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
-        context.textPosition = CGPoint(
-            x: centre.x - width / 2,
-            y: centre.y + (ascent - descent) / 2
-        )
-        CTLineDraw(line, context)
-        context.restoreGState()
-    }
-
     private static func makeLine(_ text: String, font: CTFont, ink: Ink) -> CTLine {
         let attributes: [CFString: Any] = [
             kCTFontAttributeName: font,
@@ -288,12 +260,11 @@ public enum MarkCompositor {
             ?? CTFontCreateWithName("Helvetica" as CFString, size, nil)
     }
 
-    private static func digitInk(for ink: Ink) -> Ink {
-        switch ink {
-        case .yellow, .white: .black
-        default: .white
-        }
-    }
+    // The step digit's font, placement and ink decision moved into
+    // `MarkRenderer` (the ONE renderer every surface calls), so a canvas
+    // that only feeds the renderer — the editor's — cannot drop the number
+    // (the owner's report: "no se ve el numero solo la bola de color").
+    // The compositor draws the ball AND the digit through that one call now.
 }
 
 /// Sizes shared by the overlay and the compositor.

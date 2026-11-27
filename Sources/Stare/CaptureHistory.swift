@@ -201,10 +201,15 @@ final class CaptureHistoryStore {
     /// (the open-sheet rule, the owner's first report): an edit is a new
     /// version of that capture, so it moves to the FRONT of the newest-first
     /// array, in memory and in the persisted index. The session cache is
-    /// refreshed with the saved pixels, so the next panel line and the next
-    /// Edit open carry what the user now has. False means "the store does
-    /// not hold that id, or the write failed" — the caller decides the
-    /// fallback.
+    /// EVICTED, not refreshed: the pixels the panel — and any next Edit, and
+    /// the Settings pane's re-reads — read come back as a fresh decode of
+    /// the file that is now on disk, so every surface answers the SAME
+    /// pixels from one source. Stuffing the composed instance into the
+    /// cache would keep the cached decoded pixels and the later decodes on
+    /// two different stories about what the capture is (owner's report one:
+    /// "aun sigo sin ver que se actualice la preview"). False means "the
+    /// store does not hold that id, or the write failed" — the caller
+    /// decides the fallback.
     @discardableResult
     func rewrite(entryID: UUID, with image: CGImage) -> Bool {
         guard let index = entries.firstIndex(where: { $0.id == entryID }),
@@ -234,7 +239,12 @@ final class CaptureHistoryStore {
         if index != 0 {
             entries.move(fromOffsets: IndexSet(integer: index), toOffset: 0)
         }
-        imageCache[written.id] = image
+        // The cache must not keep ANY decode from before the save: the next
+        // `image(for:)` decodes the file this write just replaced, so the
+        // panel cell, a re-open editor and a fresh store all agree pixel for
+        // pixel. (Editor-save-in-place S2 — the store cache half of the
+        // owner's first report.)
+        imageCache.removeValue(forKey: written.id)
         persistIndex()
         Diag.log("capture history: rewrote \(written.fileName) \(image.width)x\(image.height) front=\(index == 0 ? 0 : 1)")
         return true

@@ -43,7 +43,7 @@ final class CaptureHistoryPanelTests: XCTestCase {
         return directory
     }
 
-    private func makeImage(width: Int = 8, height: Int = 6) -> CGImage {
+    private func makeImage(width: Int = 8, height: Int = 6, red: CGFloat = 0, blue: CGFloat = 1) -> CGImage {
         let context = CGContext(
             data: nil,
             width: width,
@@ -53,7 +53,9 @@ final class CaptureHistoryPanelTests: XCTestCase {
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         )!
-        context.setFillColor(CGColor(red: 0, green: 0, blue: 1, alpha: 1))
+        // The green channel stays empty: the test's decoded-pixel comparisons
+        // read red vs blue as the rewrite's own before/after colours.
+        context.setFillColor(CGColor(red: red, green: 0, blue: blue, alpha: 1))
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
         return context.makeImage()!
     }
@@ -168,6 +170,84 @@ final class CaptureHistoryPanelTests: XCTestCase {
             source.contains("captureHistoryPanel.model.refresh()"),
             "a successful save runs the open sheet's re-read through that seam"
         )
+    }
+
+    // MARK: The thumbnail the cell shows after a rewrite (the owner's first
+    // report, revisited: "aun sigo sin ver que se actualice la preview")
+
+    /// The store's rewrite must not let ANY cached decode stand between the
+    /// saved PNG and the pixels a cell fetches: the same call the grid cell
+    /// makes (`model.image(for:)`) has to answer the file that is now on
+    /// disk after a rewrite. Proven by comparing decoded PIXELS before and
+    /// after, in the same process — not by trusting that a cache was
+    /// cleared, and not by object identity, which a refresh-bugless run and
+    /// a restored cache would both satisfy.
+    func testARewritesThumbnailDecodesTheSavedFilesPixelsThroughTheCellsCall() throws {
+        let store = makeStore(entries: 1)
+        let model = CaptureHistoryPanelModel(store: store, onPick: { _ in }, onClose: {})
+        model.refresh()
+        let entry = try XCTUnwrap(model.entries.first)
+        let before = try XCTUnwrap(model.image(for: entry), "the cell's thumbnail before the edit")
+        let beforePixel = try samplePixel(of: before, at: CGPoint(x: 0, y: 0))
+        XCTAssertEqual(beforePixel.blue, 1, accuracy: 0.05, "the capture before the edit is what the store stored")
+        XCTAssertEqual(beforePixel.red, 0, accuracy: 0.05)
+
+        // The edit: the SAME pixel size (no crop), different pixels — the
+        // case a value-equal entry would leave unread; the comparison below
+        // is what proves the pixels moved.
+        XCTAssertTrue(store.rewrite(entryID: entry.id, with: makeImage(width: 8, height: 6, red: 1, blue: 0)))
+        model.refresh() // the open sheet's own re-read, the seam the overlay runs
+
+        let after = try XCTUnwrap(model.image(for: entry), "the cell's thumbnail after the edit")
+        let afterPixel = try samplePixel(of: after, at: CGPoint(x: 0, y: 0))
+        XCTAssertEqual(afterPixel.red, 1, accuracy: 0.05, "the same call the cell uses answers the saved pixels, not the old capture")
+        XCTAssertGreaterThan(abs(afterPixel.red - beforePixel.red), 0.5,
+            "the decoded pixels changed across the rewrite in this very process")
+
+        // And the pixels the cell fetches are the pixels ON DISK: the same
+        // decode a fresh store run re-reads from the file.
+        let fileURL = try XCTUnwrap(store.fileURL(for: entry))
+        let fileSource = try XCTUnwrap(CGImageSourceCreateWithURL(fileURL as CFURL, nil))
+        let fileImage = try XCTUnwrap(CGImageSourceCreateImageAtIndex(fileSource, 0, nil))
+        let filePixel = try samplePixel(of: fileImage, at: CGPoint(x: 0, y: 0))
+        XCTAssertEqual(afterPixel.red, filePixel.red, accuracy: 0.05, "the cell's decode and the file's decode agree")
+        XCTAssertEqual(afterPixel.green, filePixel.green, accuracy: 0.05)
+        XCTAssertEqual(afterPixel.blue, filePixel.blue, accuracy: 0.05)
+    }
+
+    /// The screenshot's other cache — the grid's identity. Canary naming
+    /// its report: a value-equal cell input is a skipped re-render with the
+    /// old pixels still on screen (the owner's "aun sigo sin ver que se
+    /// actualice la preview", second report of the pixel kind), and a
+    /// LazyVGrid holds its cells across an identity change of its ForEach
+    /// ALONE — the committed keying was the ForEach's, so the entry still
+    /// visibly took the front while every thumbnail stayed the old capture.
+    /// The re-read re-keys the grid content itself, the placement the
+    /// Settings history pane's Clear re-read already uses on its card.
+    func testTheReReadRekeysTheGridContentItselfNotTheForEachRow() throws {
+        var url = URL(fileURLWithPath: #filePath)
+        for _ in 0..<3 { url.deleteLastPathComponent() }
+        let source = try String(
+            contentsOf: url.appendingPathComponent("Sources/Stare/CaptureHistoryPanel.swift"),
+            encoding: .utf8)
+        XCTAssertEqual(
+            source.components(separatedBy: ".id(model.revision)").count - 1, 1,
+            "the revision keys exactly one identity in the grid")
+        XCTAssertTrue(
+            source.contains("SITS ON THE GRID CONTENT ITSELF"),
+            "canary: the re-read's identity change is the grid content's, not the ForEach row's")
+    }
+
+    /// Pixel sampler the test reads decoded thumbnails through: one colour
+    /// at a point, in device RGB.
+    private func samplePixel(of image: CGImage, at point: CGPoint) throws -> (red: CGFloat, green: CGFloat, blue: CGFloat) {
+        let rep = try XCTUnwrap(NSBitmapImageRep(cgImage: image))
+        let x = min(image.width - 1, max(0, Int(point.x)))
+        let y = min(image.height - 1, max(0, Int(point.y)))
+        let colour = try XCTUnwrap(rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        colour.getRed(&r, green: &g, blue: &b, alpha: &a)
+        return (r, g, b)
     }
 
     // MARK: Keyboard navigation

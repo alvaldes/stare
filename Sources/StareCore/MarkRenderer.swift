@@ -1,8 +1,14 @@
 import CoreGraphics
+import CoreText
 import Foundation
 
-/// Draws the geometry of marks into any context. Pure rendering, shared by the
-/// overlay, the capture compositor and the self test, so all three agree.
+/// Draws the geometry of marks into any context. Pure rendering, shared by
+/// the overlay, the capture compositor, the editor canvas and the self test,
+/// so all marks land as the same pixels everywhere. The numbered step's glyph
+/// is decided here too: what a `.number` mark renders fills its ball AND
+/// draws the digit, so a path that calls the renderer — the editor's own
+/// canvas included — cannot drop the number (editor-save-in-place S1:
+/// "en el editor no funciona el step porque no se ve el numero").
 public enum MarkRenderer {
     /// Whether a mark is still being dragged or already on the canvas (T8b).
     /// One explicit input the caller passes — the overlay, which is the only
@@ -131,6 +137,15 @@ public enum MarkRenderer {
             context.setLineWidth(1)
             context.addPath(path)
             context.strokePath()
+            // The digit is part of the mark's own glyph, drawn by the ONE
+            // renderer every surface calls. Compositors used to add it on top
+            // in a second drawing each; a caller only feeding the renderer —
+            // the editor's canvas — lost the digit, so the owner saw "solo la
+            // bola de color" in the editor while the overlay and the capture
+            // agreed. The glyph runs inside this same call (and, above, the
+            // same rotation transform), so a rotated mark's digit turns with
+            // the ball exactly as the compositor's separate turn did.
+            drawStepNumber(stroke, in: context)
             return
         }
 
@@ -181,6 +196,65 @@ public enum MarkRenderer {
             context.addPath(head)
             context.fillPath()
             return
+        }
+    }
+
+    /// The numbered step's digit, the ONE glyph decision: the compositor's
+    /// placement and font, carried into the file the renderer lives in so the
+    /// editor's own path draws the capture's pixels, not just the ball. The
+    /// digit scales with the badge it sits on (advisory A). Callers draw in a
+    /// context flipped for overlay space (top-left origin) — the compositor
+    /// and both canvases do — so the glyphs need the unmirroring matrix the
+    /// compositor's own text always applied.
+    private static func drawStepNumber(_ stroke: Stroke, in context: CGContext) {
+        guard let number = stroke.stepNumber, let centre = stroke.points.first else { return }
+        let line = makeLine(
+            "\(number)",
+            font: font(ofSize: OverlayStyle.stepNumberSize * stroke.badgeScale),
+            ink: digitInk(for: stroke.ink)
+        )
+
+        var ascent: CGFloat = 0
+        var descent: CGFloat = 0
+        let width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, nil))
+
+        context.saveGState()
+        context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+        context.textPosition = CGPoint(
+            x: centre.x - width / 2,
+            y: centre.y + (ascent - descent) / 2
+        )
+        CTLineDraw(line, context)
+        context.restoreGState()
+    }
+
+    /// System UI font, so rendered marks match what the compositor painted
+    /// since the compositor's own digit had the same face.
+    private static func font(ofSize size: CGFloat) -> CTFont {
+        CTFontCreateUIFontForLanguage(.system, size, nil)
+            ?? CTFontCreateWithName("Helvetica" as CFString, size, nil)
+    }
+
+    private static func makeLine(_ text: String, font: CTFont, ink: Ink) -> CTLine {
+        let attributes: [CFString: Any] = [
+            kCTFontAttributeName: font,
+            kCTForegroundColorAttributeName: ink.cgColor(),
+        ]
+        let attributed = CFAttributedStringCreate(
+            nil,
+            text as CFString,
+            attributes as CFDictionary
+        )
+        return CTLineCreateWithAttributedString(attributed!)
+    }
+
+    /// The digit reads against its ball: black on the yellow and white inks,
+    /// white on the rest — the same ball-contrast rule the compositor drew
+    /// before the glyph moved here.
+    private static func digitInk(for ink: Ink) -> Ink {
+        switch ink {
+        case .yellow, .white: .black
+        default: .white
         }
     }
 

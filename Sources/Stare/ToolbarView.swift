@@ -694,7 +694,14 @@ struct ToolbarView: View {
                 divider
                 ForEach(extraActions) { action in
                     if action.isLabelledSplit {
+                        // The neighbours' width discipline (owner's third
+                        // report): the split keeps ITS pinned cell, the way
+                        // the spotlight's cell keeps its 28×26 — a resizable
+                        // row can never hand it spare width again.
                         ToolbarSplitAction(action: action)
+                            .frame(
+                                width: ToolbarSplitActionView.cellSize.width,
+                                height: ToolbarSplitActionView.cellSize.height)
                             .help(Text(verbatim: action.help))
                     } else {
                         iconButton(
@@ -1015,6 +1022,17 @@ private struct ToolbarSplitAction: NSViewRepresentable {
 /// menu is built fresh per invocation so the labels and the targets are
 /// the live truth, the same rule the spotlight's shape menu keeps.
 final class ToolbarSplitActionView: NSView {
+    /// The split's own cell, the neighbours' width discipline (editor
+    /// -save-in-place S1, the owner's third report: "el btn save se ve muy
+    /// grande (ocupa mucho ancho) igual que como se veia el spotlight
+    /// antes"). The bar's other cells are fixed 26×26 / 28×26; the split
+    /// used to size itself to whatever its word plus chevron needed and the
+    /// row handed the rest, the same over-wide cell the spotlight's
+    /// menu-bearing cell grew into before its fixed-frame fix. A tighter
+    /// 11 pt word and a 9 pt chevron fit the compact constant, and nothing
+    /// lays the control out wider than its cell again.
+    static let cellSize = CGSize(width: 44, height: 26)
+
     private var action: ToolbarAction
     private let labelButton: NSButton
     private let menuButton: NSButton
@@ -1029,10 +1047,14 @@ final class ToolbarSplitActionView: NSView {
         self.action = action
         labelButton = NSButton(title: action.label ?? "", target: nil, action: nil)
         labelButton.isBordered = false
-        labelButton.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        // The compact word: its face stays the bar's own system-medium look
+        // at a small enough size that the control never outgrows its cell.
+        labelButton.font = NSFont.systemFont(ofSize: 11, weight: .medium)
         labelButton.contentTintColor = .secondaryLabelColor
+        let chevron = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "More actions")?
+            .withSymbolConfiguration(.init(pointSize: 9, weight: .medium))
         menuButton = NSButton(
-            image: NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "More actions") ?? NSImage(),
+            image: chevron ?? NSImage(),
             target: nil,
             action: nil)
         menuButton.isBordered = false
@@ -1040,9 +1062,11 @@ final class ToolbarSplitActionView: NSView {
         menuButton.contentTintColor = .tertiaryLabelColor
         stack = NSStackView(views: [labelButton, menuButton])
         stack.orientation = .horizontal
-        stack.spacing = 3
+        stack.spacing = 2
         stack.translatesAutoresizingMaskIntoConstraints = false
-        super.init(frame: NSRect(x: 0, y: 0, width: 48, height: 26))
+        // The cell is the fixed frame just like the spotlight's cell: any
+        // size the row offers never mints a wider control.
+        super.init(frame: CGRect(origin: .zero, size: Self.cellSize))
         labelButton.target = self
         labelButton.action = #selector(runPrimaryArm)
         menuButton.target = self
@@ -1076,7 +1100,7 @@ final class ToolbarSplitActionView: NSView {
     }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: max(stack.fittingSize.width, 24), height: 26)
+        NSSize(width: Self.cellSize.width, height: Self.cellSize.height)
     }
 
     /// The word arm: exactly the primary action, nothing from the menu.

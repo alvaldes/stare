@@ -187,4 +187,125 @@ final class CaptureEditorChromeTests: XCTestCase {
             cell.frame.size, CGSize(width: 28, height: 26),
             "the spotlight cell must take its neighbours' 28×26 at every width, not the row's spare (measured \(cell.frame.size))")
     }
+
+    // MARK: - The numbered step's digit, in the editor's own canvas path
+    // (editor-save-in-place S1: the owner's "no se ve el numero solo la bola
+    // de color")
+
+    /// The number tool's glyph is ONE decision in `MarkRenderer`, and the
+    /// editor's canvas is one of its callers: a step placed in the editor
+    /// shows the digit the saved capture shows. Rendered through the
+    /// canvas's own `draw(_:)` — the exact path a live edit paints — into a
+    /// bitmap, and sampled: the digit's black pixels sit inside the ball.
+    func testAStepMarkShowsItsNumberInTheEditorsOwnCanvasPath() throws {
+        let image = try XCTUnwrap(Self.solidImage(width: 100, height: 100))
+        let canvas = CaptureEditorCanvas(image: image)
+        canvas.frame = CGRect(x: 0, y: 0, width: 300, height: 200)
+        // A 100×100 capture in a 300×200 window fits at (50, 0, 200, 200):
+        // pixels-per-point 2, so the ball sits at view (150, 100).
+        canvas.seedMarks([
+            Stroke(tool: .number, ink: .yellow, points: [CGPoint(x: 50, y: 50)], stepNumber: 1),
+        ])
+        let rep = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 300,
+            pixelsHigh: 200,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        NSGraphicsContext.saveGraphicsState()
+        let context = try XCTUnwrap(NSGraphicsContext(bitmapImageRep: rep))
+        NSGraphicsContext.current = context
+        // AppKit pre-flips the context for a flipped view before draw(_:) is
+        // called; calling draw directly has to supply that flip itself.
+        context.cgContext.translateBy(x: 0, y: 200)
+        context.cgContext.scaleBy(x: 1, y: -1)
+        canvas.draw(canvas.bounds)
+        NSGraphicsContext.restoreGraphicsState()
+
+        // Scan only the PICTURE's own rect (the display the canvas fits the
+        // capture into), never the letterboxed around it: inside it the only
+        // possible sources are the white base and the one number mark, so a
+        // near-black pixel can only ever be the digit's ink (the ball-contrast
+        // rule draws it full-opacity black on a yellow ball; the ball itself
+        // is yellow, its hairline at most 18% darker).
+        let display = EditorCropSpace.fitted(
+            coverage: CGRect(x: 0, y: 0, width: 100, height: 100),
+            viewport: .identity,
+            inCanvas: canvas.bounds).display
+        var ballPixels = 0
+        var digitPixels = 0
+        for x in Int(display.minX.rounded())...Int(display.maxX.rounded()) - 1 {
+            for y in Int(display.minY.rounded())...Int(display.maxY.rounded()) - 1 {
+                let colour = try XCTUnwrap(rep.colorAt(x: x, y: 200 - 1 - y)?.usingColorSpace(.deviceRGB))
+                var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+                colour.getRed(&r, green: &g, blue: &b, alpha: &a)
+                if (r - 1).magnitude < 0.05 && (g - 0.8).magnitude < 0.06 && b < 0.06 { ballPixels += 1 }
+                if r < 0.1 && g < 0.1 && b < 0.1 { digitPixels += 1 }
+            }
+        }
+        XCTAssertGreaterThan(ballPixels, 0, "the ball rendered where the canvas placed it")
+        XCTAssertGreaterThan(
+            digitPixels, 0,
+            "the editor's own canvas draws the step's number, not just the colour ball")
+    }
+
+    // MARK: - The Save control keeps its compact pinned cell (S1: the owner's
+    // "el btn save se ve muy grande (ocupa mucho ancho) igual que como se
+    // veia el spotlight antes")
+
+    /// The labelled split keeps the word (the legibility the L5 shape
+    /// landed) but it is measured: a pinned compact cell the neighbours'
+    /// fixed-26/28 discipline gives it, exactly like the spotlight's bounded
+    /// cell above — a resizable row can never hand the control spare width
+    /// again.
+    func testTheSaveSplitControlKeepsItsPinnedCompactCellWhereverTheRowStretches() throws {
+        let content = try layout()
+        let chrome = try XCTUnwrap(content.chrome)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        func probe() -> NSView? {
+            var stack: [NSView] = [chrome]
+            var cell: NSView?
+            while let view = stack.popLast() {
+                if view is ToolbarSplitActionView { cell = view }
+                stack.append(contentsOf: view.subviews)
+            }
+            return cell
+        }
+        XCTAssertNotNil(probe(), "the editor's chrome hosts the labelled split control")
+        // The owner's measurement, pinned: at every row width the control
+        // is its pinned cell — not a 400-pt spread like the un-framed
+        // spotlight cell was, and not even word-and-chevron slack next to
+        // its 26/28 neighbours.
+        for width in [content.preferredSize.width, 706.0, 1000.0] {
+            content.window?.setContentSize(NSSize(width: width, height: 320))
+            content.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            let cell = try XCTUnwrap(probe())
+            XCTAssertEqual(
+                cell.frame.size, ToolbarSplitActionView.cellSize,
+                "the Save control must keep its pinned compact cell at every row width (measured \(cell.frame.size))")
+        }
+    }
+
+    private static func solidImage(width: Int, height: Int) -> CGImage? {
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: space,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              ) else { return nil }
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()
+    }
 }

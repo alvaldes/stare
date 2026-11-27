@@ -501,4 +501,145 @@ final class MarkRendererTests: XCTestCase {
             tolerance: 0.02
         )
     }
+
+    // MARK: - The numbered step's glyph (editor-save-in-place S1)
+
+    /// Renders `strokes` the way every production surface draws committed
+    /// marks: a context flipped for overlay space — top-left origin, the
+    /// compositor's own flip and both canvases' — over a fresh white base.
+    private func renderedOverlaySpaceBytes(
+        strokes: [Stroke],
+        in size: CGSize,
+        scale: CGFloat = 2
+    ) -> (bytes: [UInt8], width: Int, height: Int) {
+        let width = Int(size.width * scale), height = Int(size.height * scale)
+        let ctx = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        ctx.scaleBy(x: scale, y: scale)
+        ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+        ctx.fill(CGRect(origin: .zero, size: size))
+        // Overlay space is top-left origin; the bitmap context is bottom-left.
+        ctx.translateBy(x: 0, y: size.height)
+        ctx.scaleBy(x: 1, y: -1)
+        MarkRenderer.draw(strokes: strokes, in: ctx)
+        let image = ctx.makeImage()!
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        let reader = CGContext(
+            data: &bytes, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        reader.draw(image, in: CGRect(origin: .zero, size: CGSize(width: width, height: height)))
+        return (bytes, width, height)
+    }
+
+    /// Counts the digit-identifying pixels inside `reach` points of
+    /// `centre` (in overlay-space top-left coordinates, the space the marks
+    /// are laid out in). The digit's ink is applied at full opacity, so a
+    /// near-black pixel is the glyph itself: the ball's own 0.18 alpha
+    /// hairline never darkens a yellow ball past 18%, and the ball inks
+    /// (yellow over white here) never read near-black.
+    private func digitPixels(
+        around centre: CGPoint,
+        reach: CGFloat,
+        scale: CGFloat = 2,
+        in render: (bytes: [UInt8], width: Int, height: Int)
+    ) -> Int {
+        var count = 0
+        let span = Int(reach * scale)
+        let px = Int(centre.x * scale), py = Int(centre.y * scale)
+        for dy in -span...span {
+            for dx in -span...span {
+                let index = ((py + dy) * render.width + (px + dx)) * 4
+                guard index >= 0, index + 2 < render.bytes.count else { continue }
+                let r = CGFloat(render.bytes[index]) / 255
+                let g = CGFloat(render.bytes[index + 1]) / 255
+                let b = CGFloat(render.bytes[index + 2]) / 255
+                if r < 0.1 && g < 0.1 && b < 0.1 { count += 1 }
+            }
+        }
+        return count
+    }
+
+    /// The owner's third report, cause two ("en el editor no funciona el step
+    /// porque no se ve el numero solo la bola de color"): the renderer the
+    /// editor's own path shares is the ONE glyph decision — a committed
+    /// number mark drawn through `MarkRenderer.draw` carries its digit, not
+    /// just the ball, in the same context shape every surface renders in.
+    func testANumberedStepDrawsItsDigitInTheSharedRendererPath() {
+        let stroke = Stroke(tool: .number, ink: .yellow, points: [CGPoint(x: 50, y: 40)], stepNumber: 1)
+        let render = renderedOverlaySpaceBytes(strokes: [stroke], in: CGSize(width: 100, height: 80))
+        let count = digitPixels(around: CGPoint(x: 50, y: 40), reach: 8, in: render)
+        XCTAssertGreaterThan(
+            count, 0,
+            "the shared path draws the digit, not just the ball — the drop the editor showed")
+    }
+
+    /// The digit is the mark's data, never a side effect of the ball: a
+    /// number mark without a number stays the bare ball, so the glyph is
+    /// real pixels, not the ball's hairline.
+    func testAStepMarkWithoutANumberStaysTheBareBall() {
+        let bare = Stroke(tool: .number, ink: .yellow, points: [CGPoint(x: 50, y: 40)])
+        let render = renderedOverlaySpaceBytes(strokes: [bare], in: CGSize(width: 100, height: 80))
+        XCTAssertEqual(
+            digitPixels(around: CGPoint(x: 50, y: 40), reach: 8, in: render), 0,
+            "without a stepNumber the ball carries no glyph")
+    }
+
+    /// The same mark must produce the same glyph everywhere (owner's cause
+    /// two): the compositor — the saved capture's pixels — and the shared
+    /// renderer's direct draw must agree inside the digit's window, so an
+    /// editor canvas and the captures it saves cannot disagree again. The
+    /// composite runs over a 2× base so its marks land on the same pixel
+    /// grid the direct draw rasterizes (`composite` fills the base's own
+    /// pixel size, whatever `scale` draws at).
+    func testTheCompositorAndTheRendererDrawTheSameNumberGlyph() throws {
+        let stroke = Stroke(tool: .number, ink: .yellow, points: [CGPoint(x: 50, y: 40)], stepNumber: 1)
+        let size = CGSize(width: 100, height: 80)
+        let scale: CGFloat = 2
+        let renderer = renderedOverlaySpaceBytes(strokes: [stroke], in: size)
+
+        let base = try XCTUnwrap(Self.makeWhiteBase(
+            width: Int(size.width * scale), height: Int(size.height * scale)))
+        let composited = try XCTUnwrap(MarkCompositor.composite(marks: [stroke], over: base, scale: scale))
+        var bytes = [UInt8](repeating: 0, count: composited.width * composited.height * 4)
+        let reader = CGContext(
+            data: &bytes, width: composited.width, height: composited.height,
+            bitsPerComponent: 8, bytesPerRow: composited.width * 4,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        reader.draw(composited, in: CGRect(x: 0, y: 0, width: composited.width, height: composited.height))
+
+        // The digit's window, sampled at the same pixel scale both renders
+        // ran at, so the bytes sit on the same pixels.
+        let span = 16
+        let px = 50 * 2, py = 40 * 2
+        var worst = 0
+        for dy in -span...span {
+            for dx in -span...span {
+                let index = ((py + dy) * composited.width + (px + dx)) * 4
+                for channel in 0...3 {
+                    worst = max(worst, abs(Int(bytes[index + channel]) - Int(renderer.bytes[index + channel])))
+                }
+            }
+        }
+        XCTAssertLessThanOrEqual(
+            worst, 6,
+            "the compositor and the renderer must draw the same digit (max byte delta \(worst))")
+    }
+
+    private static func makeWhiteBase(width: Int, height: Int) -> CGImage? {
+        let ctx = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )
+        ctx?.setFillColor(CGColor(gray: 1, alpha: 1))
+        ctx?.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        return ctx?.makeImage()
+    }
 }

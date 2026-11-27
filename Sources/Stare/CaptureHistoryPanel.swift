@@ -547,10 +547,11 @@ final class CaptureHistoryPanelModel: ObservableObject {
     /// an in-place save keeps the entry's id and — without a crop — every
     /// field, so an equal cell input would be a skipped SwiftUI re-render
     /// with the OLD pixels still on screen (the owner's report one, the
-    /// preview half). The grid keys itself on this revision (`.id` under
-    /// the model), so every re-read rebuilds the cells and the thumbnails
-    /// re-read the store — the same pattern the Settings history pane's
-    /// Clear already uses for its own post-mutation re-read.
+    /// preview half). The grid's content keys its identity on this revision
+    /// (the single identity change at the grid, the placement the Settings
+    /// history pane's Clear re-read already uses for its own post-mutation
+    /// re-read), so every re-read rebuilds the cells and the thumbnails
+    /// re-read the store.
     @Published private(set) var revision = 0
 
     /// Selects `index` outright; an out-of-bounds index is ignored. A walk
@@ -625,8 +626,12 @@ final class CaptureHistoryPanelModel: ObservableObject {
         refresh()
     }
 
-    /// The thumbnail for one grid cell, loaded from the store (session cache
-    /// first, then the stored file).
+    /// The thumbnail for one grid cell, read through the store at render
+    /// time (session cache first, then the stored file). The panel keeps no
+    /// per-cell decode of its own: every re-render asks the store again, so
+    /// a rewritten file (no cache survived the rewrite — see
+    /// `CaptureHistoryStore.rewrite`) reaches the cell as a fresh decode of
+    /// what is on disk.
     func image(for entry: PersistedCaptureEntry) -> CGImage? {
         store.image(for: entry)
     }
@@ -866,17 +871,23 @@ struct CaptureHistoryPanelContent: View {
                                     isSelected: model.selectedEntry?.id == entry.id
                                 )
                             }
-                            // The revision keys the ForEach (editor-save-in-place,
-                            // the open-sheet rule): a re-read whose entries are
-                            // value-equal to the last ones would otherwise re-render
-                            // nothing and the saved pixels would never reach a
-                            // still-visible cell.
-                            .id(model.revision)
                         }
+                        // The re-read re-keys the GRID's own identity (editor
+                        // -save-in-place, the open-sheet rule — the pixel
+                        // half of the owner's first report): a value-equal
+                        // cell input is a skipped re-render with the OLD
+                        // pixels still on screen, and a LazyVGrid holds its
+                        // cells across an identity change of the ForEach
+                        // ALONE — which is why the thumbnail stayed the old
+                        // capture while the entry still visibly took the
+                        // front. editor-save-in-place-S1: THE IDENTITY
+                        // SITS ON THE GRID CONTENT ITSELF, the placement the
+                        // Settings history pane's Clear re-read already uses
+                        // on its card, so every re-read rebuilds the cells
+                        // and the thumbnails re-read the store.
+                        .id(model.revision)
                         .padding(.horizontal, 16)
                         .padding(.bottom, 16)
-                        // The grid tells the model how wide it is, so the
-                        // vertical arrows can move by a row (see columnCount).
                         .background(
                             GeometryReader { proxy in
                                 Color.clear
