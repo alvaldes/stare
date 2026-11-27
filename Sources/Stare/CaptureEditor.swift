@@ -41,6 +41,20 @@ final class CaptureEditorController {
     /// a test needs to reach the content it built.
     var windowsForTesting: [CaptureEditorWindow] { windows }
 
+    /// Whether any editor window stands open (round four S7): the question
+    /// the capture history's close asks before choosing where key focus
+    /// goes. The same list the Dock reflection owns, so the two can never
+    /// disagree about the count.
+    var hasOpenWindow: Bool { !windows.isEmpty }
+
+    /// The standing window the focus hand-off brings forward (round four
+    /// S7): the visible one first, any open window otherwise. The closure
+    /// that actually keys it lives on the overlay (the activation seam),
+    /// so both the destination decision and the activation ride one route.
+    var frontmostWindow: CaptureEditorWindow? {
+        windows.first(where: { $0.isVisible }) ?? windows.first
+    }
+
     /// Round four S6: opening an editor and closing the last one moves the
     /// app's Dock presence with the truth of the editor windows. Stare keeps
     /// launching as the accessory menu-bar app (main.swift's policy, LSUIElement
@@ -1596,6 +1610,18 @@ final class CaptureEditorCanvas: NSView {
     /// intersection with the flip the compositor's own placement uses. The
     /// mark still mints through `DrawingSession.begin`, so preview, live view
     /// and committed capture are one mark's three views.
+    ///
+    /// Round four S9: `BlurEffect.crop` (which is what `redactionPatch` runs
+    /// for the blur twin) reads `pixelRect` in the crop's own BOTTOM-LEFT
+    /// bitmap space — the contract both the compositor and the drawing
+    /// overlay's blur honour by converting their top-down view rects with
+    /// `y = source.height − maxY × scale`. The space's mapping here is
+    /// top-down (the canvas is flipped, `coverage` is CGImage top-down), so
+    /// BEFORE the one dispatch the rect gets the same conversion — the live
+    /// patch then samples exactly the pixels under the mark, what the saved
+    /// file's compositor samples. Without it the preview sampled the
+    /// VERTICALLY MIRRORED strip, often a flat unrelated colour (S9's
+    /// screenshots), while the saved file was correct.
     private func drawLiveBlur(_ stroke: Stroke, in context: CGContext, space: EditorCropSpace) {
         guard let first = stroke.points.first, let last = stroke.points.last else { return }
         let rect = PathBuilder.normalizedRect(from: first, to: last)
@@ -1607,9 +1633,20 @@ final class CaptureEditorCanvas: NSView {
         let surfaceRect = space.viewRect(fromPixel: CGRect(x: 0, y: 0, width: source.width, height: source.height))
         let visible = rect.intersection(surfaceRect)
         guard !visible.isNull, !visible.isEmpty else { return }
+        // The compositor's own conversion (drawBlur): the top-down view rect
+        // becomes the crop's bottom-left bitmap rect (`y = height − maxY ×
+        // scale`), so the patch diffs the pixels UNDER the mark, never the
+        // mirrored strip below (round four S9).
+        let viewPixelRect = space.pixelRect(fromView: visible)
+        let pixelRect = CGRect(
+            x: viewPixelRect.minX,
+            y: CGFloat(source.height) - viewPixelRect.maxY,
+            width: viewPixelRect.width,
+            height: viewPixelRect.height
+        )
         guard let patch = MarkRenderer.redactionPatch(
             source,
-            pixelRect: space.pixelRect(fromView: visible),
+            pixelRect: pixelRect,
             style: stroke.redactionStyle,
             seed: stroke.redactionSeed,
             scale: space.pixelsPerPoint

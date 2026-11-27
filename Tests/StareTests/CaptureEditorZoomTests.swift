@@ -19,6 +19,28 @@ final class CaptureEditorZoomTests: XCTestCase {
     private let canvasRect = CGRect(x: 0, y: 0, width: 300, height: 200)
     private let imageBounds = CGRect(x: 0, y: 0, width: 100, height: 100)
 
+    // MARK: - The cursor the class leaves behind
+
+    /// The process's cursor before the class ran, restored in teardown:
+    /// the canvas's key handling arms tools through the product's own
+    /// `NSCursor.set()`, and AppKit spins none of that away between classes.
+    /// Whatever stands when the class ends is what the next class meets —
+    /// TextSelectionWindowTests shares this process and reads
+    /// `NSCursor.current` as its baseline — so the restore is the same
+    /// leave-it-as-found family the activation hooks use, never a stack
+    /// push/pop the product code does not participate in.
+    private var foundCursor: NSCursor?
+
+    override func setUp() {
+        super.setUp()
+        foundCursor = NSCursor.current
+    }
+
+    override func tearDown() {
+        foundCursor?.set()
+        super.tearDown()
+    }
+
     // MARK: - Fixtures
 
     private static func solidImage(width: Int, height: Int) -> CGImage? {

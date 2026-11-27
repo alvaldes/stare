@@ -23,6 +23,17 @@
   y abra el editor". While an editor is open the app is a regular app in the Dock, and an image opened from the
   Finder with Stare lands in the editor.
 
+- **S7** (verbatim): "ya cierra el historial pero falta aplicar el foco la ventana del editor o al finder porque aun
+  se queda el foco la app en la que estaba antes de abrir el historial". Closing the history gives focus back
+  to the editor window if one is open, otherwise to the Finder — not to whichever app was frontmost before.
+
+- **S8** (verbatim): "porque cmd+w no cierra la ventana del editor?" Command-W closes the editor window.
+
+- **S9** (verbatim, with two screenshots): "he hecho algunos blur pero no todos salieron como esperaba, algunos
+  parecen un rect de color que no tiene nisiquiera nada que ver con fondo donde esta haciendo blur. Pero algo
+  interesante es que al guardarlo si funciona". The live preview of a blur mark sometimes paints a flat colour
+  unrelated to what is under it, while the saved file is correct — so the preview samples the wrong source.
+
 ## Tasks
 
 | ID | Specs | Task | Route | Commit |
@@ -30,6 +41,7 @@
 | T1 | S4, S5 | The spotlight's cell and the cursor over the editor's chrome | worker | uncommitted |
 | T2 | S1, S2, S3 | History closes on action; select moves the mark; blur paints | worker | uncommitted |
 | T3 | S6 | Dock presence and Open With | worker | uncommitted |
+| T4 | S7-S9 | Focus after the history, command-W, and the live blur's source | worker | uncommitted |
 
 ## Log
 
@@ -65,3 +77,165 @@
   S4×1, S5×4, S6×7). Two deliberate exclusions: the Dock icon's REAL visibility in Finder/Cmd-Tab and the
   Finder "Open With" menu are runtime system appearances — the owner's eye closes those; `LSUIElement` stays
   true, so the Dock presence rides the runtime flip, not a launch change.
+- **L3** (worker, 2026-11-26, T4 closing pass, S7–S9): S7 — the history's hide no longer hands the
+  foreground to whatever app was frontmost before the sheet opened (the `restoreFrontmostApplication`
+  branch is replaced): `OverlayController.HistoryFocusDestination.destination` is the value rule with the
+  fallbacks named in the spec's order — editor first (`CaptureEditorController.frontmostWindow`, activated
+  through the overlay's `makeEditorKey` seam whose default is the real `makeKeyAndOrderFront`), the open
+  board's canvas second (the standing rule the picks' delivery keeps), the FINDER third
+  (`OverlayController.activateFinderApplication`, the workspace's Finder app activated; tests inject a
+  witness). Pick and refused deliveries untouched (`deliverHistoryPick` unchanged; the board pick's
+  existing tests still pass). S8 — the cause: Stare's menu-less accessory app gets its key equivalents
+  through the main menu's key pass FIRST (the same order ⌘, needed its item for), the menu never carried
+  ⌘W, and the window's keyboard had no close route of its own — so the keystroke died before any
+  responder. The `Close Editor` (⌘W) item rides the retained `EditorCloseShortcutTarget`, whose gate is
+  the exact production question `NSApp.keyWindow as? CaptureEditorWindow` and whose action is the window's
+  own `performClose` — the close button's route, through the window's close tail once. The Settings
+  window, a floating panel and the whole app are never closed (the gate reads nil for every other key
+  window). S9 — the actual sampler: the LIVE editor blur handed `MarkRenderer.redactionPatch` (and so
+  `BlurEffect.crop`) the space's TOP-DOWN view rect untouched, while `BlurEffect.crop` reads its rect in
+  the crop's own BOTTOM-LEFT bitmap space — proven with a standalone gradient crop probe (rect y=5 read
+  the patch from the visual-bottom rows, brightness 0.92 = the row 5 pixels ABOVE the bottom, not from
+  the visual top). The saved file rode the compositor, whose `drawBlur` converts with
+  `y = height − maxY × scale`, so it was correct; the overlay's `drawBlur` converts the same way. The
+  live draw now performs the compositor's own conversion before the one dispatch
+  (`Sources/Stare/CaptureEditor.swift`, `drawLiveBlur`): it samples exactly what the compositor samples.
+  Evidence — RED observed before the fix (live=0.95..0.98 red-tinted vs compositor=0.92 neutral gray
+  inside the same patch, the fixture striped above and flat red below); GREEN — focused run
+  `swift test --filter "CaptureEditor|CaptureHistoryPanel|Redaction"` exit 0, 128 cases passed
+  (104 StareTests + 24 StareCoreTests), 0 failed, additions 8 (S7×3 incl. the fallback rule, S8×4 incl.
+  the source-wiring canary, S9×1 with the live==compositor patch parity inside the mark). Two harness
+  discoveries recorded for the next rounds: a headless xctest process never becomes active, so regular
+  windows' `isKeyWindow` cannot be asserted there — S7/S8 pin their activation ROUTES with witnesses
+  (the real AppKit calls stay as the defaults) and the key's real effect is the owner's runtime eye; and
+  a failed `NSApp.activate(ignoringOtherApps:)` in a process whose activation policy is accessory
+  poisons every LATER panel's keying in the same run, so the S7 tests run after the pre-existing
+  CaptureHistoryPanelKeyboardTests (class order, `CaptureHistoryPanelLeaveFocusTests`) — its first RED
+  run had already shown the interaction without any spec change to it.
+  - Follow-up (worker, 2026-11-26, the full suite's two
+    `TextSelectionWindowTests` failures): the S7 class now leaves the process exactly as it found it —
+    `CaptureHistoryPanelLeaveFocusTests` records the state before each test (`NSApp.isActive` + the
+    Dock-presence policy a standing editor window flips) and restores both in `tearDown` when they
+    changed (`setActivationPolicy`, then `deactivate()` — a policy flip alone can deactivate the app),
+    closes the sheet and any editor windows its routes left standing WITHOUT the close hooks (the
+    sheet's own `hide()` fires the focus handoff, a fresh activation, after the assertions), and
+    resigns any key window (`keyWindow?.resignKey()`), so no window is key when the next class starts.
+    Every S7 assertion kept; the destination rule and both witnessed routes untouched.
+    `swift test --filter "CaptureHistoryPanelLeaveFocusTests|TextSelectionWindowTests"` — green,
+    EXIT=0 five consecutive runs (18 tests: 3 + 15, 0 failures each) — after the hooks crashed the
+    first five runs (EXIT=1, fatal error at `CaptureHistoryPanelTests.swift:397`: the hooks read the
+    nil-before-init global `NSApp`; fixed by `NSApplication.shared` in the hooks). HONEST ATTRIBUTION:
+    the pair was green BEFORE the restoration too (one earlier run), so the S7 class is not the
+    contaminator this environment answers for. With cursor-stack instrumentation (since removed) the
+    real poison was found outside S7: `CaptureEditorZoomTests` leaves `NSCursor.current == crosshair`
+    (a bare `set()`, never restored) — its pen-picker test presses `p` through the canvas
+    (`resolvesArmedKey` → `reassertCursor()` → `crosshair.set()`) and never sets the cursor back;
+    the crosshair stands under the surface's own push, so the class's pop hands back the arrow and
+    the next class sees a changed `current`. The deterministic minimal repro (4/4 before the S7
+    hooks, still failing after them) is
+    `swift test --filter "CaptureEditorZoomTests|TextSelectionWindowTests"` — the crosshair standing
+    is the zoom test's, and `testEveryExitRestoresThePreviousCursorAfterTheCrosshair`'s
+    baseline (crosshair) minus the class's pop (arrow) honestly fails at :220. The :196 keyWindow-nil
+    failure needs an even wider prefix (it reproduces under a broad `Capture|...|TextRecognition`
+    filter, 2/2) and was not pinned to one class; a `.set()` cursor left standing is the same
+    family. FIX CANDIDATE BEYOND THIS TASK'S SURFACES: `Tests/StareTests/CaptureEditorZoomTests.swift`
+    restoring the cursor it found in `tearDown` (the same restore family the S7 hooks now perform for
+    activation), or the parent's own suite run to decide.
+  - Follow-up 2 (worker, 2026-11-26, the zoom restore lands, the wide prefix still poisons): the
+    zoom class now captures `NSCursor.current` in `setUp` and restores it in `tearDown` with `set()`
+    (no stack manipulation), so its own poison is closed inside its surfaces — the narrow repro
+    `swift test --filter "CaptureEditorZoomTests|TextSelectionWindowTests"` runs EXIT=0, 27 tests
+    (12 + 15), 0 failures. The BOUNDED WIDE PROBE (`Capture|CardCursorRouting|Composite|LiveBlur|
+    Onboarding|Pinned|Pointer|Primary|Redaction|ScreenRecording|Settings|StatusBar|TextRecognition|
+    TextSelectionWindowTests`, 436 StareTests + 349 StareCoreTests) still ends EXIT=1 with the same
+    two selection failures (`TextSelectionWindowTests.swift:220` cursor restore, `:196` keyWindow
+    nil), so both poisons have owners beyond the zoom class. Bisection, probe re-runs with families
+    removed via `--skip`, everything else identical: `CardCursorRoutingTests` alone reproduces the
+    cursor failure — `--filter "CardCursorRoutingTests|TextSelectionWindowTests"` runs EXIT=1 with
+    exactly the :220 failure (2/2 runs): its `controller.activate()` / `toggleBoard()`
+    (`OverlayController.activate`, OverlayController.swift:911) leaves `NSCursor.crosshair.set()`
+    standing with no restore — the same `.set()`-leaver family the zoom class was. Under the wide
+    prefix it is proven by add/remove: probe with `Settings|StatusBar` skipped keeps ONLY :196 red;
+    with `CardCursorRoutingTests` additionally skipped (`--skip
+    "Settings|StatusBar|CardCursorRouting"`) the probe is green, EXIT=0, 343+343 tests, 0 failures —
+    and `--skip "Settings|CardCursorRouting"` is green too, EXIT=0, 343+343, 0 failures. The :196
+    keyWindow-nil branch also survives every wide run where CardCursorRoutingTests is present; its
+    source is the same `activate()`'s failed `NSApp.activate(ignoringOtherApps:)` plus the standing
+    overlay panels/toolbar — the exact mechanism the L3 S7 hooks neutralise for
+    `CaptureHistoryPanelLeaveFocusTests`, but `CardCursorRoutingTests` restores nothing (no
+    deactivate, no resignKey, no cursor restore). FIX NEEDED BEYOND THIS TASK'S SURFACES: the same
+    leave-as-found hooks in `Tests/StareTests/CardCursorRoutingTests.swift` (cursor capture in
+    `setUp` / restore in `tearDown` with `set()`, `deactivate(restoringFocus: false)` when a mode
+    is up, `keyWindow?.resignKey()`). A residual second branch remains: with
+    `CardCursorRoutingTests` REMOVED the wide probe still fails both tests whenever the
+    Settings-family classes run alongside the rest (probe minus `Settings|StatusBar`: only :196;
+    minus `Settings|CardCursorRouting`: green). Eleven focused pairs (each Settings class alone, all
+    Settings together, Settings x CaptureHistoryPanel(Keyboard+LeaveFocus) x Onboarding x
+    CaptureEditorDock x CaptureEditorWindowClose x CaptureEditorCursor x CaptureSpotlightShape x
+    CaptureIncludes x RedactionParity x LiveBlur x StatusBarGlyph, each filtered straight against
+    TextSelectionWindowTests) all run green (EXIT=0), so this branch is cumulative across the wide
+    prefix and NOT pinned to one class in the authorized budget. No assertion was weakened:
+    `TextSelectionWindowTests` was not touched; all evidence above is from probe composition only.
+  - Follow-up 3 (worker, 2026-11-26, the leave-as-found hooks land, the board residue closes, the residual
+    Settings-family branch is still not one class): the shared helper now lives in
+    `Tests/StareTests/TestWindowPlacement.swift` — `LeaveAsFound` (capture in `setUp`: `NSCursor.current`,
+    `NSApp.isActive`, `activationPolicy()`; restore in `tearDown` in the order that keeps each hook from
+    undoing the next: policy first — a flip can deactivate the app as a side effect — then the active flag,
+    then `keyWindow?.resignKey()`, then the cursor via `set()`, never a stack push/pop) — and BOTH hooked
+    classes now use it: `CaptureHistoryPanelLeaveFocusTests` (its own panel/editor closing stays
+    class-owned, the process-level hooks come from the helper) and `CardCursorRoutingTests` (new: capture
+    in `setUp`; in `tearDown` the overlay mode's own no-hook exit `deactivate(restoringFocus: false)`, the
+    board's own user-visible route `toggleBoard()` for the board mode — no no-hook close seam exists for
+    the board, so the class leaves through the mode switch's route, whose focus restore re-asserts
+    whichever app was already frontmost — then the helper). What each class WAS leaving standing, and what
+    the hooks now close:
+    `CaptureEditorZoomTests` — the pen-picker's crosshair `set()` (closed by follow-up 2).
+    `CardCursorRoutingTests` — the crosshair `set()` from BOTH modes, a failed
+    `NSApp.activate(ignoringOtherApps:)`, the app active, and the board's standing residue: instrumentation
+    (one probe class sorting immediately before `TextSelectionWindowTests`, since removed) showed TWO
+    visible full-screen `OverlayWindow`s (`level 1000`, one per display) plus a visible `ToolbarPanel`
+    (`level 1001`) at the selection surface's doorstep in red compositions; the newest window census after
+    the board exit drops them.
+    `CaptureHistoryPanelLeaveFocusTests` — the activation, the Dock-presence policy flip and a standing key
+    window (closed by follow-up 1, now via the helper).
+    Narrow repros after the hooks: `swift test --filter "CardCursorRoutingTests|TextSelectionWindowTests"`
+    EXIT=0 (23 tests, 0 failures) — the CursorRouting strand the ledger pinned to :220 is CLOSED, Cursor
+    Routing is innocent under `--skip` removal AND alone.
+    Full bisection table (bounded probe, each composition run with the exact delivered filter):
+    full probe (no skip): EXIT=1, 436 StareTests + 349 StareCoreTests, exactly the two selection failures
+    (:220, :196) — five runs, deterministic.
+    `--skip "Settings|StatusBar"` red both tests ×2 runs; `--skip "Settings|CardCursorRouting"` GREEN
+    EXIT=0 ×2 runs (343 StareTests); `--skip "CardCursorRouting"` red; `--skip "Settings"` red;
+    `--skip "StatusBar"` red; Settings singles ×14 (all of the family, PRE board fix) red;
+    single-class skips ×15 across the non-Settings families (OnboardingFocus, CaptureIncludes,
+    PinnedImage, PrimaryScreen, CaptureEditorDock, CaptureHistoryPanel(Keyboard/LeaveFocus),
+    CompositeParity, LiveBlur, TextRecognitionClient, StatusBarGlyph, RedactionParity,
+    ScreenRecordingClientAdapter, CaptureSpotlightShape, ToolbarLayout) all red; half skips (runtime class
+    order): classes 1–36 of 72 (AppIconImageTests…CaptureHistoryPanelTests) GREEN (171 StareTests),
+    classes 37–71 (CaptureHistoryStoreMenuAPITests…TextRecognitionClientTests) GREEN (282 StareTests);
+    two same-size count probes (15 classes removed two ways, 310 StareTests each) red — composition, not
+    count. All with the exact delivered command plus one `--skip` (bisection only; nothing delivered).
+    POST board-fix verdict: the trio's removal does NOT turn the full probe green — one more strand, and
+    its TWO members are (a) the Settings family — no single Settings class ruled out ×14 re-run post-fix,
+    both halves re-run post-fix red — and (b) something that every GREEN composition has in common: ANY
+    full half of the runtime class order skipped is green, so the strand spans cross-composition; the
+    probe instrumentation (removed) proved the red/green DOORSTEP STATES are IDENTICAL to the field
+    (active=false, policy=.accessory, keyWindow=nil, mainMenu=nil, modalWindow=nil, same cursor image, 20
+    windows both) — so the poison is invisible to an AppKit snapshot: in-suite queued phases
+    (`SettingsWindowController.show` / `OnboardingWindowController`'s queued `NSApp.activate` +
+    makeKeyAndOrderFront re-asserts, `OverlayController.assertActivation`'s 0.1-s retry ladder) and/or
+    window-server-side keying state accumulated across `NSApp.activate` failures (the S7 mechanism the L3
+    S7 hooks neutralise for ONE class at a time). Delivered probe, twice consecutively at the end:
+    EXIT=1, 436 StareTests + 349 StareCoreTests, 2 failures (the same two `TextSelectionWindowTests`
+    lines), 0 other failures, no added `--skip`, `TextSelectionWindowTests` untouched, every earlier
+    assertion intact. UNATTRIBUTED means for the parent: the residual strand's candidate owners sit in
+    files beyond this task's authorize surfaces — `Tests/StareTests/CaptureHistoryPanelKeyboardTests.swift`
+    (panel activations, the L3 blame target), `Tests/StareTests/SettingsShortcutTests.swift`
+    (`controller.activate()`/board toggles), the `SettingsWindowController`/`OnboardingWindowController`
+    queued activation family (~all Settings/Onboarding test classes), or Sources
+    (`OverlayController` has no no-focus board-close seam; `SettingsWindowController.show` /
+    `OnboardingWindowController` queue main-queue re-activation blocks that fire AFTER their test's
+    teardown). HONEST ATTRIBUTION of what IS proven: the visible-window strands are closed; what remains
+    needs either those files hooked the same leave-as-found way, or a Sources seam (internal
+    `OverlayController` board close with `restoringFocus: false`, and/or moving the queued
+    `NSApp.activate` re-asserts behind a test-observable gate) — a parent decision, not a worker one.

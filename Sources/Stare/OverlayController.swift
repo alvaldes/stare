@@ -454,6 +454,47 @@ final class OverlayController {
         }
     }
 
+    // MARK: Round four S7: the history close's focus rule
+
+    /// Where closing the capture history hands key focus (round four S7):
+    /// the fallbacks named in the spec, in its own order. An editor standing
+    /// open takes the focus back (the window the user was likely headed to);
+    /// with no editor the open board's canvas keeps the standing rule the
+    /// picks' delivery path has always served; with neither, the FINDER is
+    /// activated — never the app that happened to be frontmost before the
+    /// sheet opened.
+    enum HistoryFocusDestination: Equatable {
+        case editor
+        case boardCanvas
+        case finder
+
+        static func destination(hasOpenEditorWindow: Bool, isBoardActive: Bool) -> HistoryFocusDestination {
+            if hasOpenEditorWindow { return .editor }
+            if isBoardActive { return .boardCanvas }
+            return .finder
+        }
+    }
+
+    /// The Finder activation seam (round four S7): the history's close asks
+    /// this for the third fallback. Default to the real workspace
+    /// activation of the Finder app; tests inject a witness.
+    var activateFinder: () -> Void = { OverlayController.activateFinderApplication() }
+
+    /// The editor-activation seam (round four S7): how the standing editor
+    /// window takes the foreground back. Default to the REAL AppKit
+    /// activation — the window made key and front; the headless harness
+    /// cannot answer `isKeyWindow`, so a test witnesses the route instead.
+    var makeEditorKey: (CaptureEditorWindow) -> Void = { $0.makeKeyAndOrderFront(nil) }
+
+    /// The real Finder activation: the Finder app's own `activate`, the same
+    /// one-call hand-off the frontmost-restore keeps. The Finder is always
+    /// running on macOS; a miss is a silent no-op, never a crash.
+    static func activateFinderApplication() {
+        NSWorkspace.shared.runningApplications
+            .first { $0.bundleIdentifier == "com.apple.finder" }?
+            .activate(options: [])
+    }
+
     /// At most one mark is selected in the whole app: this drops every view's
     /// selection, used when a view selects elsewhere or the tool changes.
     private func clearAllSelections() {
@@ -745,17 +786,27 @@ final class OverlayController {
         Diag.log("editor delivered \(composed.width)x\(composed.height)")
     }
 
-    /// The capture history panel hid (pick, Esc, the toggle-off): return key
-    /// focus to the surface that was working before it — the open board's
-    /// canvas, or the app underneath.
+    /// The capture history panel hid (pick, Esc, the toggle-off): hand key
+    /// focus where it belongs (round four S7) — to the editor window when one
+    /// stands open (a REAL activation, the editor made key — e.g. the Edit
+    /// action from the sheet's own context menu), else to the open board's
+    /// canvas (the standing rule the picks' delivery keeps), else to the
+    /// FINDER (a real activation) — never to whatever app happened to be
+    /// frontmost before the sheet opened.
     private func captureHistoryPanelDidHide() {
-        if isBoardActive {
+        switch HistoryFocusDestination.destination(
+            hasOpenEditorWindow: editor.hasOpenWindow, isBoardActive: isBoardActive
+        ) {
+        case .editor:
+            guard let window = editor.frontmostWindow else { return }
+            makeEditorKey(window)
+        case .boardCanvas:
             for canvas in boardCanvases.values {
                 canvas.panel.makeFirstResponder(canvas.view)
             }
             boardCanvasUnderPointer()?.panel.makeKey()
-        } else {
-            restoreFrontmostApplication()
+        case .finder:
+            activateFinder()
         }
     }
 

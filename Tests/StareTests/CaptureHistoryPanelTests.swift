@@ -362,6 +362,172 @@ final class CaptureHistoryPanelTests: XCTestCase {
     }
 }
 
+// MARK: - Round four S7: where the focus goes when the history closes
+
+/// Round four S7 (odd/tasks/round-four.md): "ya cierra el historial pero
+/// falta aplicar el foco la ventana del editor o al finder porque aun se
+/// queda el foco la app en la que estaba antes de abrir el historial". The
+/// close's focus rule, first as a value with the fallbacks named, then
+/// through the two real routes: an editor standing open is activated (the
+/// window made key and front), and with neither editor nor board the FINDER
+/// is activated — never the app that happened to be frontmost before the
+/// sheet opened. The class runs AFTER the panel's pre-existing keyboard
+/// tests: its controller's own `NSApp.activate(ignoringOtherApps:)` call is
+/// one this headless harness cannot answer, and answering it wrong poisons
+/// a LATER panel's keying (AppKit state the runner never spins away) — the
+/// tests after it here are the ones the keyboard-keyed states belong to.
+@MainActor
+final class CaptureHistoryPanelLeaveFocusTests: XCTestCase {
+    private final class ActivationCount { var count = 0 }
+
+    /// The process state before the test's real activations (round four S7
+    /// follow-up, cross-test contamination): a test that activates the app —
+    /// the sheet's own open does it for the keyboard — and flips the Dock
+    /// presence policy (a standing editor window does that) restores in
+    /// teardown the state it found, and leaves no window key. The runner
+    /// spins no AppKit state away between classes, so whatever lingers here
+    /// is what the next class meets; TextSelectionWindowTests shares this
+    /// process and only ever saw a clean state when this one was left
+    /// exactly as it was found.
+    /// The process state before the test's real activations (round four S7
+    /// follow-up, cross-test contamination): a test that activates the app —
+    /// the sheet's own open does it for the keyboard — and flips the Dock
+    /// presence policy (a standing editor window does that) restores in
+    /// teardown the state it found, and leaves no window key. The shared
+    /// `LeaveAsFound` hooks carry the invariant (one implementation in
+    /// `TestWindowPlacement.swift` — cursor, activation, policy, key
+    /// window); the runner spins no AppKit state away between classes, so
+    /// whatever lingers here is what the next class meets —
+    /// TextSelectionWindowTests shares this process and only ever saw a
+    /// clean state when this one was left exactly as it was found.
+    private var foundState: LeaveAsFound.State!
+    private var controller: OverlayController?
+
+    override func setUp() {
+        super.setUp()
+        // The class's tests create the shared application inside their own
+        // bodies; the hooks above and below run before and after that, so
+        // they cannot read the nil-before-init global `NSApp`.
+        foundState = LeaveAsFound.capture()
+    }
+
+    override func tearDown() {
+        // Close what the routes left standing, with no close hooks behind
+        // them: the sheet's own `hide()` would fire the focus handoff — a
+        // fresh activation — after the test's assertions were done.
+        if let controller = self.controller {
+            if controller.isCaptureHistoryVisible { controller.captureHistoryPanel.orderOut(nil) }
+            for window in controller.editorWindowsForTesting {
+                window.orderOut(nil)
+                window.close()
+            }
+            self.controller = nil
+        }
+        // And the activation itself, cursor included, through the shared
+        // hooks: policy first (a flip can deactivate the app as a side
+        // effect), then the active flag, then the key window, then the
+        // cursor. The process keeps the state the test found.
+        LeaveAsFound.restore(foundState)
+        super.tearDown()
+    }
+
+    private func solidImage(width: Int = 20, height: Int = 10) -> CGImage {
+        let context = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()!
+    }
+
+    private func escapeEvent(windowNumber: Int) -> NSEvent {
+        NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: windowNumber, context: nil,
+            characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 53)!
+    }
+
+    /// The value side (S7): the fallbacks named in order — the editor wins
+    /// when one stands open, the board canvas keeps the standing rule the
+    /// picks serve, and the Finder is the third fallback.
+    func testTheHideFocusRuleNamesTheEditorTheBoardAndTheFinderAsTheFallbacks() {
+        typealias Destination = OverlayController.HistoryFocusDestination
+        XCTAssertEqual(
+            Destination.destination(hasOpenEditorWindow: true, isBoardActive: false), .editor,
+            "S7: an editor standing open takes the focus back")
+        XCTAssertEqual(
+            Destination.destination(hasOpenEditorWindow: false, isBoardActive: true), .boardCanvas,
+            "S7 (preserved): with no editor, the open board's canvas keeps the keyboard, as the picks' delivery path has always kept")
+        XCTAssertEqual(
+            Destination.destination(hasOpenEditorWindow: false, isBoardActive: false), .finder,
+            "S7: with neither editor nor board, the FINDER takes the foreground back — never the app that was frontmost before the sheet opened")
+        XCTAssertEqual(
+            Destination.destination(hasOpenEditorWindow: true, isBoardActive: true), .editor,
+            "S7: the editor wins over the board too — the spec's own order")
+    }
+
+    /// The editor route, driven through the REAL history path: an editor
+    /// standing open is activated when the sheet closes — witnessed on the
+    /// activation seam, the one route production runs (the window made key
+    /// and front); the headless harness cannot answer `isKeyWindow`, so the
+    /// route's cargo — the exact standing window — is what the assertion
+    /// pins (the key's real effect is the owner's runtime eye, as with the
+    /// Dock icon in S6).
+    func testClosingTheHistoryActivatesAnOpenEditorWindow() throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "no display: an editor window cannot be opened")
+        _ = NSApplication.shared
+        let previousPolicy = NSApp.activationPolicy()
+        defer { NSApp.setActivationPolicy(previousPolicy) }
+        let controller = OverlayController(captureService: CaptureService())
+        self.controller = controller // teardown closes what the route left standing
+
+        controller.openCaptureEditor(solidImage())
+        let window = try XCTUnwrap(
+            controller.editorWindowsForTesting.first,
+            "S7: the editor opened through the ONE real handoff")
+        window.confineToPrimaryScreen()
+        var activated: [CaptureEditorWindow] = []
+        controller.makeEditorKey = { activated.append($0) }
+        defer {
+            window.orderOut(nil)
+            window.close()
+        }
+
+        controller.toggleCaptureHistory()
+        XCTAssertTrue(controller.isCaptureHistoryVisible, "the sheet is the one under test")
+
+        controller.captureHistoryPanel.sendEvent(escapeEvent(windowNumber: controller.captureHistoryPanel.windowNumber))
+
+        XCTAssertFalse(controller.isCaptureHistoryVisible, "Esc closes the sheet")
+        XCTAssertTrue(activated == [window], "S7: closing the history ACTIVATES the standing editor window — the real route's exact window")
+        XCTAssertTrue(window.isVisible, "S7: the activation targets the visible editor, not a closed one")
+    }
+
+    /// The Finder fallback, driven through the REAL history path with a
+    /// witnessed activation: with no editor and no board, the close hands
+    /// the foreground to the Finder.
+    func testClosingTheHistoryWithNoEditorAndNoBoardActivatesTheFinder() throws {
+        try XCTSkipIf(NSScreen.main == nil, "no display: the panel cannot be shown")
+        _ = NSApplication.shared
+        let controller = OverlayController(captureService: CaptureService())
+        self.controller = controller // teardown closes what the route left standing
+        let activations = ActivationCount()
+        controller.activateFinder = { activations.count += 1 }
+
+        controller.toggleCaptureHistory()
+        XCTAssertTrue(controller.isCaptureHistoryVisible, "the sheet is the one under test")
+
+        controller.captureHistoryPanel.sendEvent(escapeEvent(windowNumber: controller.captureHistoryPanel.windowNumber))
+
+        XCTAssertFalse(controller.isCaptureHistoryVisible, "Esc closes the sheet")
+        XCTAssertEqual(
+            activations.count, 1,
+            "S7: with neither editor nor board on screen, the close activates the FINDER once")
+    }
+}
+
 /// B1: the panel's grid cell width comes from the preference, read on every
 /// open — a Settings change reaches the next ⌥⇧I instead of waiting for a
 /// relaunch, which is what a captured-at-launch value would do.

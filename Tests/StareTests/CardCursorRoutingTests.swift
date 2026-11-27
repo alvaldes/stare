@@ -13,15 +13,48 @@ final class CardCursorRoutingTests: XCTestCase {
     private let insideTheCard = CGPoint(x: 210, y: 275)
     private let offTheCard = CGPoint(x: 900, y: 900)
 
-    private func controller() -> OverlayController {
+    // The process state before the class ran, restored in teardown (the
+    // shared `LeaveAsFound` hooks — round four, cross-test contamination):
+    // the modes below activate the app and `set()` the crosshair, and the
+    // runner spins none of that away between classes —
+    // TextSelectionWindowTests shares this process and reads exactly that.
+    private var foundState: LeaveAsFound.State!
+    private var controller: OverlayController?
+
+    override func setUp() {
+        super.setUp()
+        foundState = LeaveAsFound.capture()
+    }
+
+    override func tearDown() {
+        // The overlay mode's own exit route, with no focus handoff behind it
+        // — `restoringFocus: false`, the spelling the mode switch uses — so
+        // it orders the standing panels out and hands the cursor to the
+        // arrow itself. The board's standing residue (its canvas panels, the
+        // toolbar, its monitors) left no lifetime seam here, so its class
+        // leaves through its own user-visible route, `toggleBoard` — the same
+        // close `openBoard`'s mode switch takes — whose focus restore
+        // re-asserts whichever app was already frontmost.
+        if let controller = self.controller {
+            if controller.isBoardActive { controller.toggleBoard() }
+            if controller.isActive { controller.deactivate(restoringFocus: false) }
+            self.controller = nil
+        }
+        LeaveAsFound.restore(foundState)
+        super.tearDown()
+    }
+
+    private func makeController() -> OverlayController {
         // xctest runs without an initialized NSApplication and the controller's
         // mode lifecycle talks to it, so create it here first.
         _ = NSApplication.shared
-        return OverlayController(captureService: CaptureService(), editorHandoff: { _, _ in })
+        let controller = OverlayController(captureService: CaptureService(), editorHandoff: { _, _ in })
+        self.controller = controller
+        return controller
     }
 
     func testWithNoModeOnScreenTheRuleIsOff() {
-        let controller = self.controller()
+        let controller = self.makeController()
         XCTAssertFalse(controller.isActive)
         XCTAssertFalse(controller.isBoardActive)
         XCTAssertFalse(
@@ -32,7 +65,7 @@ final class CardCursorRoutingTests: XCTestCase {
 
     func testTheDrawingModeSkipsTheCard() throws {
         try XCTSkipIf(NSScreen.screens.isEmpty, "no screen in this environment")
-        let controller = self.controller()
+        let controller = self.makeController()
         controller.activate()
         XCTAssertTrue(controller.isActive, "the drawing mode has to be the one under test")
 
@@ -50,7 +83,7 @@ final class CardCursorRoutingTests: XCTestCase {
     /// on that flag alone left the arrow missing exactly here.
     func testTheBoardModeSkipsTheCard() throws {
         try XCTSkipIf(NSScreen.screens.isEmpty, "no screen in this environment")
-        let controller = self.controller()
+        let controller = self.makeController()
         controller.toggleBoard()
         XCTAssertTrue(controller.isBoardActive, "the board has to be the one under test")
         XCTAssertFalse(controller.isActive, "and the board is not the overlay mode")
@@ -67,7 +100,7 @@ final class CardCursorRoutingTests: XCTestCase {
 
     func testNoCardsOnScreenMeansNoSkip() throws {
         try XCTSkipIf(NSScreen.screens.isEmpty, "no screen in this environment")
-        let controller = self.controller()
+        let controller = self.makeController()
         controller.activate()
         XCTAssertFalse(controller.cursorSkipsTheCard(at: insideTheCard, cardFrames: []))
     }

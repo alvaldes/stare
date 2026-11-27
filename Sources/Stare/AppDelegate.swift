@@ -23,6 +23,36 @@ final class SettingsShortcutMenuTarget: NSObject {
     }
 }
 
+/// Round four S8: the retained target the app menu's `Close Editor` (⌘W)
+/// item acts through. Why it exists: Stare's menu-less accessory app gets
+/// its key equivalents through the main menu's own key pass — before any
+/// responder — and the menu never carried ⌘W, so the keystroke died there
+/// and never reached the editor window at all. The route is the one the
+/// window's own close button takes: the target closes the CAPTURE EDITOR
+/// window only, the key window when the key window IS an editor's, through
+/// its `performClose` and so through the window's close tail. The Settings
+/// window, a floating panel and the app itself are never touched: the
+/// guard reads nil for every other key window and the item's action is a
+/// silent no-op for them.
+@MainActor
+final class EditorCloseShortcutTarget: NSObject {
+
+    /// The dispatch's own question: the key window when it is an editor's,
+    /// nil otherwise. Production reads `NSApp`; tests inject the witness.
+    private let keyEditorWindow: () -> CaptureEditorWindow?
+
+    init(keyEditorWindow: @escaping () -> CaptureEditorWindow? = {
+        NSApp.keyWindow as? CaptureEditorWindow
+    }) {
+        self.keyEditorWindow = keyEditorWindow
+        super.init()
+    }
+
+    @objc func closeEditorWindow(_ sender: Any?) {
+        keyEditorWindow()?.performClose(sender)
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let captureService = CaptureService()
     /// The single persisted owner of the app-wide preferences blob (T6
@@ -42,6 +72,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The retained target the app menu's Settings item acts through (S7):
     /// `NSApp.mainMenu` holds the item, the item holds the target.
     private var settingsMenuTarget: SettingsShortcutMenuTarget?
+    /// The retained target the app menu's `Close Editor` (⌘W) item acts
+    /// through (round four S8) — the same retention contract
+    /// `settingsMenuTarget` documents.
+    private var editorCloseTarget: EditorCloseShortcutTarget?
     /// The Settings shell now observes the single preferences owner and the
     /// shared permission model directly (T6 slice 2); it no longer goes
     /// through the overlay editor's mirrored state.
@@ -139,7 +173,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             MainActor.assumeIsolated { self?.openSettings() }
         }
         settingsMenuTarget = target
-        NSApp.mainMenu = Self.makeMainMenu(openSettings: target)
+        // Round four S8: ⌘W closes the editor window — the item rides the
+        // retained target that closes the CAPTURE EDITOR key window only, so
+        // the Settings window, a floating panel and the app itself stay out
+        // of it.
+        let editorTarget = EditorCloseShortcutTarget()
+        editorCloseTarget = editorTarget
+        NSApp.mainMenu = Self.makeMainMenu(openSettings: target, closeEditor: editorTarget)
 
         // Updates (T10/S6): the persisted schedule decides whether a check is
         // due at launch. The app is not notarized, so a check only informs and
@@ -227,15 +267,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// S7: the app's main menu, built here rather than nib-loaded. One
-    /// submenu: the app menu, carrying `Settings…` with ⌘, — the item whose
-    /// key equivalent the whole app's keyboard questions the shortcut with.
-    /// No window menu, no edit menus: nothing else in this app asked for
-    /// them, and this menu exists for the shortcut. Internal so the tests
-    /// build the same menu the app runs with and drive ⌘, against a real
-    /// witness target.
+    /// S7 (round three) and S8 (round four): the app's main menu, built here
+    /// rather than nib-loaded. The app menu carries `Settings…` with ⌘, and
+    /// — when a target is wired — `Close Editor` with ⌘W routed to the
+    /// editor-only target. No window menu, no edit menus: nothing else in
+    /// this app asked for them, and this menu exists for the shortcuts.
+    /// Internal so the tests build the same menu the app runs with and drive
+    /// ⌘, and ⌘W against real witness targets.
     @MainActor
-    static func makeMainMenu(openSettings: SettingsShortcutMenuTarget) -> NSMenu {
+    static func makeMainMenu(
+        openSettings: SettingsShortcutMenuTarget,
+        closeEditor: EditorCloseShortcutTarget? = nil
+    ) -> NSMenu {
         let appMenu = NSMenu(title: "Stare")
         appMenu.addItem(
             NSMenuItem(
@@ -245,6 +288,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         )
         for item in appMenu.items { item.target = openSettings }
+        // Round four S8: the editor's ⌘W closes ONLY the editor window — the
+        // item rides its own target, so nil-target validation (first
+        // responder → whatever window is key) can never hand ⌘W to the
+        // Settings window or a floating panel. Absent target: the menu is
+        // unchanged, the exact shape round three S7 built.
+        if let closeEditor {
+            let close = NSMenuItem(
+                title: "Close Editor",
+                action: #selector(EditorCloseShortcutTarget.closeEditorWindow(_:)),
+                keyEquivalent: "w")
+            close.target = closeEditor
+            appMenu.addItem(close)
+        }
         let appMenuItem = NSMenuItem()
         appMenuItem.submenu = appMenu
         let menu = NSMenu(title: "Main")

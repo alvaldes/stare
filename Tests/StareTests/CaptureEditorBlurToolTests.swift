@@ -239,6 +239,129 @@ final class CaptureEditorBlurToolTests: XCTestCase {
             "just outside the mark the raw surface keeps its black stripes — the blur redacts the mark, not the picture")
     }
 
+    // MARK: - Round four S9: the live blur samples what the compositor samples
+
+    /// S9 (verbatim): "he hecho algunos blur pero no todos salieron como
+    /// esperaba, algunos parecen un rect de color que no tiene nisiquiera
+    /// nada que ver con fondo donde esta haciendo blur. Pero algo
+    /// interesante es que al guardarlo si funciona" (odd/tasks/round-four.md).
+    ///
+    /// Cause, in the LIVE half only, exactly where the report puts it: the
+    /// compositor's `drawBlur` and the overlay's `drawBlur` hand
+    /// `MarkRenderer.redactionPatch` (and so `BlurEffect.crop`) the mark's
+    /// rect converted into the crop's own BOTTOM-LEFT-origin bitmap space —
+    /// `y = image.height − maxY × scale` — which `BlurEffect.crop` documents
+    /// and demands. The editor's live draw handed it the space's TOP-DOWN
+    /// view mapping untouched, so the preview sampled the VERTICALLY
+    /// MIRRORED strip; over this fixture — striped above, flat red below —
+    /// that is the flat unrelated colour the owner's screenshots show. The
+    /// saved file rides the real compositor and was already correct.
+
+    /// 100×100: the top half striped white with thin black stripes, the
+    /// bottom half solid red — two strips the mirroring swaps.
+    private static func asymmetricFixture() -> CGImage? {
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+            let context = CGContext(
+                data: nil, width: 100, height: 100, bitsPerComponent: 8,
+                bytesPerRow: 0, space: space,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        // Bitmap coordinates, bottom-left origin: red is the visible BOTTOM
+        // half, the stripes the visible TOP half.
+        context.setFillColor(CGColor(srgbRed: 1, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 100, height: 50))
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 50, width: 100, height: 50))
+        context.setFillColor(CGColor(gray: 0, alpha: 1))
+        for stripe in stride(from: 10, to: 90, by: 10) {
+            context.fill(CGRect(x: stripe, y: 50, width: 2, height: 50))
+        }
+        return context.makeImage()
+    }
+
+    private static func colour(_ rep: NSBitmapImageRep, x: Int, y: Int) -> NSColor? {
+        rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB)
+    }
+
+    /// A canvas at exactly ONE pixel per view point, so the live raster, the
+    /// patch pixels and the compositor's output read on the same grid.
+    private func makeOneToOneEditor(image: CGImage) -> (canvas: CaptureEditorCanvas, window: NSWindow) {
+        let canvas = CaptureEditorCanvas(image: image)
+        canvas.state = EditorState()
+        canvas.state?.redactionStyle = .blur
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 100, height: 100),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.confineToPrimaryScreen()
+        window.contentView = canvas
+        window.orderFrontRegardless()
+        return (canvas, window)
+    }
+
+    /// The LIVE preview's patch matches the compositor's own output at the
+    /// same scale inside the mark, and never reads the mirrored strip's flat
+    /// red: the case the owner's screenshots show.
+    func testTheLiveBlurOverAnAsymmetricSurfaceMatchesTheCompositorSOutput() throws {
+        let image = try XCTUnwrap(Self.asymmetricFixture())
+        let editor = makeOneToOneEditor(image: image)
+        defer { editor.window.orderOut(nil) }
+        // NSEvent's location is WINDOW base coordinates (bottom-left origin);
+        // the mark's VIEW rect (30..70 × 8..38, y downward) is what the drag
+        // below delivers: fully inside the striped top half. The correct
+        // sample under it is the blur of the stripes; the mirrored strip the
+        // bug reads is the flat red half.
+        try drawDrag(
+            editor.canvas, window: editor.window,
+            from: CGPoint(x: 30, y: 92), to: CGPoint(x: 70, y: 42))
+        let mark = try XCTUnwrap(editor.canvas.marks.first, "the drag minted the mark")
+        XCTAssertEqual(mark.tool, .blur)
+        XCTAssertEqual(mark.redactionStyle, .blur, "the blur twin is the case under test")
+
+        let live = try renderedLive(editor.canvas)
+        // The compositor's own output — the path the saved file takes, at
+        // the same 1-px-per-point scale: the truth the owner reports correct.
+        let composed = try XCTUnwrap(editor.canvas.composedImage(), "the save side composes")
+        let composedRep = NSBitmapImageRep(cgImage: composed)
+
+        var drifted: String = ""
+        var reds: String = ""
+        for x in stride(from: 34, to: 66, by: 4) {
+            for y in stride(from: 14, to: 32, by: 4) {
+                let a = try XCTUnwrap(Self.colour(live, x: x, y: y))
+                let b = try XCTUnwrap(Self.colour(composedRep, x: x, y: y))
+                if abs(a.redComponent - b.redComponent) > 0.06 ||
+                    abs(a.greenComponent - b.greenComponent) > 0.06 ||
+                    abs(a.blueComponent - b.blueComponent) > 0.06 {
+                    drifted += "(\(x),\(y)) live=\(a) compositor=\(b); "
+                }
+                if a.redComponent - min(a.greenComponent, a.blueComponent) > 0.35 {
+                    reds += "(\(x),\(y)) live=\(a); "
+                }
+            }
+        }
+        XCTAssertTrue(
+            drifted.isEmpty,
+            "S9: the live patch must match the compositor's own output at the same scale inside the mark — mismatches: \(drifted)")
+        XCTAssertEqual(
+            reds, "",
+            "S9: the mirrored strip's flat colour must never be the live patch's sample — red pixels: \(reds)")
+    }
+
+    /// The same short mouse chain the committed tests drive: a blur drag
+    /// from `from` to `to`, in canvas view points.
+    private func drawDrag(_ canvas: CaptureEditorCanvas, window: NSWindow, from: CGPoint, to: CGPoint) throws {
+        canvas.state?.tool = .blur
+        func event(_ type: NSEvent.EventType, at point: CGPoint) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.mouseEvent(
+                with: type, location: point, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+                clickCount: 1, pressure: 1))
+        }
+        canvas.mouseDown(with: try event(.leftMouseDown, at: from))
+        canvas.mouseDragged(with: try event(.leftMouseDragged, at: to))
+        canvas.mouseUp(with: try event(.leftMouseUp, at: to))
+    }
+
     private func renderedLive(_ canvas: CaptureEditorCanvas) throws -> NSBitmapImageRep {
         let rep = try XCTUnwrap(NSBitmapImageRep(
             bitmapDataPlanes: nil, pixelsWide: Int(canvas.bounds.width),
