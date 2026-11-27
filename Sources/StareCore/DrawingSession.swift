@@ -86,7 +86,7 @@ extension Stroke {
             // The same leniency for the spotlight's shape: a document that
             // never named it (and every legacy mark) decodes as the shipped
             // ellipse — the look the field never carried explicitly.
-            spotlightShape: stroke.spotlightShape.flatMap(SpotlightShape.init(rawValue:)) ?? .ellipse
+            spotlightShape: stroke.spotlightShape.flatMap(SpotlightShape.init(rawValue:)) ?? .ellipse  // legacy: a mark saved before shapes were offered was an ellipse
         )
     }
 
@@ -222,7 +222,7 @@ public struct DrawingSession: Equatable, Sendable {
         arrowHead: ArrowHeadStyle = .open,
         now: Date = Date(),
         redactionStyle: RedactionStyle = .blur,
-        spotlightShape: SpotlightShape = .ellipse
+        spotlightShape: SpotlightShape = .roundedRectangle
     ) -> Stroke {
         guard !tool.isSelection else {
             return Stroke(tool: tool, ink: ink, points: [point])

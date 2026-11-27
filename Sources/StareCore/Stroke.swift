@@ -54,11 +54,12 @@ public enum SpotlightShape: String, CaseIterable, Sendable, Codable {
     /// into the region's half sides so a small region never inverts).
     public static let roundedRectRadius: CGFloat = 16
 
-    /// S4: the shapes the control offers, in menu order. Exactly two — the
-    /// shipped ellipse first, the rounded rectangle beside it. `.rectangle`
-    /// is deliberately absent: not an option any more, but still an
-    /// `allCases` member every legacy mark may carry.
-    public static let menuChoices: [SpotlightShape] = [.ellipse, .roundedRectangle]
+    /// The shapes the control offers. One, since the owner's call: "puedo
+    /// quedarme solo con el rect porque el elipse ya no me gusta". `.ellipse`
+    /// and `.rectangle` are deliberately absent — not options any more, but
+    /// still `allCases` members every legacy mark may carry, and a control
+    /// with a single choice offers no choice, so the button carries no menu.
+    public static let menuChoices: [SpotlightShape] = [.roundedRectangle]
 
     /// The name the spotlight button's help and context menu print for a
     /// shape.
@@ -116,7 +117,7 @@ public struct Stroke: Identifiable, Equatable, Sendable {
     /// discipline `redactionStyle` keeps. S4 no longer offers the plain
     /// rectangle, but a mark drawn with it before the withdrawal keeps
     /// decoding and rendering as the rectangle it was drawn as.
-    public var spotlightShape: SpotlightShape = .ellipse
+    public var spotlightShape: SpotlightShape = .roundedRectangle
 
     public init(
         id: UUID = UUID(),

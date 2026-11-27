@@ -1227,7 +1227,7 @@ final class SpotlightToolButtonView: NSView {
             self.host = host
             addSubview(host)
         }
-        toolTip = accessText(prefix: "right-click changes the shape: \(shape.displayName)")
+        toolTip = accessText(prefix: "right-click shows the shape: \(shape.displayName)")
         setAccessibilityLabel(accessibilityText)
     }
 
@@ -1241,7 +1241,7 @@ final class SpotlightToolButtonView: NSView {
     }
 
     private var accessibilityText: String {
-        accessText(prefix: "right-click changes the shape: \(state.spotlightShape.displayName)")
+        accessText(prefix: "right-click shows the shape: \(state.spotlightShape.displayName)")
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -1254,6 +1254,9 @@ final class SpotlightToolButtonView: NSView {
     /// Built fresh per invocation so the checkmark is the armed truth at the
     /// moment the user opens it.
     override func menu(for event: NSEvent?) -> NSMenu? {
+        // One shape left is still worth a menu: it names the shape the button
+        // draws, checkmarked, instead of promising a choice that no longer
+        // exists. The machinery takes a second shape the day one returns.
         let menu = NSMenu()
         for shape in SpotlightShape.menuChoices {
             let item = NSMenuItem(

@@ -84,7 +84,7 @@ final class EditorState: ObservableObject {
     /// shipped ellipse that has always been there. It rides every minting
     /// site: the drawing overlay and the capture editor stamp marks with the
     /// state's shape.
-    @Published var spotlightShape: SpotlightShape = .ellipse
+    @Published var spotlightShape: SpotlightShape = .roundedRectangle
     /// The router the drawing surfaces resolve keys with: always rebuilt from
     /// the live map, so the map the Settings pane edits is the map that
     /// routes.

@@ -89,15 +89,15 @@ final class CaptureSpotlightShapeTests: XCTestCase {
             menu.items.first { ($0.representedObject as? SpotlightShape) == shape })
     }
 
-    func testTheSpotlightButtonSContextMenuOffersExactlyTheTwoShapesWithTheArmedOneChecked() throws {
+    func testTheSpotlightButtonSContextMenuNamesTheOneShapeItDraws() throws {
         let (window, state) = try hostedDrawingBar()
         defer { window.orderOut(nil) }
         let button = try XCTUnwrap(
             spotlightButton(in: window.contentView!),
             "the drawing bar must carry the spotlight's own button; tree: \(dumpTree(window.contentView!))")
 
-        // The shipped armed shape is the ellipse — today's spotlight.
-        XCTAssertEqual(state.spotlightShape, .ellipse)
+        // The shipped armed shape is the rounded rectangle, the one the owner kept.
+        XCTAssertEqual(state.spotlightShape, .roundedRectangle)
         let press = try XCTUnwrap(NSEvent.mouseEvent(
             with: .leftMouseDown, location: CGPoint(x: button.bounds.midX, y: 5),
             modifierFlags: [], timestamp: 0, windowNumber: button.window?.windowNumber ?? 0,
@@ -105,11 +105,11 @@ final class CaptureSpotlightShapeTests: XCTestCase {
         let menu = try XCTUnwrap(button.menu(for: press))
         XCTAssertEqual(
             menu.items.map(\.title),
-            [SpotlightShape.ellipse.displayName, SpotlightShape.roundedRectangle.displayName],
-            "exactly the two offered shapes, in menu order")
+            [SpotlightShape.roundedRectangle.displayName],
+            "the one shape it draws, named in the menu")
         XCTAssertEqual(
             menu.items.first { $0.state == .on }?.representedObject as? SpotlightShape,
-            .ellipse, "the armed shape is the checked one")
+            .roundedRectangle, "the armed shape is the checked one")
         XCTAssertNil(
             menu.items.first { ($0.representedObject as? SpotlightShape) == .rectangle },
             "the plain rectangle is withdrawn from the offer")
@@ -145,7 +145,7 @@ final class CaptureSpotlightShapeTests: XCTestCase {
 
         try click(button)
         XCTAssertEqual(state.tool, .spotlight, "the plain click arms the tool")
-        XCTAssertEqual(state.spotlightShape, .ellipse, "and names the armed shape nothing")
+        XCTAssertEqual(state.spotlightShape, .roundedRectangle, "and names the armed shape nothing")
     }
 
     // MARK: - The same control on the capture editor's chrome
@@ -167,7 +167,7 @@ final class CaptureSpotlightShapeTests: XCTestCase {
         let button = try XCTUnwrap(
             spotlightButton(in: content),
             "the editor's chrome carries the same spotlight button name")
-        XCTAssertEqual(content.state.spotlightShape, .ellipse)
+        XCTAssertEqual(content.state.spotlightShape, .roundedRectangle)
         let press = try XCTUnwrap(NSEvent.mouseEvent(
             with: .leftMouseDown, location: CGPoint(x: button.bounds.midX, y: 5),
             modifierFlags: [], timestamp: 0, windowNumber: button.window?.windowNumber ?? 0,
@@ -175,9 +175,9 @@ final class CaptureSpotlightShapeTests: XCTestCase {
         let menu = try XCTUnwrap(button.menu(for: press))
         XCTAssertEqual(
             menu.items.map(\.title),
-            [SpotlightShape.ellipse.displayName, SpotlightShape.roundedRectangle.displayName])
+            [SpotlightShape.roundedRectangle.displayName])
         XCTAssertEqual(
-            menu.items.first { $0.state == .on }?.representedObject as? SpotlightShape, .ellipse)
+            menu.items.first { $0.state == .on }?.representedObject as? SpotlightShape, .roundedRectangle)
         let pick = try shapeMenu(item: .roundedRectangle, on: button)
         pick.target!.perform(try XCTUnwrap(pick.action), with: pick)
         XCTAssertEqual(content.state.spotlightShape, .roundedRectangle)

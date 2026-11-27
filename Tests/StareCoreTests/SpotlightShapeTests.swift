@@ -134,8 +134,9 @@ final class SpotlightShapeTests: XCTestCase {
     /// rectangle is no longer offered. The three-shape ⌥-click cycle pin of
     /// the last round is re-derived by this test and by the rectangle's
     /// survivorship test below.
-    func testTheControlOffersExactlyTheTwoShapesTheOwnerWants() {
-        XCTAssertEqual(SpotlightShape.menuChoices, [.ellipse, .roundedRectangle])
+    func testTheControlOffersTheOneShapeTheOwnerKept() {
+        // The owner: "puedo quedarme solo con el rect porque el elipse ya no me gusta".
+        XCTAssertEqual(SpotlightShape.menuChoices, [.roundedRectangle])
         XCTAssertFalse(
             SpotlightShape.menuChoices.contains(.rectangle),
             "the plain rectangle is withdrawn from the offer")
@@ -181,7 +182,7 @@ final class SpotlightShapeTests: XCTestCase {
         plain.begin(at: Self.region.from, tool: .spotlight, ink: .red)
         plain.extend(to: Self.region.to)
         plain.commit()
-        XCTAssertEqual(plain.strokes.first?.spotlightShape, .ellipse)
+        XCTAssertEqual(plain.strokes.first?.spotlightShape, .roundedRectangle)
     }
 
     /// The style keys' discipline held (S15): only the tool a property belongs
