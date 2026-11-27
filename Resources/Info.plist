@@ -4,26 +4,8 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
-	<key>CFBundleExecutable</key>
-	<string>Stare</string>
-	<key>CFBundleIdentifier</key>
-	<string>dev.alvaldes.stare</string>
-	<key>CFBundleIconFile</key>
-	<string>AppIcon</string>
-	<key>CFBundleInfoDictionaryVersion</key>
-	<string>6.0</string>
-	<key>CFBundleName</key>
-	<string>Stare</string>
 	<key>CFBundleDisplayName</key>
 	<string>Stare</string>
-	<key>CFBundlePackageType</key>
-	<string>APPL</string>
-	<!-- Round four S6: Finder's "Open With". The common image types are
-	     declared at rank Alternate — Finder OFFERS "Open With Stare" while
-	     never stealing another app's default association. An opened file
-	     lands in the editor through the one openCaptureEditor handoff, and
-	     the editor window's existence is what puts Stare in the Dock; the
-	     launch contract (LSUIElement, the accessory menu-bar app) stays. -->
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
@@ -75,8 +57,20 @@
 			</array>
 		</dict>
 	</array>
+	<key>CFBundleExecutable</key>
+	<string>Stare</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>dev.alvaldes.stare</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Stare</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.3.0</string>
+	<string>0.4.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>

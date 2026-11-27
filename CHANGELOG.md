@@ -4,7 +4,7 @@ Each `## <version>` section becomes that version's GitHub release notes
 (`Scripts/release.sh --upload`). Keep each bullet one short line about what a
 user gets.
 
-## Unreleased
+## 0.4.0
 
 - Bar: the tools that are not the main ones move behind a more button (three dots), so the bar stops growing — most of all when it stands vertical. A fresh install keeps the pointer, pen, highlighter, arrow, rectangle, ellipse, text and eraser on the bar, and line, numbered step, blur, spotlight and laser hide behind it: click it and a small panel opens beside the bar, toward the middle of the screen instead of off the edge it is docked to; pick a tool and the panel closes with that tool's icon left on the button, so the bar always says which tool is armed. Every tool keeps its own key wherever it lives, and Settings decides what sits on the bar and what hides behind the button
 - Settings: the pool is the bar's hidden section now, not a shelf of discards — the **More tools** card lists what hides behind the more button, says so, and is never empty on a fresh install, with a roomy "Hide it here" target to drop a bar tool onto; the bar preview draws the same button the real bar draws
