@@ -2202,9 +2202,6 @@ class OverlayView: NSView {
             in: context,
             opacity: stroke.opacity(at: now, laserLifetime: session.laserLifetime)
         )
-        if stroke.tool == .number {
-            withMarkRotation(stroke, in: context) { drawStepNumber(stroke) }
-        }
     }
 
     /// Live spotlight: everything outside the mark's region dims, over the
@@ -2332,29 +2329,6 @@ class OverlayView: NSView {
         let width = (text as NSString).size(withAttributes: [.font: textFont]).width
         guard width > 0.001 else { return textFont }
         return NSFont.systemFont(ofSize: base * size.width / width, weight: .regular)
-    }
-
-    private func drawStepNumber(_ stroke: Stroke) {
-        guard let number = stroke.stepNumber, let center = stroke.points.first else { return }
-
-        let text = "\(number)" as NSString
-        // The digit scales with the badge it sits on (advisory A).
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 15 * stroke.badgeScale, weight: .semibold),
-            .foregroundColor: Self.numberColour(for: stroke.ink),
-        ]
-        let size = text.size(withAttributes: attributes)
-        text.draw(
-            at: CGPoint(x: center.x - size.width / 2, y: center.y - size.height / 2),
-            withAttributes: attributes
-        )
-    }
-
-    static func numberColour(for ink: Ink) -> NSColor {
-        switch ink {
-        case .yellow, .white: .black
-        default: .white
-        }
     }
 }
 

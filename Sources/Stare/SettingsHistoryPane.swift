@@ -19,9 +19,13 @@ struct HistoryPane: View {
     /// history alone: the preview card is the only thing that needs it, and a
     /// test that renders the list must not reach the user's real preferences.
     private let preferences: PreferencesModel?
-    /// Bumped after Clear so the list rebuilds from the store it just emptied:
-    /// the store is not observable, and a pane that only reads it at body time
-    /// keeps showing the captures it no longer holds.
+    /// Bumped after Clear, and now by the store's rewrite announcement when
+    /// an edit save lands elsewhere (editor-save-in-place, the pane's half):
+    /// the store is not observable and a rewritten entry row is VALUE-EQUAL
+    /// — same id, same date, a cropless save changes nothing else — so only
+    /// a re-key from a fresh revision makes the standing-open pane re-read.
+    /// One bump, one `.id`, two causes: the pane's own Clear, and the one
+    /// announcement below, from the store every history surface reads.
     @State private var historyRevision = 0
 
     init(
@@ -51,6 +55,15 @@ struct HistoryPane: View {
                     .id(historyRevision)
             }
             .settingsSingleColumn()
+        }
+        // A rewrite announced by the store — the editor's in-place save (the
+        // open-sheet rule) — runs the SAME re-read the pane's own Clear runs:
+        // the bump re-keys the captures card (the placement the sheet's
+        // `.id(model.revision)` keys the grid), so the rows rebuild and the
+        // thumbnails re-read the store, whose cache the rewrite evicted,
+        // the moment the save lands.
+        .onReceive(store.rewriteAnnounced) { _ in
+            historyRevision &+= 1
         }
     }
 

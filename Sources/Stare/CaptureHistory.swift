@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import StareCore
 
@@ -182,6 +183,18 @@ final class CaptureHistoryStore {
 
     // MARK: In-place rewrite (editor-save-in-place S2)
 
+    /// The ONE announcement an in-place rewrite makes (editor-save-in-place,
+    /// the Settings pane's half): the store is not observable, and a surface
+    /// standing open cannot see an edit save otherwise — the rewritten entry
+    /// row is VALUE-EQUAL (same id, same date; a cropless save changes
+    /// nothing else), so only a re-key from a fresh revision could re-read
+    /// it. A successful rewrite carries the rewritten entry (now at the
+    /// front); a failed one announces nothing. The Settings history pane
+    /// re-reads on exactly this, running the same revision bump its Clear
+    /// re-read already uses — one announcement from the one store every
+    /// surface reads, no second observation system.
+    let rewriteAnnounced = PassthroughSubject<PersistedCaptureEntry, Never>()
+
     /// The entry whose session-cached image IS `image` — the one the history
     /// sheet's Edit hands the editor (the panel loads through `image(for:)`,
     /// which returns the cached instance), so the one legitimate match is
@@ -246,6 +259,12 @@ final class CaptureHistoryStore {
         // owner's first report.)
         imageCache.removeValue(forKey: written.id)
         persistIndex()
+        // The announcement the pane re-reads on: `entries[0]` is the
+        // rewritten entry, already moved to the front. Produced on the
+        // caller's thread — both production callers rewrite on the main
+        // thread (the editor's seam owns that hop, the pane's own mutations
+        // are main) — so a main-actor subscriber reads it as-is.
+        rewriteAnnounced.send(entries[0])
         Diag.log("capture history: rewrote \(written.fileName) \(image.width)x\(image.height) front=\(index == 0 ? 0 : 1)")
         return true
     }

@@ -232,4 +232,66 @@
   owner rather than widened into. _History_: L5's preview half superseded
   in part — its re-read seam and revision stamp stand; only the cache and
   the identity PLACEMENT halves above are new.
+- **L7** (the duplicate-digit removal, 2026-11-27). The duplicate lived in
+  `OverlayView.render` (Sources/Stare/OverlayView.swift): after calling
+  `MarkRenderer.draw` it still ran its own AppKit layer —
+  `if stroke.tool == .number { withMarkRotation(...) { drawStepNumber(stroke) } }`
+  — drawing a second digit (NSFont systemFont 15·badgeScale **semibold**,
+  placed via `NSString.draw(at:)` at `center − size/2`) over the renderer's
+  CoreText glyph (regular weight, ascent/descent-centred), both inside the
+  same rotation. The `.number` branch, `drawStepNumber(_:)` and the now-unused
+  `OverlayView.numberColour(for:)` were deleted — the ball, its ink, its size
+  and its position are untouched (they come from the same `MarkRenderer.draw`
+  call that stays), and the digit still appears, from the renderer.
+  _The numbers_: live-preview pixels vs a direct `MarkRenderer.draw` of the
+  same mark, sampled in the digit's window (±8 pt around the mark centre at
+  2×): worst per-channel delta **252/255** (black second-glyph pixels over the
+  yellow ball) before the fix; **0** pixels differ after it (tolerance 8).
+  Pinned by `Tests/StareTests/OverlayNumberTests.swift::
+testTheOverlayDrawsExactlyOneDigitAtTheMarksCentreFromTheRenderer` — renders
+  the real `OverlayView`, asserts digit pixels present at the mark's centre AND
+  that the live pixels agree with a one-glyph `MarkRenderer.draw`, so no second
+  glyph can return. Focused runs: `swift test --filter "MarkRendererTests"` —
+  exit 0, 22 tests, 0 failures; `swift test --filter "Overlay|Draw"` — exit 0,
+  StareTests 32 + StareCoreTests 108 = 140 tests, 0 failures (includes the new
+  OverlayNumberTests test). Full suite NOT run. Commit cells untouched.
 
+- **L8** (the Settings pane's half, 2026-11-27). _Why the pane was stale._ A
+  Settings window standing open kept showing the old thumbnail after an
+  in-place save: `HistoryPane` reads the (non-observable) store only at body
+  time, and the rewrite's entry row is VALUE-EQUAL — same id, same date,
+  and a cropless save changes no field — so nothing re-keyed the pane's
+  captures card; its `historyRevision` bump ran only for the pane's own
+  Clear (the sheet had L5–L6; the pane had no input at all). _The
+  mechanism_ (no second observation system, no poll): the store — the ONE
+  source both history surfaces read — now ANNOUNCES a successful rewrite
+  (`CaptureHistoryStore.rewriteAnnounced`, a Combine subject carrying the
+  rewritten entry, nothing on a refused rewrite; the entry carries its
+  refreshed pixel size and its front position). The pane subscribes with
+  ONE `.onReceive(store.rewriteAnnounced)` that runs the SAME
+  `historyRevision &+= 1` its Clear re-read already uses — the existing
+  single `.id(historyRevision)` on the captures card re-keys it (the
+  placement L6 pinned for the sheet), the rows rebuild, and
+  `store.image(for:)` re-decodes the file whose cache line `rewrite`
+  evicted, so the row's pixels and its front position arrive the moment
+  the save lands. Pinned in `Tests/StareTests/SettingsHistoryPaneStoreTests.swift`:
+  `testARewriteReachesAStandingOpenPaneWithoutRecreatingIt` renders the
+  REAL pane once (one hosting view, one pane instance) and reads its
+  pixels before and after a rewrite through the store — green capture →
+  red rewrite, same 24×16 (value-equal entry), moved to the front beside
+  the untouched magenta row; the RED pixels and the front position must be
+  in the pane's own pixels after the hop, the old green gone. Canaries
+  naming their report: `testCanaryThePanesReReadIsTheStoreRewriteAnnouncementRunningItsClearRevisionBump`
+  (the ONE `.onReceive`, exactly one `.id(historyRevision)`, the store's
+  `rewriteAnnounced.send`) and `testTheStoreAnnouncesOnlySuccessfulRewritesWithTheRewrittenEntry`
+  (the refused rewrite announces and writes nothing). _The numbers_: RED
+  `swift test --filter "SettingsHistoryPane"` — exit 1, Executed 5 tests,
+  with 3 failures (the pane's pixels stayed green; both canary strings
+  absent). GREEN runs, exactly the two focused commands: `swift test
+  --filter "SettingsHistoryPane"` > .build/f1.log — exit 0, Executed 6
+  tests, with 0 failures; `swift test --filter "CaptureHistory"` >
+  .build/f2.log — exit 0, 77 tests, 0 failures (the Rewrite store tests,
+  CaptureHistoryPanelTests 21 and every other CaptureHistory suite
+  untouched and passing — the PRESERVE half: Clear still empties through
+  the same bump, Open unchanged, rewrite's store contract unchanged). Full
+  suite NOT run. Commit cells untouched.
