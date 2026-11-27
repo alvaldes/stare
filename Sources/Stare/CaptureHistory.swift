@@ -180,6 +180,56 @@ final class CaptureHistoryStore {
         try? FileManager.default.removeItem(at: indexURL)
     }
 
+    // MARK: In-place rewrite (editor-save-in-place S2)
+
+    /// The entry whose session-cached image IS `image` — the one the history
+    /// sheet's Edit hands the editor (the panel loads through `image(for:)`,
+    /// which returns the cached instance), so the one legitimate match is
+    /// that same instance: no pixel scanning, no guessing for an image the
+    /// store has never handed out (an edited variant, an evicted capture),
+    /// which callers treat as no entry.
+    func entry(for image: CGImage) -> PersistedCaptureEntry? {
+        guard let (id, _) = imageCache.first(where: { $1 === image }) else { return nil }
+        return entries.first { $0.id == id }
+    }
+
+    /// Rewrites ONE entry's stored PNG in place (editor-save-in-place S2):
+    /// the file keeps its name, the entry keeps its id and date, and only
+    /// the pixels — and the pixel size, when the edit cropped it — change,
+    /// so a save can never become a second entry or a second file. The
+    /// session cache is refreshed with the saved pixels, so the next panel
+    /// line and the next Edit open carry what the user now has. The index
+    /// is persisted, so the refresh survives the session. False means "the
+    /// store does not hold that id, or the write failed" — the caller
+    /// decides the fallback.
+    @discardableResult
+    func rewrite(entryID: UUID, with image: CGImage) -> Bool {
+        guard let index = entries.firstIndex(where: { $0.id == entryID }),
+            let data = CaptureFile.data(for: image, format: .png)
+        else {
+            Diag.log("capture history: rewrite ignored; unknown entry")
+            return false
+        }
+        do {
+            try data.write(to: capturesDirectory.appendingPathComponent(entries[index].fileName))
+        } catch {
+            Diag.log("capture history: rewrite failed: \(error)")
+            return false
+        }
+        let current = entries[index]
+        entries[index] = PersistedCaptureEntry(
+            id: current.id,
+            date: current.date,
+            pixelWidth: image.width,
+            pixelHeight: image.height,
+            fileName: current.fileName
+        )
+        imageCache[current.id] = image
+        persistIndex()
+        Diag.log("capture history: rewrote \(current.fileName) \(image.width)x\(image.height)")
+        return true
+    }
+
     // MARK: Index
 
     /// The stored file's URL only when `fileName` names a file directly

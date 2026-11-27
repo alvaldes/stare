@@ -22,6 +22,40 @@ struct CaptureEditorIdentity: Equatable {
     static let unknown = CaptureEditorIdentity(app: nil, displayName: nil)
 }
 
+/// Where an editor's `Save` overwrites (editor-save-in-place S1/S2): the
+/// provenance the opening hands it, threaded through the ONE
+/// `openCaptureEditor` handoff the overlay keeps. Save overwrites the image
+/// being edited; `Save As…` — the app's existing export through the save
+/// panel — stays beside it and keeps its copy behaviour untouched.
+enum CaptureEditorSaveTarget: Equatable {
+    /// A file on disk (the Finder's Open With, or a shortcut that hands a
+    /// URL): Save writes that file, in its own format, through the writer
+    /// the app already uses for captures.
+    case storedFile(URL)
+    /// A persisted history entry (the history sheet's Edit): Save rewrites
+    /// that entry's stored PNG and refreshes the entry — never a second
+    /// entry or a second file.
+    case historyEntry(UUID)
+    /// A delivered capture (the card's click, a history's reopen): Save
+    /// takes the folder save a capture would take when a folder destination
+    /// is configured; a clipboard destination has nothing to overwrite, so
+    /// the save falls back to the Save As panel and the button never lies.
+    case capture
+}
+
+/// What one in-place `Save` did — the outcome the chrome button, the ⌘S
+/// menu route and the tests share.
+enum CaptureEditorSaveOutcome: Equatable {
+    case savedOverFile(URL)
+    case savedHistoryEntry
+    case savedToFolder(URL)
+    /// Nothing to overwrite: the Save As panel was asked for instead.
+    case savePanelRequested
+    /// There was something to overwrite but the write said no — the honest
+    /// failure the button's hint reports.
+    case refused
+}
+
 /// Editing a capture: the image with the tools on top, crop, copy and save.
 /// The capture arrives with its marks already composed, so this is a second layer
 /// over a real picture. The save panel's default name and format come from the
@@ -70,9 +104,17 @@ final class CaptureEditorController {
         NSApp?.setActivationPolicy(Self.dockActivationPolicy(forEditorCount: windows.count))
     }
 
+    /// The history-rewrite seam (editor-save-in-place S2): the ONE
+    /// `CaptureHistoryStore` call an in-place history save makes, wired once
+    /// by the overlay to the shared store, so the save can never add a
+    /// second entry — and every editor window this controller opens routes
+    /// its entry target through the same call. Tests inject a witness.
+    var rewriteHistoryEntry: ((CGImage, UUID) -> Bool)?
+
     func open(
         image: CGImage, capture: CapturePreference = .standard, redactionStyle: RedactionStyle = .blur,
-        app: String? = nil, displayName: String? = nil
+        app: String? = nil, displayName: String? = nil,
+        saveTarget: CaptureEditorSaveTarget = .capture
     ) {
         let window = CaptureEditorWindow(
             image: image,
@@ -80,7 +122,9 @@ final class CaptureEditorController {
             redactionStyle: redactionStyle,
             app: app,
             displayName: displayName,
-            onDeliver: onDeliver
+            onDeliver: onDeliver,
+            saveTarget: saveTarget,
+            rewriteHistoryEntry: rewriteHistoryEntry
         ) { [weak self] closing in
             self?.editorWindowDidClose(closing)
         }
@@ -115,11 +159,14 @@ final class CaptureEditorWindow: NSWindow {
         app: String? = nil,
         displayName: String? = nil,
         onDeliver: ((CGImage) -> Void)? = nil,
+        saveTarget: CaptureEditorSaveTarget = .capture,
+        rewriteHistoryEntry: ((CGImage, UUID) -> Bool)? = nil,
         onClose: @escaping (CaptureEditorWindow) -> Void
     ) {
         let content = CaptureEditorContent(
             image: image, capture: capture, redactionStyle: redactionStyle,
-            app: app, displayName: displayName)
+            app: app, displayName: displayName,
+            saveTarget: saveTarget, rewriteHistoryEntry: rewriteHistoryEntry)
         content.onDeliver = onDeliver
         super.init(
             contentRect: CGRect(origin: .zero, size: content.preferredSize),
@@ -188,6 +235,22 @@ final class CaptureEditorContent: NSView {
     private let capture: CapturePreference
     /// Where a composed variant goes once the user copies or saves it (L7).
     var onDeliver: ((CGImage) -> Void)?
+    /// The overwrite target this editor's `Save` acts on (editor-save-in-place
+    /// S1/S2), threaded in by the opening handoff. `.capture` is the default:
+    /// the folder save a capture would take, falling back to the Save As
+    /// panel when the destination has nothing to overwrite.
+    var saveTarget: CaptureEditorSaveTarget
+    /// The history-rewrite seam (S2): the ONE `CaptureHistoryStore` call an
+    /// in-place history save makes, wired by the overlay to the shared store
+    /// so a save can never mint a second entry or a second file. nil means
+    /// the editor cannot honour a history target — an honest refusal, never
+    /// a crash. Tests inject a witness here instead.
+    var rewriteHistoryEntry: ((CGImage, UUID) -> Bool)?
+    /// The Save As launcher's seam (S3): production leaves nil, which runs
+    /// the ONE panel `savePanel(preference:onSaved:)` drives with today's
+    /// exact delivery; a test points this at a witness so a Save As (and the
+    /// no-overwrite fallback) never opens a real panel.
+    var presentSaveAsPanel: ((CapturePreference) -> Void)?
     /// The edge the chrome docks at inside this window (S4): ALWAYS the top.
     /// The orientation snapshot is withdrawn and the editor reads nothing
     /// stored — the palette is one horizontal row at the top of the editor
@@ -209,7 +272,9 @@ final class CaptureEditorContent: NSView {
 
     init(
         image: CGImage, capture: CapturePreference, redactionStyle: RedactionStyle,
-        app: String? = nil, displayName: String? = nil
+        app: String? = nil, displayName: String? = nil,
+        saveTarget: CaptureEditorSaveTarget = .capture,
+        rewriteHistoryEntry: ((CGImage, UUID) -> Bool)? = nil
     ) {
         self.capture = capture
         // The state is created once, detached (T1/S1's read-only contract):
@@ -224,6 +289,8 @@ final class CaptureEditorContent: NSView {
         // The save panel renders and writes through it — see the canvas's
         // `fileNameContext`, the one place both paths keep agreeing on.
         canvas.fileNameContext = CaptureEditorIdentity(app: app, displayName: displayName)
+        self.saveTarget = saveTarget
+        self.rewriteHistoryEntry = rewriteHistoryEntry
         chrome = NSHostingView(
             rootView: EditorChrome(
                 state: state,
@@ -233,6 +300,7 @@ final class CaptureEditorContent: NSView {
                 onCrop: {},
                 onCopy: {},
                 onSave: {},
+                onSaveInPlace: {},
                 onClose: {}
             )
         )
@@ -265,14 +333,13 @@ final class CaptureEditorContent: NSView {
                 self.canvas.copyToPasteboard()
                 self.deliverComposed()
             },
-            onSave: { [weak self] in
+            // Save As keeps its panel + delivery contract untouched (S1): the
+            // ONE panel route both it and the no-overwrite fallback of Save
+            // hand through is `launchSaveAsPanel`.
+            onSave: { [weak self] in self?.launchSaveAsPanel() },
+            onSaveInPlace: { [weak self] in
                 guard let self else { return }
-                let preference = self.capture
-                // Delivery waits for the write: a cancelled save panel produced
-                // nothing, so it records nothing.
-                self.canvas.savePanel(preference: preference) { [weak self] in
-                    self?.deliverComposed()
-                }
+                _ = self.saveInPlace()
             },
             onClose: { [weak self] in self?.window?.close() }
         )
@@ -284,6 +351,130 @@ final class CaptureEditorContent: NSView {
     func deliverComposed() {
         guard let composed = canvas.composedImage() else { return }
         onDeliver?(composed)
+    }
+
+    // MARK: - The in-place Save (editor-save-in-place)
+
+    /// Save (S1/S2): overwrites the image the editor was opened from — the
+    /// file it was opened from, the history entry's stored PNG, or a
+    /// capture's folder save — and never records a second capture: delivery
+    /// is Save As's contract, because the history already holds what is
+    /// being replaced. One composer and one encoder: the pixels are exactly
+    /// `composedImage()`'s (the same ones the copy, the panel and the
+    /// history take, backdrop included) and the bytes are the ONE
+    /// `CaptureFile.data(for:format:)` write. Nothing to overwrite falls
+    /// back to the Save As panel, so the button never lies; a failed write
+    /// is said honestly in the canvas's own hint and returned as `.refused`.
+    /// A nil `rewriteHistoryEntry` (a detached editor) refuses the same way.
+    @discardableResult
+    func saveInPlace() -> CaptureEditorSaveOutcome {
+        switch saveTarget {
+        case let .storedFile(url):
+            return saveInPlace(into: url)
+        case let .historyEntry(id):
+            guard let composed = canvas.composedImageForSave(format: .png),
+                let rewrite = rewriteHistoryEntry,
+                rewrite(composed, id)
+            else { return refuse() }
+            canvas.showTransientHint("Saved to the capture history")
+            Diag.log("editor rewrote history entry \(id) \(composed.width)x\(composed.height)")
+            return .savedHistoryEntry
+        case .capture:
+            guard case .folder(let path) = capture.destination,
+                capture.destination.isUsablePath
+            else {
+                // Nothing to overwrite (a clipboard destination, a foreign
+                // image with no path): the Save As panel takes it, so the
+                // button never lies.
+                launchSaveAsPanel()
+                return .savePanelRequested
+            }
+            // The folder save a capture would take: the ONE name the panel
+            // previews and a capture writes (the identity tokens include),
+            // and the ONE `CaptureFile` encoder. The editor's composed
+            // variant already carries its own backdrop, so
+            // `CaptureFile.write`'s stored-backdrop pass and its downscale
+            // stay out — composing the STORED padding around already-padded
+            // pixels, or resampling pixels the user arranged live in the
+            // editor, would silently lie about what the surface shows.
+            let folder = URL(
+                fileURLWithPath: (path as NSString).expandingTildeInPath,
+                isDirectory: true)
+            let url = folder.appendingPathComponent(
+                CaptureEditorCanvas.savePanelFileName(
+                    preference: capture, at: Date(),
+                    app: canvas.fileNameContext.app,
+                    displayName: canvas.fileNameContext.displayName))
+            guard let written = writeInPlace(url, in: capture.format) else { return .refused }
+            return .savedToFolder(written)
+        }
+    }
+
+    /// The stored-file arm (S2): the file's own extension owns the format,
+    /// so the written bytes are the file's, not the preference's — a JPEG
+    /// opened from the Finder keeps its JPEG. A stored image whose format
+    /// the writer does not name (a TIFF under Open With) has no honest
+    /// overwrite: the Save As panel takes it.
+    private func saveInPlace(into url: URL) -> CaptureEditorSaveOutcome {
+        switch url.pathExtension.lowercased() {
+        case "png":
+            guard let written = writeInPlace(url, in: .png) else { return .refused }
+            return .savedOverFile(written)
+        case "jpg", "jpeg":
+            guard let written = writeInPlace(url, in: .jpeg) else { return .refused }
+            return .savedOverFile(written)
+        default:
+            launchSaveAsPanel()
+            return .savePanelRequested
+        }
+    }
+
+    /// The honest failure (S4): the button says it could not, and the
+    /// outcome tells the caller.
+    private func refuse() -> CaptureEditorSaveOutcome {
+        canvas.showTransientHint("Couldn't save the image")
+        return .refused
+    }
+
+    /// Writes the composed pixels at `url` in `format` — the ONE
+    /// encoder/write the in-place save has. Returns the written URL, or nil
+    /// after the honest refusal hint (S4).
+    private func writeInPlace(_ url: URL, in format: CaptureFormat) -> URL? {
+        guard let composed = canvas.composedImageForSave(format: format),
+            let data = CaptureFile.data(for: composed, format: format)
+        else {
+            refuse()
+            return nil
+        }
+        do {
+            try data.write(to: url)
+        } catch {
+            Diag.log("editor save-in-place failed: \(url.lastPathComponent) \(error)")
+            refuse()
+            return nil
+        }
+        canvas.showTransientHint("Saved to \(url.lastPathComponent)")
+        Diag.log("editor saved in place \(url.lastPathComponent) \(composed.width)x\(composed.height)")
+        return url
+    }
+
+    /// The ONE Save As route: the save panel the chrome's existing save
+    /// already drives, with its exact-unchanged delivery (a copy, a new
+    /// capture, L7). Nothing to
+    /// overwrite on `Save` lands here, so the fallback behaves exactly as
+    /// the user-facing Save As does — the same panel, the same delivery when
+    /// the user confirms. Tests point `presentSaveAsPanel` at a witness so a
+    /// test never opens the real panel.
+    func launchSaveAsPanel() {
+        if let presentSaveAsPanel {
+            presentSaveAsPanel(capture)
+            return
+        }
+        // Delivery waits for the write: a cancelled save panel produced
+        // nothing, so it records nothing.
+        canvas.savePanel(preference: capture) { [weak self] in
+            self?.deliverComposed()
+        }
     }
 
     // MARK: - The editor window's cursor (round four S5)
@@ -369,6 +560,10 @@ struct EditorChrome: View {
     let onCrop: () -> Void
     let onCopy: () -> Void
     let onSave: () -> Void
+    /// Defaults so callers that build the chrome for a render check (the
+    /// selftest harness) keep their call shape; the editor always passes
+    /// the real route.
+    var onSaveInPlace: () -> Void = {}
     let onClose: () -> Void
 
     /// Whether the background control's popover is open (T2/S2). The editor's
@@ -404,9 +599,12 @@ struct EditorChrome: View {
                     isSelected: showsBackgroundControl,
                     handler: { showsBackgroundControl = true }
                 ),
-                // Copy and save are plain actions.
+                // Copy and the two saves are plain actions: `Save` (S4)
+                // overwrites the image being edited, `Save As…` keeps its
+                // panel — the copy behaviour it has always had.
                 ToolbarAction(symbolName: "doc.on.doc", help: "Copy", handler: onCopy),
-                ToolbarAction(symbolName: "square.and.arrow.down", help: "Save", handler: onSave),
+                ToolbarAction(symbolName: "arrow.down.doc", help: "Save", handler: onSaveInPlace),
+                ToolbarAction(symbolName: "square.and.arrow.down", help: "Save As…", handler: onSave),
             ],
             showsWindowChrome: false,
             // The editor draws over a static captured image: tools that need a
@@ -1428,6 +1626,82 @@ final class CaptureEditorCanvas: NSView {
             // zoom, over the mark converted through its own recorded space.
             drawMarkSelectionChrome(space: space, in: context)
         }
+
+        // The transient hint (editor-save-in-place S4): what a chrome action
+        // just did — a save — in the pill the crop hint and the overlay's
+        // hints draw, gone after its seconds.
+        drawTransientHint(in: context)
+    }
+
+    // MARK: - The transient hint (editor-save-in-place S4)
+
+    /// One transient status message drawn as the app's own pill (the crop
+    /// hint's vocabulary: dark rounded pill, white text) — how a save says
+    /// “it happened”, and honestly says when it didn't. One message at a
+    /// time; a show replaces the last, and the expiry is scheduled so the
+    /// pill leaves by itself.
+    private var transientHint: (message: String, until: Date)?
+    private var transientHintExpiry: DispatchWorkItem?
+
+    /// Puts `message` up for `seconds`, replacing whatever was shown.
+    func showTransientHint(_ message: String, seconds: TimeInterval = 2.4) {
+        transientHintExpiry?.cancel()
+        transientHint = (message, Date().addingTimeInterval(seconds))
+        let expiry = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.transientHint = nil
+            self.transientHintExpiry = nil
+            self.needsDisplay = true
+        }
+        transientHintExpiry = expiry
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: expiry)
+        needsDisplay = true
+    }
+
+    /// The transient hint's message while it is up, or nil — the seam the
+    /// tests pin the button's honesty through.
+    var transientHintMessage: String? {
+        guard let hint = transientHint, Date() < hint.until else { return nil }
+        return hint.message
+    }
+
+    /// The pill: centred at the bottom edge of the canvas, the dark rounded
+    /// pill the crop hint draws — same material, same text style, no
+    /// placement rule beside it.
+    private func drawTransientHint(in context: CGContext) {
+        guard let hint = transientHint, Date() < hint.until else {
+            transientHint = nil
+            return
+        }
+        let text = hint.message as NSString
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+            .foregroundColor: NSColor.white,
+        ]
+        let textSize = text.size(withAttributes: attributes)
+        let padding = CGSize(width: 14, height: 8)
+        let pillWidth = textSize.width + padding.width * 2
+        let pillHeight = textSize.height + padding.height * 2
+        let pill = CGRect(
+            x: bounds.midX - pillWidth / 2,
+            y: bounds.maxY - pillHeight - 12,
+            width: pillWidth,
+            height: pillHeight
+        )
+        context.setFillColor(CGColor(gray: 0, alpha: 0.74))
+        context.addPath(
+            CGPath(
+                roundedRect: pill,
+                cornerWidth: pill.height / 2,
+                cornerHeight: pill.height / 2,
+                transform: nil
+            )
+        )
+        context.fillPath()
+        text.draw(
+            at: CGPoint(x: pill.minX + padding.width, y: pill.minY + padding.height),
+            withAttributes: attributes
+        )
     }
 
     /// The mark selection's chrome (S3): the overlay's `drawSelectedMarkChrome`

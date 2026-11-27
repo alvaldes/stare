@@ -289,7 +289,7 @@ final class OverlayController {
     /// handoff threads into the editor's save panel; the injected test
     /// witness is the old (image, capture) contract — its assertions were
     /// never about which app was captured.
-    private let openEditor: (CGImage, CapturePreference, RedactionStyle, CaptureEditorIdentity) -> Void
+    private let openEditor: (CGImage, CapturePreference, RedactionStyle, CaptureEditorIdentity, CaptureEditorSaveTarget) -> Void
 
     /// The {app}/{display} identity per capture kept for the editor handoff
     /// (S5): the capture tail resolves them once and registers them here, so
@@ -361,17 +361,19 @@ final class OverlayController {
         self.editor = editor
         self.editorIdentities = EditorIdentityLedger(limit: Self.identityLedgerLimit)
         self.openEditor = editorHandoff.map { handoff in
-            { image, capture, _, _ in handoff(image, capture) }
-        } ?? { image, capture, redactionStyle, identity in
+            { image, capture, _, _, _ in handoff(image, capture) }
+        } ?? { image, capture, redactionStyle, identity, saveTarget in
             // S4: the editor's chrome is always the horizontal row at the
             // top — the read-only snapshot T1 once took of the user's bar
             // configuration is withdrawn (L4) — so the handoff carries only
-            // the capture itself plus its naming identity (S5). The editor
-            // still never receives the preferences model, so nothing it
-            // does can persist into the saved bar.
+            // the capture itself plus its naming identity (S5) and the Save
+            // target the opening names (S2). The editor still never receives
+            // the preferences model, so nothing it does can persist into the
+            // saved bar.
             editor.open(
                 image: image, capture: capture, redactionStyle: redactionStyle,
-                app: identity.app, displayName: identity.displayName
+                app: identity.app, displayName: identity.displayName,
+                saveTarget: saveTarget
             )
         }
         wireEditor()
@@ -579,22 +581,38 @@ final class OverlayController {
     /// that capture owns; an image the ledger does not hold (a previous
     /// session's, an edited variant, an evicted one) arrives as none, and
     /// the {app}/{display} tokens refuse into the prefix fallback exactly
-    /// as the contract says both paths agree on.
+    /// as the contract says both paths agree on. The Save target (S2) is
+    /// resolved here too: a history-sheet Edit hands over the image the
+    /// store's own cache holds, so a holding entry IS what its editor's
+    /// Save rewrites; a foreign image keeps the capture save.
     func openCaptureEditor(_ image: CGImage) {
-        openCaptureEditor(image, captureIdentity: editorIdentities.identity(for: image))
+        let target = captureHistoryStore.entry(for: image)
+            .map { CaptureEditorSaveTarget.historyEntry($0.id) } ?? .capture
+        openCaptureEditor(image, captureIdentity: editorIdentities.identity(for: image), saveTarget: target)
+    }
+
+    /// The handoff with the Save target threaded explicitly (editor
+    /// -save-in-place S2): the Finder's path threads `.storedFile(url)`,
+    /// the card's route threads `.capture`, and no caller guesses.
+    func openCaptureEditor(_ image: CGImage, saveTarget: CaptureEditorSaveTarget) {
+        openCaptureEditor(image, captureIdentity: editorIdentities.identity(for: image), saveTarget: saveTarget)
     }
 
     /// The handoff with the naming identity threaded (S5): the overload the
     /// image-only one dispatches through, split so a test can pin what the
-    /// ledger resolves without driving a deliver. Internal so the tests
-    /// drive the routing without opening a window.
-    func openCaptureEditor(_ image: CGImage, captureIdentity: CaptureEditorIdentity) {
+    /// ledger resolves without driving a deliver. The Save target rides
+    /// alongside it (S2). Internal so the tests drive the routing without
+    /// opening a window.
+    func openCaptureEditor(
+        _ image: CGImage, captureIdentity: CaptureEditorIdentity,
+        saveTarget: CaptureEditorSaveTarget = .capture
+    ) {
         if isBoardActive {
             closeBoard(restoringFocus: false)
         } else {
             deactivate(restoringFocus: false)
         }
-        openEditor(image, capturePreference(), state.redactionStyle, captureIdentity)
+        openEditor(image, capturePreference(), state.redactionStyle, captureIdentity, saveTarget)
     }
 
     /// The capture tail's ONE identity registration (S5), exposed internal so
@@ -624,7 +642,7 @@ final class OverlayController {
             Diag.log("open with stare: \(url.lastPathComponent) decoded to no image")
             return false
         }
-        openCaptureEditor(image)
+        openCaptureEditor(image, saveTarget: .storedFile(url))
         return true
     }
 
@@ -638,11 +656,21 @@ final class OverlayController {
         // The editor's own captures come back through the same recording an
         // overlay capture goes through (L7).
         editor.onDeliver = { [weak self] composed in self?.deliverEdited(composed) }
+        // editor-save-in-place S2: the ONE store call an in-place history
+        // save makes — every editor window routes through this rewrite, so
+        // a save can never mint a second entry or a second file beside it.
+        editor.rewriteHistoryEntry = { [weak self] composed, id in
+            guard let self else { return false }
+            return self.captureHistoryStore.rewrite(entryID: id, with: composed)
+        }
         // The editor is a normal window: opening it while a layer is still
         // armed would leave it above, eating every click. The card's click and
-        // the History pane's reopen share the handoff above.
+        // the History pane's reopen share the handoff above; the card's route
+        // names its Save explicitly (S2): the capture save — a folder
+        // destination's write, a clipboard's Save As fallback — never the
+        // history sheet's entry-rewrite.
         cards.onOpen = { [weak self] image in
-            self?.openCaptureEditor(image)
+            self?.openCaptureEditor(image, saveTarget: .capture)
         }
         history.onReopen = { [weak self] entry in
             self?.openCaptureEditor(entry.image)

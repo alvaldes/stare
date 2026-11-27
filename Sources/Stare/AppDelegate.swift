@@ -53,6 +53,32 @@ final class EditorCloseShortcutTarget: NSObject {
     }
 }
 
+/// editor-save-in-place S4: the retained target the app menu's `Save Editor`
+/// (⌘S) item acts through, and the ⌘W item's exact shape: the same
+/// retained-target contract (a menu action needs a retained target) and the
+/// same key-window gate — the CAPTURE EDITOR key window when the key window
+/// IS an editor's, so the Settings window, a floating panel and the app
+/// itself are never touched: the gate reads nil for every other key window
+/// and the item's action is a silent no-op for them.
+@MainActor
+final class EditorSaveShortcutTarget: NSObject {
+
+    /// The dispatch's own question: the key window when it is an editor's,
+    /// nil otherwise. Production reads `NSApp`; tests inject the witness.
+    private let keyEditorWindow: () -> CaptureEditorWindow?
+
+    init(keyEditorWindow: @escaping () -> CaptureEditorWindow? = {
+        NSApp.keyWindow as? CaptureEditorWindow
+    }) {
+        self.keyEditorWindow = keyEditorWindow
+        super.init()
+    }
+
+    @objc func saveEditorWindow(_ sender: Any?) {
+        _ = keyEditorWindow()?.editorContent?.saveInPlace()
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let captureService = CaptureService()
     /// The single persisted owner of the app-wide preferences blob (T6
@@ -76,6 +102,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// through (round four S8) — the same retention contract
     /// `settingsMenuTarget` documents.
     private var editorCloseTarget: EditorCloseShortcutTarget?
+    /// The retained target the app menu's `Save Editor` (⌘S) item acts
+    /// through (S4) — the same retention contract `settingsMenuTarget`
+    /// documents.
+    private var editorSaveTarget: EditorSaveShortcutTarget?
     /// The Settings shell now observes the single preferences owner and the
     /// shared permission model directly (T6 slice 2); it no longer goes
     /// through the overlay editor's mirrored state.
@@ -179,7 +209,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // of it.
         let editorTarget = EditorCloseShortcutTarget()
         editorCloseTarget = editorTarget
-        NSApp.mainMenu = Self.makeMainMenu(openSettings: target, closeEditor: editorTarget)
+        // editor-save-in-place S4: ⌘S saves the editor window's image in
+        // place — the same editor-only gate ⌘W rides.
+        let saveTarget = EditorSaveShortcutTarget()
+        editorSaveTarget = saveTarget
+        NSApp.mainMenu = Self.makeMainMenu(openSettings: target, closeEditor: editorTarget, saveEditor: saveTarget)
 
         // Updates (T10/S6): the persisted schedule decides whether a check is
         // due at launch. The app is not notarized, so a check only informs and
@@ -277,7 +311,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     static func makeMainMenu(
         openSettings: SettingsShortcutMenuTarget,
-        closeEditor: EditorCloseShortcutTarget? = nil
+        closeEditor: EditorCloseShortcutTarget? = nil,
+        saveEditor: EditorSaveShortcutTarget? = nil
     ) -> NSMenu {
         let appMenu = NSMenu(title: "Stare")
         appMenu.addItem(
@@ -300,6 +335,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 keyEquivalent: "w")
             close.target = closeEditor
             appMenu.addItem(close)
+        }
+        // editor-save-in-place S4: the editor's ⌘S saves in place through the
+        // same editor-only target shape ⌘W rides — no nil-target validation,
+        // which would save into whatever NON-editor window held the key.
+        // Absent target: the menu is unchanged, the exact shape round four
+        // S8 built.
+        if let saveEditor {
+            let save = NSMenuItem(
+                title: "Save Editor",
+                action: #selector(EditorSaveShortcutTarget.saveEditorWindow(_:)),
+                keyEquivalent: "s")
+            save.target = saveEditor
+            appMenu.addItem(save)
         }
         let appMenuItem = NSMenuItem()
         appMenuItem.submenu = appMenu
