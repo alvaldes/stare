@@ -13,6 +13,38 @@ final class TextSelectionWindowTests: XCTestCase {
     private var windows: [TextSelectionWindow] = []
     private var hints: [TextRecognitionHintWindow] = []
 
+    /// The process state before the class ran, restored in teardown (the
+    /// shared `LeaveAsFound` hooks, round four's cross-test contamination
+    /// follow-ups in `odd/tasks/round-four.md`): the class reads
+    /// `NSApp.keyWindow` and `NSCursor.current`, and the runner spins no
+    /// AppKit state away between classes.
+    private var foundState: LeaveAsFound.State!
+
+    override func setUp() {
+        super.setUp()
+        foundState = LeaveAsFound.capture()
+        // This class's own precondition, stated on its own surface: its key
+        // assertions hold only while the process can still promote — the
+        // surface's `makeKey()` must register a key window. Running alone,
+        // the class's first `makeKey` does the promotion itself; after a
+        // long prefix whose exits leave the app inactive again (the
+        // leave-as-found family, by design, hands back an inactive accessory
+        // app), that promotion path arrives broken and every `makeKey` in
+        // the class silently fails — `becomeKey` runs, `isKeyWindow` stays
+        // false, so the surface never resigns on close and its crosshair
+        // stays pushed (the :220 cursor failure), and `NSApp.keyWindow`
+        // stays nil (the :196 failure). The re-establishment is AppKit's own
+        // reset of the promotion machinery — `setActivationPolicy` — the
+        // same reset every `.accessory` → `.regular` → `.accessory` cycle
+        // performs; plain `NSApp.activate` does not recover it. Teardown
+        // hands the policy and the active flag back afterwards, so the class
+        // leaves exactly what it found.
+        let app = NSApplication.shared
+        if app.activationPolicy() != .regular, !app.isActive {
+            app.setActivationPolicy(.regular)
+        }
+    }
+
     override func tearDown() {
         for window in windows {
             window.closeWithoutCallbacks()
@@ -22,6 +54,7 @@ final class TextSelectionWindowTests: XCTestCase {
             hint.closeSelf()
         }
         hints = []
+        LeaveAsFound.restore(foundState)
         super.tearDown()
     }
 

@@ -12,7 +12,20 @@ import XCTest
 final class CaptureHistoryPanelTests: XCTestCase {
     private var temporaryDirectories: [URL] = []
 
+    /// The process state before the class ran, restored in teardown (the
+    /// shared `LeaveAsFound` hooks, round four's cross-test contamination
+    /// follow-ups): `showPanel` keys the sheet here too, and
+    /// TextSelectionWindowTests shares the activation/key-window/cursor reads
+    /// with this process.
+    private var foundState: LeaveAsFound.State!
+
+    override func setUp() {
+        super.setUp()
+        foundState = LeaveAsFound.capture()
+    }
+
     override func tearDown() {
+        LeaveAsFound.restore(foundState)
         for directory in temporaryDirectories {
             try? FileManager.default.removeItem(at: directory)
         }
@@ -635,6 +648,21 @@ final class CaptureHistoryGridNavigationTests: XCTestCase {
 /// strip (the sheet's chrome, its blind margins) keeps the sheet open.
 @MainActor
 final class CaptureHistoryOutsideClickTests: XCTestCase {
+    /// Leave-as-found hooks: the monitor test opens and hides the real panel,
+    /// whose keyboard keyed the app, so the class hands the activation, key
+    /// window and cursor back the way it found them.
+    private var foundState: LeaveAsFound.State!
+
+    override func setUp() {
+        super.setUp()
+        foundState = LeaveAsFound.capture()
+    }
+
+    override func tearDown() {
+        LeaveAsFound.restore(foundState)
+        super.tearDown()
+    }
+
     func testAClickOutsideClosesThePanel() {
         XCTAssertTrue(
             CaptureHistoryPanel.hides(forClickOnPanelWindow: false, insidePanelFrame: false),

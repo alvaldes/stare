@@ -66,12 +66,7 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
-        DispatchQueue.main.async { [weak self] in
-            guard let self, let window = self.window, window.isVisible else { return }
-            NSApp.activate()
-            window.makeKeyAndOrderFront(nil)
-            window.orderFrontRegardless()
-        }
+        reassertActivationAfterShow(window: window)
 
         startObserving()
         refreshPermission()
@@ -198,7 +193,37 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        // Any queued re-assert belongs to a window that no longer exists, so
+        // it must not run into whatever the process does after the close.
+        cancelQueuedReassert()
         // Any close without Continue still marks the guide as seen (S3).
         finish(continueToSettings: false)
+    }
+
+    /// The open's re-assert, one runloop turn later — the same pattern the
+    /// settings window uses. The queued turn is a stored, cancellable item:
+    /// the window's close path cancels it (its `windowWillClose`), a later
+    /// `show` cancels and re-arms the latest, and the body's own `isVisible`
+    /// guard answers nothing for an already-closed guide. This is the gate
+    /// that keeps the queued `NSApp.activate` + `makeKeyAndOrderFront` re-assert
+    /// from re-activating a dead state into whatever runs after the guide's
+    /// owner is gone.
+    private var queuedReassert: DispatchWorkItem?
+
+    private func reassertActivationAfterShow(window: NSWindow) {
+        queuedReassert?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, let window = self.window, window.isVisible else { return }
+            NSApp.activate()
+            window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
+        }
+        queuedReassert = work
+        DispatchQueue.main.async(execute: work)
+    }
+
+    private func cancelQueuedReassert() {
+        queuedReassert?.cancel()
+        queuedReassert = nil
     }
 }

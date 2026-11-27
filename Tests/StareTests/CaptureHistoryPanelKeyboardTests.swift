@@ -15,7 +15,20 @@ import XCTest
 final class CaptureHistoryPanelKeyboardTests: XCTestCase {
     private var temporaryDirectories: [URL] = []
 
+    /// The process state before the class ran, restored in teardown (the
+    /// shared `LeaveAsFound` hooks, round four's cross-test contamination
+    /// follow-ups): `showPanel` keys the sheet, so the class leaves an active
+    /// app and a standing key window behind, and TextSelectionWindowTests
+    /// shares both reads with this process.
+    private var foundState: LeaveAsFound.State!
+
+    override func setUp() {
+        super.setUp()
+        foundState = LeaveAsFound.capture()
+    }
+
     override func tearDown() {
+        LeaveAsFound.restore(foundState)
         for directory in temporaryDirectories {
             try? FileManager.default.removeItem(at: directory)
         }
@@ -157,6 +170,21 @@ final class CaptureHistoryPanelKeyboardTests: XCTestCase {
 /// — Esc closes, the arrows walk and disarm, Return still picks.
 @MainActor
 final class CaptureHistoryMenuKeyboardSurvivalTests: XCTestCase {
+    /// The same leave-as-found hooks as the keyboard class above: `showPanel`
+    /// keys the sheet here too, so the class hands back the activation, the
+    /// key window and the cursor it found.
+    private var foundState: LeaveAsFound.State!
+
+    override func setUp() {
+        super.setUp()
+        foundState = LeaveAsFound.capture()
+    }
+
+    override func tearDown() {
+        LeaveAsFound.restore(foundState)
+        super.tearDown()
+    }
+
     private func makeImage() -> CGImage {
         let context = CGContext(
             data: nil, width: 8, height: 6, bitsPerComponent: 8,

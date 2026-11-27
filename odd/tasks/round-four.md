@@ -239,3 +239,57 @@
     needs either those files hooked the same leave-as-found way, or a Sources seam (internal
     `OverlayController` board close with `restoringFocus: false`, and/or moving the queued
     `NSApp.activate` re-asserts behind a test-observable gate) — a parent decision, not a worker one.
+  - Follow-up 4 (worker, 2026-11-26, the closing pass — the two test-order failures taken to zero, all
+    suite runs green): the actual mechanism is settled by INSTRUMENTED REMOVE-AND-RERUN evidence, and
+    it is NOT the queued activation the follow-up above suspected. Probe with the two window
+    controllers' queued re-assert blocks AND the ladder's `asyncAfter` re-queue all disabled, plus per
+    -block instrumentation (`Diag.log` at each queued block's head): the wide probe was still red with
+    the SAME two `TextSelectionWindowTests` failures (EXIT=1) — and the logs PROVE the queued blocks
+    cannot be the poison: every settings/onboarding queued block fired after its test's end and
+    SKIPPED (`self=false` — the controller was already deallocated, `weak self` nil, guard short)
+    BEFORE any activation ran, and `assertActivation`'s attempts beyond 0 NEVER RAN post-mortem
+    (their closures died with the controller: the only ladder log ever written in the red
+    composition was the attempt=0 queue line, and no queued turn ever executed after its owner's
+    exit). The queue sites were
+    GATED anyway, because the task directed the gate, and the gate is correct regardless: all three
+    queue sites (the
+    two window controllers' `show()` re-asserts and `OverlayController.assertActivation`'s retry
+    ladder) now queue STORED, CANCELLABLE `DispatchWorkItem`s — the gate being: the owner's exit
+    cancels the item (`windowWillClose` cancels the window controllers' re-assert — a later `show`
+    also cancels and re-arms — and `deactivate`/`closeBoard` cancel the ladder's retry), so a queued
+    turn can never run after the owner is gone, even while a test's property still retains the
+    controller, and the body's own guards (`window.isVisible`, the mode flags) answer nothing for
+    anything that slips past. Second attribute: single-class skips × MANY (SettingsShortcut,
+    CaptureHistoryPanelKeyboard, CaptureHistoryPanelLeaveFocus, CaptureHistoryPanelTests,
+    CaptureHistoryMenuKeyboardSurvival, CaptureEditorDock, CaptureEditorWindowClose, CaptureIncludes,
+    CaptureStagedCrop, StatusBar, OnboardingFocus, Primary, plus the entire Settings family minus
+    SettingsWindowSizing) ALL still red — the strand is cumulative and owned by NO single class.
+    THE REAL MECHANISM, instrumented through `TextSelectionWindow`'s own keying boundary: in the red
+    compositions the surface's own `makeKey()` silently fails — `becomeKey` runs (so the crosshair
+    IS pushed) but `isKeyWindow` stays false and `NSApp.keyWindow` stays nil afterwards, so the
+    surface never resigns on close and its cursor pop never happens (:220 "Escape restores the
+    previous cursor" fails) and :196's key assertion reads nil. This is exactly AppKit's promotion
+    machinery gone out of commission: the window count (21) and the policy (.accessory) are
+    IDENTICAL on red and green doorsteps — the only observed difference is `NSApp.isActive` — and
+    the promotion is what the class's FIRST `makeKey` performs when it is intact (isolation does it
+    itself; the green compositions' `keyTake` probe read `active=true policy=1`, the app left active
+    by a late successful activation).
+    THE CURE, in the CLASS'S own surface, with NO assertion weakened and `TextSelectionWindowTests`
+    body untouched except hooks: the class's setUp captures `LeaveAsFound.capture()` and re-establishes
+    the promotion machinery with AppKit's own reset — `setActivationPolicy(.regular)` — the same reset
+    every `.accessory` → `.regular` → `.accessory` cycle performs (a probe confirmed plain
+    `NSApp.activate` does NOT recover the promotion from the poisoned state, the flip does); the
+    class's shared-hook `LeaveAsFound.restore` puts the found policy and the active flag back in
+    teardown, so the class leaves exactly what it found (ToolbarLayoutTests, the next and last
+    StareTests suite, still passes). Mechanism 2's sweep of the remaining classes (every hook reuses
+    the shared `LeaveAsFound` helper in `TestWindowPlacement`, no new mechanism):
+    `CaptureHistoryPanelKeyboardTests`, `CaptureHistoryMenuKeyboardSurvivalTests`,
+    `CaptureHistoryPanelTests`, `CaptureHistoryOutsideClickTests` (`showPanel` keys the sheet and each
+    leaves an active app/key window), and `SettingsShortcutTests` (its modes' activate/toggle and the
+    settings window's open leave activation); `CaptureHistoryContextMenuTests` opens no windows and
+    was left unhooked. Numbers of the closing runs: the delivered probe (bounded filter) — EXIT=0,
+    0 failures, both bundles passed; the FULL suite unpiped as delivered —
+    `swift test > .build/r9.log 2>&1; echo EXIT=$?` — EXIT=0, 920 tests (527 StareTests + 393
+    StareCore), 0 failures, run TWICE consecutively with the same result (second run: EXIT=0, 920
+    tests, 0 failures, both bundles passed), 0 added `--skip`, 0 weakened assertion, and every earlier
+    suite's leave-as-found hooks untouched.

@@ -1009,9 +1009,38 @@ final class OverlayController {
             Diag.log("activation gave up attempt=\(attempt) active=\(active) key=\(key)")
             return
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            self?.assertActivation(attempt: attempt + 1)
+        requeueActivationRetry(attempt: attempt + 1)
+    }
+
+    /// The retry's queued turn is a stored, cancellable work item, not an
+    /// anonymous `asyncAfter` closure. This is the gate that keeps the queued
+    /// `NSApp.activate` / `makeKeyAndOrderFront` re-asserts from firing into
+    /// whatever runs after the mode's owner is gone — a pump can fire a queued
+    /// turn after the test (or the caller) tore the mode down, and an open
+    /// closure would run blind work that re-activates a dead state into the
+    /// next window that measures itself. Two layers:
+    /// 1. the owner's exits (`deactivate`, `closeBoard`) cancel the item, so a
+    /// cancelled turn never runs at all, even while the controller itself is
+    /// still alive (a test's property may retain it past the mode's exit);
+    /// 2. the attempt body's own mode guard (`isActive || isBoardActive`)
+    /// answers nothing once the mode flags are down, for any turn that does
+    /// slip through.
+    private var activationRetry: DispatchWorkItem?
+
+    private func requeueActivationRetry(attempt: Int) {
+        activationRetry?.cancel()
+        let retry = DispatchWorkItem { [weak self] in
+            self?.assertActivation(attempt: attempt)
         }
+        activationRetry = retry
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: retry)
+    }
+
+    /// Cancels the queued retry turn. Every exit of the owning mode calls this,
+    /// so nothing queued re-activates after the mode left the screen.
+    private func cancelActivationRetry() {
+        activationRetry?.cancel()
+        activationRetry = nil
     }
 
     /// `restoringFocus` is false when something of ours takes over: handing focus
@@ -1035,6 +1064,7 @@ final class OverlayController {
         removeCardCursorMonitor()
         if restoringFocus { restoreFrontmostApplication() }
         NSCursor.arrow.set()
+        cancelActivationRetry()
         Diag.log("deactivate")
     }
 
@@ -1167,6 +1197,7 @@ final class OverlayController {
         removeCardCursorMonitor()
         if restoringFocus { restoreFrontmostApplication() }
         NSCursor.arrow.set()
+        cancelActivationRetry()
         Diag.log("board close pages kept=\(boards.count)")
     }
 

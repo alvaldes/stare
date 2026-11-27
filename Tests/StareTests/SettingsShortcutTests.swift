@@ -31,6 +31,14 @@ import StareCore
 @MainActor
 final class SettingsShortcutTests: XCTestCase {
 
+    /// The process state before the class ran, restored in teardown (the
+    /// shared `LeaveAsFound` hooks, round four's cross-test contamination
+    /// follow-ups): the modes' `activate()`/`toggleBoard()` and the settings
+    /// window's own open all leave an active app, a key window and the
+    /// standing answer of `NSApp.mainMenu`, and TextSelectionWindowTests
+    /// shares those reads with this process.
+    private var foundState: LeaveAsFound.State!
+
     private final class InMemoryPreferenceStore: PreferenceStore {
         private var values: [String: Any] = [:]
         func object(forKey key: String) -> Any? { values[key] }
@@ -84,7 +92,13 @@ final class SettingsShortcutTests: XCTestCase {
         return menu
     }
 
+    override func setUp() {
+        super.setUp()
+        foundState = LeaveAsFound.capture()
+    }
+
     override func tearDown() {
+        LeaveAsFound.restore(foundState)
         NSApp.mainMenu = nil
         self.menuTarget = nil
         super.tearDown()

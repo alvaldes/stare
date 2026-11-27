@@ -112,13 +112,42 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
-        DispatchQueue.main.async { [weak self] in
+        reassertActivationAfterShow(window: window)
+        Diag.log("settings opened")
+    }
+
+    /// The open's re-assert, one runloop turn later: activation settles
+    /// asynchronously, so `show` queues `NSApp.activate` + a
+    /// `makeKeyAndOrderFront` for the next turn, exactly the way the guide
+    /// does. The queued turn is a stored, cancellable item, and this is the
+    /// gate that keeps it from firing into whatever runs after the settings
+    /// window's owner is gone: the window's own close path cancels the item
+    /// (a queued turn must never re-activate a closed window's dead state), a
+    /// later `show` cancels and re-arms the latest, and the body's own
+    /// `isVisible` guard answers nothing for an already-hidden window.
+    private var queuedReassert: DispatchWorkItem?
+
+    private func reassertActivationAfterShow(window: NSWindow) {
+        queuedReassert?.cancel()
+        let work = DispatchWorkItem { [weak self] in
             guard let self, let window = self.window, window.isVisible else { return }
             NSApp.activate()
             window.makeKeyAndOrderFront(nil)
             window.orderFrontRegardless()
         }
-        Diag.log("settings opened")
+        queuedReassert = work
+        DispatchQueue.main.async(execute: work)
+    }
+
+    private func cancelQueuedReassert() {
+        queuedReassert?.cancel()
+        queuedReassert = nil
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        // The owner's exit: any queued re-assert belongs to a window that no
+        // longer exists, so it must not run.
+        cancelQueuedReassert()
     }
 
     private func makeWindow() -> NSWindow {
